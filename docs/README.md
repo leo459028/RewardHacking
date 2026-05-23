@@ -1,6 +1,12 @@
-# 專案文件總覽
+# 專案文件總覽 v0.2
 
 本目錄收錄 Agent Reward-Hacking Guardrail 的繁體中文文件。專有名詞保留英文，方便與程式碼、API schema、infra component 對照。
+
+## 版本
+
+目前版本：`v0.2.0`
+
+`v0.2.0` 對應 Phase 0-2 + Dashboard milestone。此版本已完成同步 API、Postgres audit trail、Alembic migration、run/incident 查詢 API、內建 Dashboard、測試與 GitHub CI 基線。
 
 ## 專案定位
 
@@ -27,7 +33,7 @@
 | [資料模型](data_model.md) | SQLAlchemy model、event schema、資料生命週期 |
 | [Kafka Topics](kafka_topics.md) | Topic 設計、payload 建議與運維注意事項 |
 | [Redis Keys](redis_keys.md) | Key convention、TTL、state/cache/breaker 用途 |
-| [Migration 指南](migrations.md) | 目前 schema 狀態與 Alembic 導入建議 |
+| [Migration 指南](migrations.md) | Alembic migration、常用指令與 rollback 建議 |
 | [Observability](observability.md) | Metrics、logging、tracing 與 alert 建議 |
 | [安全設計](security.md) | Threat model、guardrail 原則、production hardening |
 | [Runbook](runbook.md) | 常見事故處理、診斷步驟與營運 KPI |

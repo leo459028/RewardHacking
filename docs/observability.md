@@ -1,10 +1,10 @@
-# Observability
+# Observability v0.2
 
-本專案已提供 Prometheus metrics 與 structured logging 的基礎。正式環境應補上 tracing、log correlation、alert rules 與 dashboard。
+本專案目前提供 Prometheus metrics 與 structured logging 的基礎。Dashboard 會從 Postgres audit trail 讀取 runs/incidents；Prometheus metrics 仍由 `/v1/metrics` 提供。
 
-## Metrics
+目前 observability 基線：`v0.2.0`
 
-Endpoint：
+## Metrics Endpoint
 
 ```text
 GET /v1/metrics
@@ -14,39 +14,25 @@ GET /v1/metrics
 
 | Metric | Type | Labels | 說明 |
 | --- | --- | --- | --- |
-| `agent_requests_total` | Counter | `status` | 依 response status 統計 API requests |
+| `agent_requests_total` | Counter | `status` | 依 response status 統計 `/v1/agent/submit` 與 `/v1/agent/submit-with-details` |
 | `agent_policy_risk_score` | Histogram | 無 | policy risk score 分布 |
-| `agent_evaluation_final_score` | Histogram | 無 | evaluation final score 分布 |
+| `agent_evaluation_final_score` | Histogram | 無 | detailed submit 的 evaluation final score 分布 |
 
-## 建議新增 Metrics
+注意：`agent_evaluation_final_score` 目前只在 `/v1/agent/submit-with-details` 中更新；兩個 submit endpoint 都會更新 request count 與 policy risk score。
 
-API：
+## Dashboard Data
 
-- `http_request_duration_seconds`
-- `http_requests_total{method,path,status}`
-- `agent_policy_decisions_total{decision}`
-- `agent_policy_flags_total{flag}`
+內建 Dashboard 使用 Postgres audit tables，不直接讀 Prometheus：
 
-Worker：
+- `agent_runs`
+- `incidents`
 
-- `agent_worker_jobs_total{status}`
-- `agent_worker_duration_seconds`
-- `agent_worker_retries_total`
-- `agent_worker_dlq_total`
+主要畫面：
 
-Kafka：
-
-- consumer lag。
-- publish failures。
-- retry count。
-
-Safety：
-
-- escalation rate。
-- deny rate。
-- incident count by severity。
-- average risk score。
-- evaluator review rate。
+- `/dashboard`：summary、recent runs、recent incidents。
+- `/dashboard/runs`：run list 與 filters。
+- `/dashboard/runs/{run_id}`：request、policy、execution output、evaluation summary、incidents。
+- `/dashboard/playground`：送出測試 request。
 
 ## Logs
 
@@ -58,7 +44,7 @@ Safety：
 - `risk_score`
 - `flags`
 
-正式環境建議所有 request 與 worker job 都帶：
+正式環境建議所有 request 都帶：
 
 - `trace_id`
 - `run_id`
@@ -76,6 +62,37 @@ Safety：
 - access token。
 - 完整 tool output。
 
+## 建議新增 Metrics
+
+API：
+
+- `http_request_duration_seconds`
+- `http_requests_total{method,path,status}`
+- `agent_policy_decisions_total{decision}`
+- `agent_policy_flags_total{flag}`
+- `agent_incidents_total{severity,code}`
+
+Database：
+
+- Postgres connection failures。
+- audit persistence duration。
+- audit persistence failures。
+
+Worker（Phase 3 後）：
+
+- `agent_worker_jobs_total{status}`
+- `agent_worker_duration_seconds`
+- `agent_worker_retries_total`
+- `agent_worker_dlq_total`
+- Kafka consumer lag。
+
+Safety：
+
+- escalation rate。
+- deny rate。
+- evaluator review rate。
+- average risk score。
+
 ## Tracing
 
 建議導入 OpenTelemetry，trace span 可切成：
@@ -84,11 +101,11 @@ Safety：
 - prompt sanitation。
 - risk scoring。
 - policy evaluation。
-- Kafka publish。
-- worker consume。
-- tool execution。
+- dummy/tool execution。
 - evaluation。
-- persistence。
+- audit persistence。
+- dashboard query。
+- future：Kafka publish、worker consume。
 
 `trace_id` 應進入 response header、event envelope、logs 與 database。
 
@@ -96,28 +113,31 @@ Safety：
 
 | Alert | 條件範例 | 可能原因 |
 | --- | --- | --- |
+| API down | `/v1/healthz` failed | API process 不健康 |
+| DB readiness failed | `/v1/readyz` failed | Postgres/DSN/migration 問題 |
 | High deny rate | deny rate > baseline 3 倍 | prompt attack、policy 設太嚴、上游異常 |
 | High escalation rate | escalation rate > 30% | false positive、使用者行為改變、攻擊 |
-| Kafka lag high | lag 持續增加 10 分鐘 | worker 掛掉、執行器太慢 |
 | Incident spike | medium+ incidents 突增 | evaluator 偵測大量異常 |
-| Metrics endpoint down | scrape failed | API 不健康 |
 | Risk score drift | 平均風險快速上升 | 需求型態變化或攻擊 |
+| Future Kafka lag high | lag 持續增加 10 分鐘 | worker 掛掉、執行器太慢 |
 
 ## Dashboard 建議
 
-營運 dashboard：
+目前 Dashboard 已涵蓋：
 
-- request rate。
-- latency。
-- status distribution。
-- error rate。
-- Kafka lag。
-- worker throughput。
+- total runs。
+- completed / escalated / denied / queued。
+- average risk score。
+- recent runs。
+- recent incidents。
+- run detail。
+- playground。
 
-安全 dashboard：
+後續可補：
 
-- allow/escalate/deny trend。
+- time-series trend。
 - top policy flags。
 - incident severity trend。
 - evaluator final score distribution。
-- review queue size。
+- review queue。
+- tenant/user filters。

@@ -1,6 +1,8 @@
-# Dashboard 使用說明
+# Dashboard 使用說明 v0.2
 
 本專案提供 FastAPI 內建的 server-rendered dashboard，不需要額外啟動 React/Vite 前端。啟動 API 後可直接開啟：
+
+目前 Dashboard 版本：`v0.2.0`
 
 ```text
 http://localhost:8000/dashboard

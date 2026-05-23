@@ -1,6 +1,8 @@
-# 測試指南
+# 測試指南 v0.2
 
-目前測試集中在 policy engine，檔案為 `tests/test_policy_engine.py`。
+目前測試涵蓋 policy 周邊邏輯、API persistence、dashboard HTML response 與 basic evaluator behavior。
+
+目前測試基線：`v0.2.0`
 
 ## 執行測試
 
@@ -14,78 +16,71 @@ pytest -q
 make test
 ```
 
+執行 lint：
+
+```bash
+ruff check app tests
+```
+
+或：
+
+```bash
+make lint
+```
+
 ## 現有測試範圍
 
-- 低風險 request 應該 `allow`。
-- 同時包含 prompt injection、external network、destructive action、PII、large tool budget 的 request 應該 `escalate` 或 `deny`。
+| 檔案 | 範圍 |
+| --- | --- |
+| `tests/test_policy_engine.py` | low-risk allow、高風險 escalate/deny |
+| `tests/test_prompt_sanitizer.py` | prompt injection pattern 偵測 |
+| `tests/test_risk_scoring.py` | risk score baseline、clamp |
+| `tests/test_evaluator.py` | shortcut、policy bypass signal |
+| `tests/test_api.py` | health/readyz、submit persistence、incident、summary、dashboard pages |
 
-## 建議補強測試
+API tests 使用 SQLite in-memory database 覆寫 `get_session()`，不需要啟動 Docker Compose。
 
-### Unit Tests
+## CI Gate
 
-- `sanitize_prompt()`：
-  - 偵測每個 injection pattern。
-  - 不應誤判常見無害句子。
-- `compute_risk_score()`：
-  - 每種 constraint 的加權。
-  - score clamp 在 `0.0` 到 `1.0`。
-  - 小數 rounding。
-- `PolicyEngine.evaluate()`：
-  - `invalid_tool_budget`。
-  - `destructive_without_approval`。
-  - `pii_access_requested`。
-  - `external_network_allowed`。
-  - `large_tool_budget`。
-  - threshold 邊界值 `0.65` 與 `0.85`。
-- `Evaluator.evaluate()`：
-  - `not tested` 增加 shortcut risk。
-  - `bypass` 或 `override` 增加 policy violation risk。
-  - `analysis` / `data_query` 缺少 source 時 hallucination risk 增加。
-
-### API Tests
-
-使用 `httpx` 或 FastAPI `TestClient`：
-
-- `GET /v1/healthz` 回傳 `ok`。
-- `POST /v1/agent/submit` 回傳 `AgentResponse`。
-- schema 錯誤時回傳 `422`。
-- `submit-with-details` 包含 `policy`、`execution_event`、`evaluation_event`。
-
-### Integration Tests
-
-在 Docker Compose 環境中測試：
-
-- API container 啟動。
-- Kafka topics 建立成功。
-- Postgres 與 Redis health check 成功。
-- 未來 worker 接入後，測試 request event 到 evaluation event 的完整 flow。
-
-### Safety Regression Tests
-
-建立固定 red-team prompt corpus，測試：
-
-- prompt injection。
-- destructive action without approval。
-- PII exfiltration。
-- reward hacking shortcut，例如只回 `done`。
-- 要求忽略 policy 或 reveal system prompt。
-
-這類測試應在每次調整 policy/evaluator 後執行，避免安全規則被無意中放寬。
-
-## CI Gate 建議
-
-最小 CI：
+GitHub Actions 目前會執行：
 
 ```bash
 ruff check app tests
 pytest -q
 ```
 
-正式化後加入：
+workflow 位於 `.github/workflows/ci.yml`。
 
-- type checking。
-- migration check。
-- container build。
-- dependency vulnerability scan。
-- API schema compatibility check。
-- safety regression corpus。
+## 建議補強測試
+
+- Alembic migration upgrade/downgrade smoke test。
+- Dashboard form POST 的完整 HTML flow。
+- `GET /v1/runs` status/task_type filter。
+- `GET /v1/incidents` severity filter。
+- request validation error envelope。
+- red-team prompt corpus regression。
+- 未來 Kafka worker 的 retry/DLQ integration tests。
+
+## Manual Verification
+
+1. 啟動服務：
+
+```bash
+docker compose up -d --build
+```
+
+2. 確認 API：
+
+```bash
+curl http://localhost:8000/v1/healthz
+curl http://localhost:8000/v1/readyz
+```
+
+3. 開啟 Dashboard：
+
+```text
+http://localhost:8000/dashboard
+```
+
+4. 在 `/dashboard/playground` 送一筆低風險 request 與一筆高風險 request。
+5. 確認 `/dashboard` summary、`/dashboard/runs` list、run detail 與 incidents 都有更新。

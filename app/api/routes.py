@@ -1,11 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from prometheus_client import generate_latest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
 from app.api.deps import get_orchestrator
-from sqlalchemy import text
-
 from app.infra.postgres import get_session
 from app.observability.metrics import EVALUATION_SCORE, POLICY_RISK, REQUESTS_TOTAL
 from app.schemas.agent import AgentRequest, AgentResponse
@@ -62,6 +61,8 @@ async def submit_agent_request_with_details(
 ):
     result = orchestrator.run(agent_request)
     await persist_orchestration_result(session, agent_request, result)
+    REQUESTS_TOTAL.labels(status=result.response.status).inc()
+    POLICY_RISK.observe(result.response.risk_score)
     score = 0.0
     if isinstance(result.evaluation_summary, dict):
         score = (

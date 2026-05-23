@@ -1,8 +1,8 @@
-# Roadmap
+# Roadmap v0.2
 
 本 roadmap 將專案從目前 prototype 推進到可在 production 中承擔 guardrail 職責的服務。優先順序以安全性、可觀測性、資料可靠性與可展示性為主。
 
-## Milestone：Phase 0-2 + Dashboard
+## Milestone：v0.2.0 / Phase 0-2 + Dashboard
 
 本段是已落地的產品化里程碑，目標是讓專案從 API skeleton 變成可展示、可查詢、可審計的 guardrail prototype。
 

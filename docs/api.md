@@ -1,6 +1,8 @@
-# API 文件
+# API 文件 v0.2
 
 API 由 FastAPI 提供，所有 JSON API route 都掛在 `/v1` prefix 下。啟動後可透過 OpenAPI UI 查看互動式文件：
+
+目前 API 版本：`v0.2.0`
 
 - `http://localhost:8000/docs`
 - `http://localhost:8000/redoc`
