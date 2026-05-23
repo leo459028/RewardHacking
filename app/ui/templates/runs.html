@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Runs{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Runs</h1>
+    <div class="muted">依 status 或 task type 篩選 audit trail。</div>
+  </div>
+  <a class="button" href="/dashboard/playground">New Test Run</a>
+</div>
+
+<section class="panel">
+  <form class="filters" method="get">
+    <label>Status
+      <select name="status">
+        <option value="" {{ "selected" if not status else "" }}>All</option>
+        {% for item in ["completed", "queued", "escalated", "denied"] %}
+        <option value="{{ item }}" {{ "selected" if status == item else "" }}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Task Type
+      <select name="task_type">
+        <option value="" {{ "selected" if not task_type else "" }}>All</option>
+        {% for item in ["code_fix", "analysis", "data_query", "workflow", "other"] %}
+        <option value="{{ item }}" {{ "selected" if task_type == item else "" }}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>&nbsp;<button class="button" type="submit">Apply</button></label>
+    <label>&nbsp;<a class="button secondary" href="/dashboard/runs">Reset</a></label>
+  </form>
+</section>
+
+<section class="panel">
+  <table>
+    <thead><tr><th>Run</th><th>User</th><th>Status</th><th>Task</th><th>Risk</th><th>Flags</th><th>Created</th></tr></thead>
+    <tbody>
+    {% for run in runs %}
+      <tr>
+        <td><a href="/dashboard/runs/{{ run.run_id }}">{{ run.run_id[:8] }}</a></td>
+        <td>{{ run.user_id }}</td>
+        <td><span class="status {{ run.status }}">{{ run.status }}</span></td>
+        <td>{{ run.task_type }}</td>
+        <td>{{ "%.3f"|format(run.risk_score) }}</td>
+        <td>{% for flag in run.policy_flags %}<span class="flag">{{ flag }}</span>{% else %}<span class="muted">none</span>{% endfor %}</td>
+        <td>{{ run.created_at }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="muted">No runs found.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

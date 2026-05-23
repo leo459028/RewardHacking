@@ -1,0 +1,122 @@
+# 開發指南
+
+## 專案結構
+
+```text
+app/
+  api/            FastAPI routes and dependencies
+  core/           settings and logging
+  infra/          Kafka / Redis / Postgres clients
+  models/         SQLAlchemy models
+  observability/  Prometheus metrics
+  schemas/        Pydantic schemas
+  services/       policy engine, evaluator, orchestrator
+  workers/        Kafka worker placeholder
+docs/             project documents
+tests/            unit tests
+```
+
+`bak/` 是備份目錄，文件與開發盤點時不納入。
+
+## 本機開發
+
+安裝相依套件：
+
+```bash
+pip install -r requirements.txt
+```
+
+或使用 Makefile：
+
+```bash
+make install
+```
+
+啟動 API：
+
+```bash
+make run
+```
+
+執行測試：
+
+```bash
+make test
+```
+
+執行 lint：
+
+```bash
+make lint
+```
+
+`requirements.txt` 目前包含 runtime 與 test dependencies；`pyproject.toml` 另外定義了 `dev` optional dependencies。
+
+## 新增 Policy Rule
+
+建議流程：
+
+1. 在 `app/services/risk_scoring.py` 調整 risk contribution。
+2. 在 `app/services/policy_engine.py` 加上對應 flag 或 hard rule。
+3. 在 `tests/test_policy_engine.py` 新增 allow/escalate/deny 測試。
+4. 更新 [安全設計](security.md)、[API 文件](api.md) 或 [Runbook](runbook.md) 中的 flag 說明。
+
+Policy rule 應該可解釋、可測試、可回滾。避免把難以重現的 model guess 直接寫成 hard deny。
+
+## 新增 Prompt Injection Pattern
+
+修改 `app/services/prompt_sanitizer.py` 的 `INJECTION_PATTERNS`。
+
+注意事項：
+
+- pattern 需盡量明確，降低 false positive。
+- 若 pattern 對多語系 prompt 有效，請補測試。
+- 被偵測到的 pattern 會進入 `prompt_flags`，再影響 risk score 與 policy flags。
+
+## 新增 Evaluator Signal
+
+修改 `app/services/evaluator.py`。
+
+建議 evaluator signal 分成：
+
+- shortcut risk：跳過驗證、過度簡短、只宣稱完成。
+- hallucination risk：缺來源、缺證據、憑空推論。
+- policy violation risk：嘗試 bypass、override、使用未授權能力。
+- goal alignment：是否回應原始 goal。
+
+新增 signal 後應補測試，並在 [Observability](observability.md) 加上對應 metric 或 log 建議。
+
+## 接入真實 Tool Executor
+
+目前 `DummyToolExecutor` 僅回傳 demo 字串。正式 executor 應至少具備：
+
+- tool ACL：只允許 request 中被核准的 tools。
+- sandbox：限制檔案、網路、process、secret access。
+- budget enforcement：tool calls、wall time、token、成本上限。
+- audit artifact：紀錄 tool input/output、diff、test result。
+- approval gate：destructive action 前確認人工核准。
+
+可先把 executor 抽成 interface，再由不同 task type 實作不同 adapter。
+
+## 接入 Kafka Worker
+
+`app/workers/consumer.py` 目前是 placeholder。建議 worker flow：
+
+1. Consume `agent.requests`。
+2. Validate event schema。
+3. Re-run policy check，避免 API 與 worker 之間狀態漂移。
+4. Execute bounded tool plan。
+5. Evaluate result。
+6. Persist `AgentRun` 與 `Incident`。
+7. Publish `agent.executions`、`agent.evaluations`、`agent.incidents`。
+8. Commit offset。
+
+失敗時應區分 transient error 與 permanent error，並導向 retry 或 dead-letter topic。
+
+## Coding Style
+
+- 保持 service class 小而清楚。
+- schema 變更要同步更新 API docs 與測試。
+- 安全相關邏輯要有單元測試。
+- 不把 production secret 寫入 repo。
+- 對外 response 不回傳敏感 prompt、PII 或完整 tool output，除非經過明確設計。

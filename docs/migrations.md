@@ -1,0 +1,82 @@
+# Migration 指南
+
+本專案已導入 Alembic，初始 migration 會建立：
+
+- `agent_runs`
+- `incidents`
+
+Migration 檔案位於：
+
+```text
+migrations/versions/202605190001_create_audit_tables.py
+```
+
+## 常用指令
+
+套用 migration：
+
+```bash
+alembic upgrade head
+```
+
+查看目前版本：
+
+```bash
+alembic current
+```
+
+建立新 migration：
+
+```bash
+alembic revision --autogenerate -m "describe change"
+```
+
+回退一版：
+
+```bash
+alembic downgrade -1
+```
+
+## 設定來源
+
+`migrations/env.py` 會讀取 `app.core.config.get_settings()`，使用 `POSTGRES_DSN` 作為 migration 連線字串。
+
+Dockerfile 會在啟動 API 前執行：
+
+```bash
+alembic upgrade head
+```
+
+因此 Docker Compose 啟動時會先建立 audit tables，再啟動 `uvicorn`。
+
+## Migration 規範
+
+- 每次 schema 變更都要有 migration。
+- migration 應在 CI 中驗證可從空 DB 套到 head。
+- destructive schema change 需要 data backfill plan。
+- 欄位刪除採兩階段：
+  - 先讓程式不再讀寫。
+  - 確認無使用後再移除欄位。
+- event payload schema 應保持 backward compatible。
+
+## Rollback Playbook
+
+每個 migration PR 應附：
+
+- 變更摘要。
+- 是否 backward compatible。
+- rollback 指令或 forward-fix 方式。
+- 預估資料量與鎖表風險。
+- 是否需要維護視窗。
+
+## 後續建議
+
+正式環境除了現有 models，可考慮新增：
+
+- `policy_decisions`
+- `evaluation_results`
+- `approval_requests`
+- `tool_executions`
+- `artifacts`
+- `tenants`
+- `users`

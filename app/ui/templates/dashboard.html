@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Guardrail Overview</h1>
+    <div class="muted">即時查看 runs、risk、policy flags 與 incidents。</div>
+  </div>
+  <a class="button" href="/dashboard/playground">New Test Run</a>
+</div>
+
+<section class="grid stats">
+  <div class="stat"><div class="stat-label">Total</div><div class="stat-value">{{ summary.total_runs }}</div></div>
+  <div class="stat"><div class="stat-label">Completed</div><div class="stat-value">{{ summary.completed }}</div></div>
+  <div class="stat"><div class="stat-label">Escalated</div><div class="stat-value">{{ summary.escalated }}</div></div>
+  <div class="stat"><div class="stat-label">Denied</div><div class="stat-value">{{ summary.denied }}</div></div>
+  <div class="stat"><div class="stat-label">Queued</div><div class="stat-value">{{ summary.queued }}</div></div>
+  <div class="stat"><div class="stat-label">Avg Risk</div><div class="stat-value">{{ "%.3f"|format(summary.average_risk_score) }}</div></div>
+</section>
+
+<section class="panel">
+  <h2>Recent Runs</h2>
+  <table>
+    <thead><tr><th>Run</th><th>Status</th><th>Task</th><th>Risk</th><th>Flags</th><th>Created</th></tr></thead>
+    <tbody>
+    {% for run in runs %}
+      <tr>
+        <td><a href="/dashboard/runs/{{ run.run_id }}">{{ run.run_id[:8] }}</a></td>
+        <td><span class="status {{ run.status }}">{{ run.status }}</span></td>
+        <td>{{ run.task_type }}</td>
+        <td>{{ "%.3f"|format(run.risk_score) }}</td>
+        <td>{% for flag in run.policy_flags %}<span class="flag">{{ flag }}</span>{% else %}<span class="muted">none</span>{% endfor %}</td>
+        <td>{{ run.created_at }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">No runs yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Recent Incidents</h2>
+  <table>
+    <thead><tr><th>Run</th><th>Severity</th><th>Code</th><th>Detail</th><th>Created</th></tr></thead>
+    <tbody>
+    {% for incident in incidents %}
+      <tr>
+        <td><a href="/dashboard/runs/{{ incident.run_id }}">{{ incident.run_id[:8] }}</a></td>
+        <td>{{ incident.severity }}</td>
+        <td>{{ incident.code }}</td>
+        <td>{{ incident.detail }}</td>
+        <td>{{ incident.created_at }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="muted">No incidents yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

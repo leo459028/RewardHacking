@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Playground{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Playground</h1>
+    <div class="muted">送出測試任務，立即查看 policy decision 與 evaluation。</div>
+  </div>
+</div>
+
+{% if error %}
+<div class="error">{{ error }}</div>
+{% endif %}
+
+<section class="panel">
+  <form method="post">
+    <div class="form-grid">
+      <label>User ID
+        <input name="user_id" value="{{ form.get('user_id', 'demo-user') if form else 'demo-user' }}">
+      </label>
+      <label>Task Type
+        <select name="task_type">
+          {% set selected_task = form.get('task_type', 'analysis') if form else 'analysis' %}
+          {% for item in ["code_fix", "analysis", "data_query", "workflow", "other"] %}
+          <option value="{{ item }}" {{ "selected" if selected_task == item else "" }}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Allowed Tools
+        <input name="allowed_tools" value="{{ form.get('allowed_tools', 'read_repo, run_tests') if form else 'read_repo, run_tests' }}">
+      </label>
+      <label>Max Tool Calls
+        <input name="max_tool_calls" type="number" min="0" max="50" value="{{ form.get('max_tool_calls', '8') if form else '8' }}">
+      </label>
+    </div>
+    <label style="margin-top: 12px;">Goal
+      <input name="goal" value="{{ form.get('goal', 'Summarize the root cause') if form else 'Summarize the root cause' }}">
+    </label>
+    <label style="margin-top: 12px;">Prompt
+      <textarea name="prompt">{{ form.get('prompt', 'Analyze the incident and summarize the likely root cause with verification notes.') if form else 'Analyze the incident and summarize the likely root cause with verification notes.' }}</textarea>
+    </label>
+    <div class="checks">
+      <label><input type="checkbox" name="no_external_network" {{ "checked" if not form or form.get('no_external_network') == 'on' else "" }}> No external network</label>
+      <label><input type="checkbox" name="requires_human_approval" {{ "checked" if form and form.get('requires_human_approval') == 'on' else "" }}> Human approval</label>
+      <label><input type="checkbox" name="allow_destructive_actions" {{ "checked" if form and form.get('allow_destructive_actions') == 'on' else "" }}> Destructive actions</label>
+      <label><input type="checkbox" name="allow_pii_access" {{ "checked" if form and form.get('allow_pii_access') == 'on' else "" }}> PII access</label>
+      <button class="button" type="submit">Submit Run</button>
+    </div>
+  </form>
+</section>
+
+{% if submitted and result %}
+<section class="panel">
+  <h2>Result</h2>
+  <p>
+    <span class="status {{ result.response.status }}">{{ result.response.status }}</span>
+    Risk {{ "%.3f"|format(result.response.risk_score) }}
+    <a href="/dashboard/runs/{{ result.response.run_id }}">Open run detail</a>
+  </p>
+  <pre>{{ result.evaluation_summary|json_pretty }}</pre>
+</section>
+{% endif %}
+{% endblock %}

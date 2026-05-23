@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Run Detail{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Run {{ run.run_id[:8] }}</h1>
+    <div class="muted">{{ run.run_id }}</div>
+  </div>
+  <a class="button secondary" href="/dashboard/runs">Back to Runs</a>
+</div>
+
+<section class="grid stats">
+  <div class="stat"><div class="stat-label">Status</div><div class="stat-value"><span class="status {{ run.status }}">{{ run.status }}</span></div></div>
+  <div class="stat"><div class="stat-label">Task</div><div class="stat-value">{{ run.task_type }}</div></div>
+  <div class="stat"><div class="stat-label">Risk</div><div class="stat-value">{{ "%.3f"|format(run.risk_score) }}</div></div>
+  <div class="stat"><div class="stat-label">Review</div><div class="stat-value">{{ "yes" if run.requires_human_review else "no" }}</div></div>
+  <div class="stat"><div class="stat-label">User</div><div class="stat-value">{{ run.user_id }}</div></div>
+  <div class="stat"><div class="stat-label">Incidents</div><div class="stat-value">{{ incidents|length }}</div></div>
+</section>
+
+<section class="panel">
+  <h2>Policy</h2>
+  <p>{{ run.decision_reason }}</p>
+  {% for flag in run.policy_flags %}<span class="flag">{{ flag }}</span>{% else %}<span class="muted">No policy flags.</span>{% endfor %}
+</section>
+
+<section class="detail-grid">
+  <div class="panel">
+    <h2>Request</h2>
+    <pre>{{ run.request_payload|json_pretty }}</pre>
+  </div>
+  <div class="panel">
+    <h2>Evaluation</h2>
+    <pre>{{ run.evaluation_summary|json_pretty }}</pre>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Execution Output</h2>
+  <pre>{{ run.execution_output or "No execution output." }}</pre>
+</section>
+
+<section class="panel">
+  <h2>Incidents</h2>
+  <table>
+    <thead><tr><th>Severity</th><th>Code</th><th>Detail</th><th>Created</th></tr></thead>
+    <tbody>
+    {% for incident in incidents %}
+      <tr><td>{{ incident.severity }}</td><td>{{ incident.code }}</td><td>{{ incident.detail }}</td><td>{{ incident.created_at }}</td></tr>
+    {% else %}
+      <tr><td colspan="4" class="muted">No incidents for this run.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
