@@ -1,44 +1,53 @@
-# 架構文件
+# 架構文件 v0.2
 
-本專案是 agent 系統的 reward-hacking guardrail 服務骨架。它把請求接收、prompt 檢查、風險評分、policy decision、受限執行、結果評估、事件流、狀態儲存與 audit trail 拆成獨立層次，目標是讓高風險任務在進入執行階段前被拒絕或轉交人工審核，並讓通過的任務在執行後仍被獨立 evaluator 檢查。
+本專案目前是 Agent Reward-Hacking Guardrail 的可展示 prototype。核心流程是同步 FastAPI API：接收 agent request、進行 prompt sanitation、risk scoring、policy decision、demo bounded execution、evaluation，最後把 run 與 incident 寫入 Postgres audit trail，並透過內建 Dashboard 呈現。
 
-## 設計目標
+目前架構版本：`v0.2.0`
 
-- 在 ingress 階段擋下明顯的 prompt injection、policy bypass 與危險 constraints。
-- 用 deterministic policy engine 做可解釋的 `allow`、`escalate`、`deny` 判斷。
-- 將風險評分、policy flags、evaluation result 與 incident event 保留為可審計資料。
-- 讓 API、worker、event bus、state store、database 可以分別擴充。
-- 為未來的人審流程、tool ACL、sandbox execution、LLM-as-judge evaluator 與 OpenTelemetry 留出整合點。
-
-## 高階架構
+## 目前架構
 
 ```mermaid
 flowchart LR
-  C["Client / UI / Agent"] --> A["FastAPI API"]
+  C["Client / Dashboard / Agent"] --> A["FastAPI API"]
   A --> S["Prompt Sanitizer"]
   S --> P["Policy Engine"]
-  P -->|allow| X["Bounded Executor<br/>目前為 DummyToolExecutor"]
-  P -->|deny / escalate| I["Incident / Policy Event"]
+  P -->|allow| X["DummyToolExecutor"]
+  P -->|deny / escalate| I["Incident Builder"]
   X --> E["Evaluator"]
-  E --> O["API Response"]
-  E -.planned.-> K["Kafka Topics"]
-  E -.planned.-> R["Redis State"]
-  E -.planned.-> D["PostgreSQL Audit DB"]
+  E --> DB[("PostgreSQL Audit Trail")]
+  I --> DB
+  DB --> UI["Dashboard UI"]
+  A --> M["Prometheus Metrics"]
 ```
 
-目前程式碼中的 API request flow 是同步路徑：`AgentOrchestrator.run()` 會在單次請求中完成 sanitizer、policy、dummy execution 與 evaluation。Kafka、Redis、PostgreSQL 的 client 與 schema 已放入專案，但 worker 與 persistence 還是預留整合點，文件中的生產架構會把它們標示為 planned 或 production hardening 項目。
+目前已接入：
 
-## 請求生命週期
+- FastAPI JSON API。
+- Server-rendered Dashboard UI。
+- Postgres audit trail。
+- Alembic migration。
+- Prometheus metrics。
+- Structured logging。
+
+目前尚未接入執行流程：
+
+- Kafka event publishing / worker consumer。
+- Redis run state / circuit breaker。
+- 真實 tool executor / sandbox。
+- Human approval workflow。
+
+## Request Flow
 
 ```mermaid
 sequenceDiagram
   participant C as Client
   participant A as FastAPI
+  participant O as AgentOrchestrator
   participant S as Prompt Sanitizer
   participant P as Policy Engine
-  participant O as Orchestrator
-  participant T as Dummy Tool Executor
+  participant T as DummyToolExecutor
   participant E as Evaluator
+  participant D as Postgres
 
   C->>A: POST /v1/agent/submit
   A->>O: AgentRequest
@@ -47,15 +56,16 @@ sequenceDiagram
   O->>P: evaluate(request, prompt_flags)
   P-->>O: PolicyDecision
 
-  alt deny or escalate
-    O-->>A: AgentResponse(status=denied/escalated)
+  alt denied or escalated
+    O-->>A: AgentResponse
+    A->>D: persist AgentRun + Incident
     A-->>C: response
-  else allow
-    O->>T: execute(request)
+  else allowed
+    O->>T: execute bounded demo steps
     T-->>O: execution_output
-    O->>E: evaluate(request, output, policy_flags)
+    O->>E: evaluate output
     E-->>O: EvaluationResult
-    O-->>A: AgentResponse(status=completed/queued)
+    A->>D: persist AgentRun and optional Incident
     A-->>C: response
   end
 ```
@@ -64,113 +74,72 @@ sequenceDiagram
 
 ### `app/api`
 
-- 定義 FastAPI routes。
-- 提供 `/v1/healthz`、`/v1/metrics`、`/v1/agent/submit`、`/v1/agent/submit-with-details`。
-- 將 request 交給 `AgentOrchestrator`。
-- 更新 Prometheus metrics。
+- 提供 `/v1/healthz`、`/v1/readyz`、`/v1/metrics`。
+- 提供 agent submit endpoints。
+- 提供 run、incident、dashboard summary 查詢 endpoints。
+- 將 submit 結果寫入 Postgres audit trail。
 
-### `app/core`
+### `app/ui`
 
-- `config.py`：集中管理環境變數與預設值。
-- `logging.py`：設定 structured logging。
-
-### `app/schemas`
-
-- 定義 Pydantic request、response、policy、event、evaluation schema。
-- 這些 schema 是 API contract、event payload 與測試的主要依據。
+- 提供內建 Dashboard：
+  - `/dashboard`
+  - `/dashboard/runs`
+  - `/dashboard/runs/{run_id}`
+  - `/dashboard/playground`
+- UI 使用 Jinja2 template，不需要獨立前端 build chain。
 
 ### `app/services`
 
-- `prompt_sanitizer.py`：以 regex 偵測 prompt injection 訊號。
-- `risk_scoring.py`：依 constraints、prompt flags、tool budget 計算 `risk_score`。
-- `policy_engine.py`：根據風險與 hard rules 回傳 `allow`、`escalate` 或 `deny`。
-- `orchestrator.py`：串接 sanitizer、policy engine、executor、evaluator。
-- `evaluator.py`：用 heuristic 評估輸出是否有捷徑、幻覺、policy violation 與 goal alignment 風險。
+- `prompt_sanitizer.py`：偵測 prompt injection 訊號。
+- `risk_scoring.py`：計算 risk score。
+- `policy_engine.py`：產生 `allow`、`escalate`、`deny` decision。
+- `orchestrator.py`：串接 sanitizer、policy、executor、evaluator。
+- `evaluator.py`：以 heuristic 評估 shortcut、hallucination、policy violation。
+- `audit_log.py`：封裝 run/incident persistence 與 dashboard summary 查詢。
 
 ### `app/infra`
 
-- `postgres.py`：SQLAlchemy async engine 與 session factory。
-- `redis.py`：Redis JSON helper。
-- `kafka.py`：AIOKafka producer factory。
-
-Postgres engine 已在 FastAPI lifespan 中初始化，API submit flow 會寫入 audit trail。Redis 與 Kafka helper 仍是後續 Phase 3/4 的整合點。
+- `postgres.py`：FastAPI lifespan 會初始化 SQLAlchemy async engine 與 session factory。
+- `kafka.py`：AIOKafka producer factory，保留給 Phase 3。
+- `redis.py`：Redis JSON helper，保留給 Phase 4。
 
 ### `app/models`
 
-- `AgentRun`：記錄 agent run、status、risk score、policy flags、result 與 review 狀態。
-- `Incident`：記錄 incident severity、code、detail。
-
-目前已導入 Alembic migration，初始 migration 會建立 `agent_runs` 與 `incidents`。
+- `AgentRun`：保存 request、status、risk score、policy flags、execution output、evaluation summary。
+- `Incident`：保存 policy/evaluation 產生的事件。
 
 ### `app/workers`
 
-- `consumer.py` 目前是 worker placeholder。
-- 未來應該消費 `agent.requests`，重新執行 policy check，執行受限 tool plan，寫入 Postgres，更新 Redis，發布 evaluation 與 incident events。
+`consumer.py` 目前仍是 placeholder。Phase 3 才會導入 Kafka consumer、retry、DLQ 與 async execution。
 
-## Policy Decision 模型
+## API Surface
 
-Policy engine 的核心輸出：
+目前主要 API：
 
-| 欄位 | 說明 |
-| --- | --- |
-| `decision` | `allow`、`escalate`、`deny` |
-| `reason` | 可顯示給 operator 的決策原因 |
-| `risk_score` | `0.0` 到 `1.0` 的風險值 |
-| `flags` | 命中的 policy flags |
-| `requires_human_review` | 是否需要人工審核 |
+- `GET /v1/healthz`
+- `GET /v1/readyz`
+- `GET /v1/metrics`
+- `POST /v1/agent/submit`
+- `POST /v1/agent/submit-with-details`
+- `GET /v1/runs`
+- `GET /v1/runs/{run_id}`
+- `GET /v1/runs/{run_id}/incidents`
+- `GET /v1/incidents`
+- `GET /v1/dashboard/summary`
 
-主要 flags：
+## Production Extension Points
 
-- `prompt_injection_signals`
-- `invalid_tool_budget`
-- `destructive_without_approval`
-- `pii_access_requested`
-- `external_network_allowed`
-- `large_tool_budget`
-
-## Reward Hacking 防護策略
-
-此專案不是保證安全的完整安全產品，而是一個可擴充的 guardrail pattern。它透過以下方式降低風險：
-
-- 不讓 agent 自行宣告任務安全完成。
-- 在執行前用 deterministic rules 擋下高風險請求。
-- 將 destructive actions、PII access、external network、large tool budget 視為可審核風險。
-- 在執行後用 evaluator 檢查捷徑訊號，例如未測試、跳過驗證、過度簡短宣稱完成。
-- 保留 `run_id`、`trace_id`、policy payload、evaluation payload，方便事後追蹤。
-
-## 生產環境建議架構
-
-```mermaid
-flowchart TB
-  LB["Load Balancer"] --> API["FastAPI API replicas"]
-  API --> DB[("PostgreSQL")]
-  API --> REDIS[("Redis")]
-  API --> KAFKA["Kafka"]
-  KAFKA --> WORKER["Worker replicas"]
-  WORKER --> SANDBOX["Sandboxed Tool Executor"]
-  WORKER --> EVAL["Evaluator Service"]
-  WORKER --> DB
-  WORKER --> REDIS
-  EVAL --> KAFKA
-  API --> PROM["Prometheus scrape"]
-  WORKER --> PROM
-```
-
-正式環境應補上：
-
-- API 與 worker 的 health/readiness checks。
-- Kafka consumer group、dead-letter topic、retry/backoff。
-- Redis circuit breaker 與 rate limit 實作。
-- Postgres migration、backup、retention policy。
-- Tool executor sandbox、artifact store、tool ACL。
-- Human approval UI 或 ticketing workflow。
-- OpenTelemetry traces 與 alerting。
+- Kafka worker：將 API ingestion 與 execution 解耦。
+- Redis state：run state、approval token、rate limit、circuit breaker。
+- Tool sandbox：替換 `DummyToolExecutor`。
+- Human approval：讓 `escalated` 成為可處理 workflow。
+- LLM-as-judge evaluator：作為 evaluator signal，不作為唯一 hard deny。
+- OpenTelemetry：補 traces 與跨 component correlation。
 
 ## 重要限制
 
-- 目前 executor 是 `DummyToolExecutor`，不會真的呼叫外部工具。
-- API 目前沒有把 events 寫入 Kafka。
-- API flow 已 persist run/incident 到 Postgres audit trail。
-- Redis helper 已定義，但尚未接入 run state。
-- Worker 是 placeholder。
-- Evaluator 是 heuristic，尚未接 LLM judge、ground-truth dataset 或 red-team benchmark。
+- `DummyToolExecutor` 不會真的呼叫外部工具。
+- API 目前不 publish events 到 Kafka。
+- Redis helper 尚未接入 run state。
+- Worker 尚未實作。
+- Dashboard 尚未加入登入權限，不應直接暴露在公開網路。

@@ -1,6 +1,8 @@
-# Migration 指南
+# Migration 指南 v0.2
 
 本專案已導入 Alembic，初始 migration 會建立：
+
+目前 migration baseline：`v0.2.0`
 
 - `agent_runs`
 - `incidents`
