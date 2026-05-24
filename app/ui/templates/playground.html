@@ -16,6 +16,9 @@
 <section class="panel">
   <form method="post">
     <div class="form-grid">
+      <label>Tenant ID
+        <input name="tenant_id" value="{{ form.get('tenant_id', 'default') if form else 'default' }}">
+      </label>
       <label>User ID
         <input name="user_id" value="{{ form.get('user_id', 'demo-user') if form else 'demo-user' }}">
       </label>

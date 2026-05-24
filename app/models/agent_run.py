@@ -9,6 +9,7 @@ class AgentRun(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False, default="default")
     user_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     task_type: Mapped[str] = mapped_column(String(32), nullable=False)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)

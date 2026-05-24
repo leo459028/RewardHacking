@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from prometheus_client import generate_latest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 from app.api.deps import get_event_publisher, get_orchestrator, get_state_store
 from app.core.config import get_settings
@@ -19,31 +19,63 @@ from app.schemas.audit import (
     ApprovalDecisionRequest,
     DashboardSummaryResponse,
     EvaluationRecord,
+    GovernanceEventRecord,
+    GovernanceSummaryResponse,
     IncidentRecord,
     RunRecord,
     ToolExecutionRecord,
     WorkerAttemptRecord,
 )
 from app.services.events import EventPublisher
+from app.services.auth import AuthContext, auth_error, get_auth_context
 from app.services.audit_log import (
     apply_approval_decision,
     dashboard_summary,
     get_run,
+    governance_summary,
     incidents_for_run,
     list_approvals,
     list_evaluation_results,
+    list_governance_events,
     list_incidents,
     list_runs,
     list_tool_executions,
     list_worker_attempts,
     observability_summary,
+    persist_governance_event,
     persist_orchestration_result,
 )
 from app.services.orchestrator import AgentOrchestrator
+from app.services.quota import check_high_risk_quota, check_request_quota
 from app.services.run_state import RunStateStore
 from app.workers.producer import make_event
 
 router = APIRouter(prefix="/v1", tags=["agent"])
+
+
+def _request_with_tenant(agent_request: AgentRequest, auth_context: AuthContext) -> AgentRequest:
+    if auth_context.enabled:
+        tenant_id = auth_context.tenant_id or "default"
+        if agent_request.tenant_id and agent_request.tenant_id != tenant_id:
+            raise auth_error(403, "tenant_mismatch", "Request tenant_id does not match API key tenant.")
+        return agent_request.model_copy(update={"tenant_id": tenant_id})
+    return agent_request.model_copy(update={"tenant_id": agent_request.tenant_id or "default"})
+
+
+def _query_tenant(tenant_id: str | None, auth_context: AuthContext) -> str | None:
+    if auth_context.enabled:
+        auth_tenant = auth_context.tenant_id or "default"
+        if tenant_id and tenant_id != auth_tenant:
+            raise auth_error(403, "tenant_mismatch", "Query tenant_id does not match API key tenant.")
+        return auth_tenant
+    return tenant_id
+
+
+def _quota_response(code: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={"error": {"code": code, "message": message}},
+    )
 
 
 @router.get("/healthz")
@@ -65,13 +97,71 @@ async def metrics():
 @router.post("/agent/submit", response_model=AgentResponse)
 async def submit_agent_request(
     agent_request: AgentRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
     orchestrator: AgentOrchestrator = Depends(get_orchestrator),
     session: AsyncSession = Depends(get_session),
     state_store: RunStateStore = Depends(get_state_store),
     event_publisher: EventPublisher = Depends(get_event_publisher),
 ):
+    agent_request = _request_with_tenant(agent_request, auth_context)
+    settings = get_settings()
+    if settings.quota_enabled:
+        quota = await check_request_quota(
+            state_store,
+            settings=settings,
+            tenant_id=agent_request.tenant_id or "default",
+        )
+        if not quota.allowed:
+            await persist_governance_event(
+                session,
+                tenant_id=agent_request.tenant_id or "default",
+                user_id=agent_request.user_id,
+                event_type="request_quota_exceeded",
+                decision="blocked",
+                reason="Tenant request quota exceeded.",
+                limit_value=quota.limit,
+                used=quota.used,
+                remaining=quota.remaining,
+                details={"bucket": quota.bucket},
+            )
+            return _quota_response(
+                "tenant_request_quota_exceeded",
+                "Tenant request quota exceeded.",
+            )
     disabled_tools = list((await state_store.get_open_breakers(agent_request.allowed_tools)).keys())
     result = orchestrator.submit(agent_request, disabled_tools=disabled_tools)
+    if settings.quota_enabled:
+        high_risk_quota = await check_high_risk_quota(
+            state_store,
+            settings=settings,
+            request=agent_request,
+            risk_score=result.response.risk_score,
+        )
+        if high_risk_quota is not None and not high_risk_quota.allowed:
+            result.response.status = "awaiting_approval"
+            result.response.decision_reason = "Tenant high-risk quota exceeded."
+            if "tenant_high_risk_quota_exceeded" not in result.response.policy_flags:
+                result.response.policy_flags.append("tenant_high_risk_quota_exceeded")
+            result.evaluation_summary["run_state"] = {
+                "status": "awaiting_approval",
+            }
+            result.evaluation_summary["approval"] = {
+                "status": "pending",
+                "reason": result.response.decision_reason,
+            }
+            await persist_governance_event(
+                session,
+                tenant_id=agent_request.tenant_id or "default",
+                user_id=agent_request.user_id,
+                run_id=result.response.run_id,
+                event_type="high_risk_quota_exceeded",
+                decision="approval_required",
+                reason=result.response.decision_reason,
+                limit_value=high_risk_quota.limit,
+                used=high_risk_quota.used,
+                remaining=high_risk_quota.remaining,
+                details={"bucket": high_risk_quota.bucket},
+            )
     await persist_orchestration_result(session, agent_request, result)
     await state_store.set_run_state(result.response.run_id, result.response.status)
     if result.response.status == "queued":
@@ -96,13 +186,71 @@ async def submit_agent_request(
 @router.post("/agent/submit-with-details")
 async def submit_agent_request_with_details(
     agent_request: AgentRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
     orchestrator: AgentOrchestrator = Depends(get_orchestrator),
     session: AsyncSession = Depends(get_session),
     state_store: RunStateStore = Depends(get_state_store),
     event_publisher: EventPublisher = Depends(get_event_publisher),
 ):
+    agent_request = _request_with_tenant(agent_request, auth_context)
+    settings = get_settings()
+    if settings.quota_enabled:
+        quota = await check_request_quota(
+            state_store,
+            settings=settings,
+            tenant_id=agent_request.tenant_id or "default",
+        )
+        if not quota.allowed:
+            await persist_governance_event(
+                session,
+                tenant_id=agent_request.tenant_id or "default",
+                user_id=agent_request.user_id,
+                event_type="request_quota_exceeded",
+                decision="blocked",
+                reason="Tenant request quota exceeded.",
+                limit_value=quota.limit,
+                used=quota.used,
+                remaining=quota.remaining,
+                details={"bucket": quota.bucket},
+            )
+            return _quota_response(
+                "tenant_request_quota_exceeded",
+                "Tenant request quota exceeded.",
+            )
     disabled_tools = list((await state_store.get_open_breakers(agent_request.allowed_tools)).keys())
     result = orchestrator.submit(agent_request, disabled_tools=disabled_tools)
+    if settings.quota_enabled:
+        high_risk_quota = await check_high_risk_quota(
+            state_store,
+            settings=settings,
+            request=agent_request,
+            risk_score=result.response.risk_score,
+        )
+        if high_risk_quota is not None and not high_risk_quota.allowed:
+            result.response.status = "awaiting_approval"
+            result.response.decision_reason = "Tenant high-risk quota exceeded."
+            if "tenant_high_risk_quota_exceeded" not in result.response.policy_flags:
+                result.response.policy_flags.append("tenant_high_risk_quota_exceeded")
+            result.evaluation_summary["run_state"] = {
+                "status": "awaiting_approval",
+            }
+            result.evaluation_summary["approval"] = {
+                "status": "pending",
+                "reason": result.response.decision_reason,
+            }
+            await persist_governance_event(
+                session,
+                tenant_id=agent_request.tenant_id or "default",
+                user_id=agent_request.user_id,
+                run_id=result.response.run_id,
+                event_type="high_risk_quota_exceeded",
+                decision="approval_required",
+                reason=result.response.decision_reason,
+                limit_value=high_risk_quota.limit,
+                used=high_risk_quota.used,
+                remaining=high_risk_quota.remaining,
+                details={"bucket": high_risk_quota.bucket},
+            )
     await persist_orchestration_result(session, agent_request, result)
     await state_store.set_run_state(result.response.run_id, result.response.status)
     if result.response.status == "queued":
@@ -138,15 +286,25 @@ async def get_approvals(
     status: str | None = None,
     reviewer: str | None = None,
     expired: bool | None = None,
+    tenant_id: str | None = None,
+    auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
-    return await list_approvals(session, status=status, reviewer=reviewer, expired=expired)
+    tenant_id = _query_tenant(tenant_id, auth_context)
+    return await list_approvals(
+        session,
+        status=status,
+        reviewer=reviewer,
+        expired=expired,
+        tenant_id=tenant_id,
+    )
 
 
 @router.post("/approvals/{run_id}/decision", response_model=RunRecord)
 async def decide_approval(
     run_id: str,
     decision: ApprovalDecisionRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
     state_store: RunStateStore = Depends(get_state_store),
     event_publisher: EventPublisher = Depends(get_event_publisher),
@@ -154,6 +312,7 @@ async def decide_approval(
     run = await apply_approval_decision(session, run_id, decision)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
+    _query_tenant(run.tenant_id, auth_context)
     await state_store.set_run_state(run.run_id, run.status)
     if run.status == "queued":
         event = make_event("agent.requested", run.run_id, {"request": run.request_payload})
@@ -165,14 +324,18 @@ async def decide_approval(
 async def get_runs(
     status: str | None = None,
     task_type: str | None = None,
+    tenant_id: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
+    tenant_id = _query_tenant(tenant_id, auth_context)
     return await list_runs(
         session,
         status=status,
         task_type=task_type,
+        tenant_id=tenant_id,
         limit=limit,
         offset=offset,
     )
@@ -181,11 +344,13 @@ async def get_runs(
 @router.get("/runs/{run_id}", response_model=RunRecord)
 async def get_run_by_id(
     run_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
     run = await get_run(session, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
+    _query_tenant(run.tenant_id, auth_context)
     return run
 
 
@@ -214,9 +379,17 @@ async def get_worker_dlq(session: AsyncSession = Depends(get_session)):
 async def get_evaluations(
     task_type: str | None = None,
     verdict: str | None = None,
+    tenant_id: str | None = None,
+    auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
-    return await list_evaluation_results(session, task_type=task_type, verdict=verdict)
+    tenant_id = _query_tenant(tenant_id, auth_context)
+    return await list_evaluation_results(
+        session,
+        task_type=task_type,
+        verdict=verdict,
+        tenant_id=tenant_id,
+    )
 
 
 @router.get("/observability/summary")
@@ -234,11 +407,20 @@ async def get_observability_summary(session: AsyncSession = Depends(get_session)
 @router.get("/incidents", response_model=list[IncidentRecord])
 async def get_incidents(
     severity: str | None = None,
+    tenant_id: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
-    return await list_incidents(session, severity=severity, limit=limit, offset=offset)
+    tenant_id = _query_tenant(tenant_id, auth_context)
+    return await list_incidents(
+        session,
+        severity=severity,
+        tenant_id=tenant_id,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/runs/{run_id}/incidents", response_model=list[IncidentRecord])
@@ -263,4 +445,38 @@ async def get_dashboard_summary(session: AsyncSession = Depends(get_session)):
         failed=summary.failed,
         average_risk_score=summary.average_risk_score,
         recent_incidents=summary.recent_incidents,
+    )
+
+
+@router.get("/governance/events", response_model=list[GovernanceEventRecord])
+async def get_governance_events(
+    tenant_id: str | None = None,
+    event_type: str | None = None,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    tenant_id = _query_tenant(tenant_id, auth_context)
+    return await list_governance_events(
+        session,
+        tenant_id=tenant_id,
+        event_type=event_type,
+    )
+
+
+@router.get("/governance/summary", response_model=GovernanceSummaryResponse)
+async def get_governance_summary(
+    tenant_id: str | None = None,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    tenant_id = _query_tenant(tenant_id, auth_context) or "default"
+    summary = await governance_summary(session, tenant_id=tenant_id)
+    return GovernanceSummaryResponse(
+        tenant_id=summary.tenant_id,
+        total_runs=summary.total_runs,
+        awaiting_approval=summary.awaiting_approval,
+        denied=summary.denied,
+        quota_limited=summary.quota_limited,
+        average_risk_score=summary.average_risk_score,
+        recent_events=summary.recent_events,
     )

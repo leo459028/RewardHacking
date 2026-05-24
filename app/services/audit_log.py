@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.models.approval_event import ApprovalEvent
 from app.models.agent_run import AgentRun
 from app.models.evaluation_result import EvaluationResultRecord
+from app.models.governance_event import GovernanceEvent
 from app.models.incident import Incident
 from app.models.tool_execution import ToolExecution
 from app.models.worker_attempt import WorkerAttempt
@@ -40,6 +41,17 @@ class ObservabilitySummary:
     approvals: dict[str, int]
     evaluator: dict[str, int]
     slo: dict[str, int]
+
+
+@dataclass(frozen=True)
+class GovernanceSummary:
+    tenant_id: str
+    total_runs: int
+    awaiting_approval: int
+    denied: int
+    quota_limited: int
+    average_risk_score: float
+    recent_events: list[GovernanceEvent]
 
 
 def _requires_review(status: str, summary: dict[str, Any]) -> bool:
@@ -251,6 +263,7 @@ async def list_evaluation_results(
     *,
     task_type: str | None = None,
     verdict: str | None = None,
+    tenant_id: str | None = None,
     limit: int = 100,
 ) -> list[EvaluationResultRecord]:
     stmt = select(EvaluationResultRecord).order_by(EvaluationResultRecord.created_at.desc()).limit(limit)
@@ -258,7 +271,111 @@ async def list_evaluation_results(
         stmt = stmt.where(EvaluationResultRecord.task_type == task_type)
     if verdict:
         stmt = stmt.where(EvaluationResultRecord.verdict == verdict)
+    if tenant_id:
+        stmt = stmt.join(AgentRun, AgentRun.run_id == EvaluationResultRecord.run_id).where(
+            AgentRun.tenant_id == tenant_id
+        )
     return list((await session.scalars(stmt)).all())
+
+
+async def persist_governance_event(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    user_id: str = "",
+    run_id: str = "",
+    event_type: str,
+    decision: str,
+    reason: str,
+    limit_value: int = 0,
+    used: int = 0,
+    remaining: int = 0,
+    details: dict[str, Any] | None = None,
+) -> GovernanceEvent:
+    event = GovernanceEvent(
+        tenant_id=tenant_id,
+        user_id=user_id,
+        run_id=run_id,
+        event_type=event_type,
+        decision=decision,
+        reason=reason,
+        limit_value=limit_value,
+        used=used,
+        remaining=remaining,
+        details=details or {},
+    )
+    session.add(event)
+    await session.commit()
+    await session.refresh(event)
+    return event
+
+
+async def list_governance_events(
+    session: AsyncSession,
+    *,
+    tenant_id: str | None = None,
+    event_type: str | None = None,
+    limit: int = 100,
+) -> list[GovernanceEvent]:
+    stmt = select(GovernanceEvent).order_by(GovernanceEvent.created_at.desc()).limit(limit)
+    if tenant_id:
+        stmt = stmt.where(GovernanceEvent.tenant_id == tenant_id)
+    if event_type:
+        stmt = stmt.where(GovernanceEvent.event_type == event_type)
+    return list((await session.scalars(stmt)).all())
+
+
+async def governance_summary(
+    session: AsyncSession,
+    *,
+    tenant_id: str = "default",
+) -> GovernanceSummary:
+    total_runs = (
+        await session.scalar(
+            select(func.count()).select_from(AgentRun).where(AgentRun.tenant_id == tenant_id)
+        )
+        or 0
+    )
+    average_risk_score = (
+        await session.scalar(
+            select(func.avg(AgentRun.risk_score)).where(AgentRun.tenant_id == tenant_id)
+        )
+        or 0.0
+    )
+
+    async def count_status(status: str) -> int:
+        return (
+            await session.scalar(
+                select(func.count())
+                .select_from(AgentRun)
+                .where(AgentRun.tenant_id == tenant_id, AgentRun.status == status)
+            )
+            or 0
+        )
+
+    quota_limited = (
+        await session.scalar(
+            select(func.count())
+            .select_from(GovernanceEvent)
+            .where(
+                GovernanceEvent.tenant_id == tenant_id,
+                GovernanceEvent.event_type.in_(
+                    ["request_quota_exceeded", "high_risk_quota_exceeded"]
+                ),
+            )
+        )
+        or 0
+    )
+
+    return GovernanceSummary(
+        tenant_id=tenant_id,
+        total_runs=total_runs,
+        awaiting_approval=await count_status("awaiting_approval"),
+        denied=await count_status("denied"),
+        quota_limited=quota_limited,
+        average_risk_score=round(float(average_risk_score), 3),
+        recent_events=await list_governance_events(session, tenant_id=tenant_id, limit=10),
+    )
 
 
 async def persist_orchestration_result(
@@ -271,6 +388,7 @@ async def persist_orchestration_result(
     await _persist_approval_required(session, request, result, summary)
     run = AgentRun(
         run_id=response.run_id,
+        tenant_id=request.tenant_id or "default",
         user_id=request.user_id,
         task_type=request.task_type,
         prompt=request.prompt,
@@ -320,6 +438,7 @@ async def update_orchestration_result(
     summary = dict(result.evaluation_summary)
     await _persist_approval_required(session, request, result, summary)
     run.status = response.status
+    run.tenant_id = request.tenant_id or run.tenant_id or "default"
     run.decision_reason = response.decision_reason
     run.risk_score = response.risk_score
     run.policy_flags = response.policy_flags
@@ -357,6 +476,7 @@ async def list_runs(
     *,
     status: str | None = None,
     task_type: str | None = None,
+    tenant_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[AgentRun]:
@@ -365,6 +485,8 @@ async def list_runs(
         stmt = stmt.where(AgentRun.status == status)
     if task_type:
         stmt = stmt.where(AgentRun.task_type == task_type)
+    if tenant_id:
+        stmt = stmt.where(AgentRun.tenant_id == tenant_id)
     return list((await session.scalars(stmt)).all())
 
 
@@ -376,12 +498,15 @@ async def list_incidents(
     session: AsyncSession,
     *,
     severity: str | None = None,
+    tenant_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[Incident]:
     stmt = select(Incident).order_by(Incident.created_at.desc()).limit(limit).offset(offset)
     if severity:
         stmt = stmt.where(Incident.severity == severity)
+    if tenant_id:
+        stmt = stmt.join(AgentRun, AgentRun.run_id == Incident.run_id).where(AgentRun.tenant_id == tenant_id)
     return list((await session.scalars(stmt)).all())
 
 
@@ -396,6 +521,7 @@ async def list_approvals(
     status: str | None = None,
     reviewer: str | None = None,
     expired: bool | None = None,
+    tenant_id: str | None = None,
     limit: int = 100,
 ) -> list[AgentRun]:
     stmt = (
@@ -412,6 +538,8 @@ async def list_approvals(
     if expired is not None:
         now = datetime.now(timezone.utc)
         stmt = stmt.where((ApprovalEvent.expired.is_(expired)) | (ApprovalEvent.expires_at <= now if expired else ApprovalEvent.expires_at > now))
+    if tenant_id:
+        stmt = stmt.where(AgentRun.tenant_id == tenant_id)
     return list((await session.scalars(stmt)).unique().all())
 
 

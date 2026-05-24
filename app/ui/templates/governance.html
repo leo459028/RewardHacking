@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Governance | 治理中心{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Governance</h1>
+    <div class="title-note">治理中心</div>
+    <div class="muted">依 tenant 檢視 quota、risk 與治理事件。</div>
+  </div>
+  <a class="button" href="/dashboard/playground">New Test Run</a>
+</div>
+
+<section class="panel">
+  <form class="filters" method="get">
+    <label>Tenant
+      <select name="tenant_id">
+        <option value="" {{ "selected" if not tenant_id else "" }}>All / first tenant summary</option>
+        {% for item in tenant_ids %}
+        <option value="{{ item }}" {{ "selected" if tenant_id == item else "" }}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>&nbsp;<button class="button" type="submit">Apply</button></label>
+    <label>&nbsp;<a class="button secondary" href="/dashboard/governance">Reset</a></label>
+  </form>
+</section>
+
+<section class="grid stats">
+  <div class="stat"><div class="stat-label">Tenant</div><div class="stat-value">{{ summary.tenant_id }}</div></div>
+  <div class="stat"><div class="stat-label">Runs</div><div class="stat-value">{{ summary.total_runs }}</div></div>
+  <div class="stat"><div class="stat-label">Awaiting</div><div class="stat-value">{{ summary.awaiting_approval }}</div></div>
+  <div class="stat"><div class="stat-label">Denied</div><div class="stat-value">{{ summary.denied }}</div></div>
+  <div class="stat"><div class="stat-label">Quota Limited</div><div class="stat-value">{{ summary.quota_limited }}</div></div>
+  <div class="stat"><div class="stat-label">Avg Risk</div><div class="stat-value">{{ "%.3f"|format(summary.average_risk_score) }}</div></div>
+</section>
+
+<section class="panel">
+  <h2>Recent Governance Events <span class="heading-note">近期治理事件</span></h2>
+  <table>
+    <thead><tr><th>Tenant</th><th>User</th><th>Event</th><th>Decision</th><th>Used</th><th>Reason</th><th>Created</th></tr></thead>
+    <tbody>
+    {% for event in events %}
+      <tr>
+        <td>{{ event.tenant_id }}</td>
+        <td>{{ event.user_id }}</td>
+        <td>{{ event.event_type }}</td>
+        <td>{{ event.decision }}</td>
+        <td>{{ event.used }} / {{ event.limit_value }}</td>
+        <td>{{ event.reason }}</td>
+        <td>{{ event.created_at }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="muted">No governance events yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Tenant Runs <span class="heading-note">租戶執行紀錄</span></h2>
+  <table>
+    <thead><tr><th>Run</th><th>Tenant</th><th>Status</th><th>Task</th><th>Risk</th><th>Created</th></tr></thead>
+    <tbody>
+    {% for run in runs %}
+      <tr>
+        <td><a href="/dashboard/runs/{{ run.run_id }}">{{ run.run_id[:8] }}</a></td>
+        <td>{{ run.tenant_id }}</td>
+        <td><span class="status {{ run.status }}">{{ run.status }}</span></td>
+        <td>{{ run.task_type }}</td>
+        <td>{{ "%.3f"|format(run.risk_score) }}</td>
+        <td>{{ run.created_at }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">No runs found.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

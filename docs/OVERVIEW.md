@@ -1,12 +1,12 @@
-# 專案文件總覽 v0.3
+# 專案文件總覽 v0.6
 
 本目錄收錄 Agent Reward-Hacking Guardrail 的繁體中文文件。專有名詞保留英文，方便與程式碼、API schema、infra component 對照。
 
 ## 版本
 
-目前版本：`v0.5.0`
+目前版本：`v0.6.0`
 
-`v0.5.0` 對應 Guarded Async Execution Hardening + Evaluator Observability。此版本已完成 queued submit、Kafka request event、worker consumer、Redis run state / idempotency / circuit breaker、approval API、bounded executor transcript、worker retry/DLQ、approval TTL/event、tool execution audit、evaluation result、內建 Dashboard worker/observability 頁、測試與 GitHub CI 基線。
+`v0.6.0` 對應 Tenant Governance MVP。此版本保留 v0.5 的 queued submit、Kafka request event、worker consumer、Redis run state / idempotency / circuit breaker、approval API、bounded executor transcript、worker retry/DLQ、approval TTL/event、tool execution audit、evaluation result、內建 Dashboard worker/observability 頁，並新增 `tenant_id` audit、API key auth、Dashboard Basic Auth、tenant quota、governance events、governance summary API 與 Governance Dashboard。
 
 ## 專案定位
 
@@ -18,7 +18,8 @@
 - 對 destructive 或需審核任務建立 approval queue，不直接執行工具。
 - 用 evaluator 檢查輸出是否有 reward hacking、shortcut、未驗證或 policy violation 訊號。
 - 將 run、policy decision、evaluation summary 與 incident 保存到 Postgres audit trail。
-- 用內建 dashboard 查看 runs、incidents、risk score、event timeline、tool transcript、approval queue 與 playground 測試結果。
+- 用內建 dashboard 查看 runs、incidents、risk score、event timeline、tool transcript、approval queue、tenant governance 與 playground 測試結果。
+- 以最小 API key auth 對應 tenant，並以 Redis quota 對 tenant request 與 high-risk request 做 fail-closed 控制。
 
 ## 文件清單
 
@@ -60,6 +61,7 @@ http://localhost:8000/dashboard
 curl -X POST http://localhost:8000/v1/agent/submit-with-details \
   -H "Content-Type: application/json" \
   -d '{
+    "tenant_id": "default",
     "user_id": "u-1001",
     "task_type": "analysis",
     "prompt": "Analyze the incident and summarize the likely root cause.",
@@ -95,6 +97,9 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
 - Kafka request publish 與 worker consumer。
 - Redis run state、idempotency key 與 circuit breaker。
 - Approval queue API 與 Dashboard。
+- Tenant-aware audit、API key auth 與 Dashboard Basic Auth MVP。
+- Tenant request quota、high-risk quota fail-closed 與 governance events。
+- `/v1/governance/events`、`/v1/governance/summary` 與 `/dashboard/governance`。
 - Docker Compose for Postgres、Redis、Kafka、API、worker。
 - API 與 service unit tests。
 
@@ -102,7 +107,7 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
 
 - 真實 tool sandbox 與 artifact store。
 - Kafka consumer lag alert。
-- Auth、tenant isolation 與 production observability。
+- 完整 OAuth/RBAC、tenant 管理 UI、retention governance、backup/restore、secret rotation 與 production observability。
 
 ## 閱讀順序建議
 
