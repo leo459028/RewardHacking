@@ -1,9 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Run Detail{% endblock %}
+{% block title %}Run Detail | 執行詳情{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
     <h1>Run {{ run.run_id[:8] }}</h1>
+    <div class="title-note">執行詳情</div>
     <div class="muted">{{ run.run_id }}</div>
   </div>
   <a class="button secondary" href="/dashboard/runs">Back to Runs</a>
@@ -19,25 +20,25 @@
 </section>
 
 <section class="panel">
-  <h2>Policy</h2>
+  <h2>Policy <span class="heading-note">政策判定</span></h2>
   <p>{{ run.decision_reason }}</p>
   {% for flag in run.policy_flags %}<span class="flag">{{ flag }}</span>{% else %}<span class="muted">No policy flags.</span>{% endfor %}
 </section>
 
 <section class="detail-grid">
   <div class="panel">
-    <h2>Request</h2>
+    <h2>Request <span class="heading-note">請求內容</span></h2>
     <pre>{{ run.request_payload|json_pretty }}</pre>
   </div>
   <div class="panel">
-    <h2>Evaluation / State</h2>
+    <h2>Evaluation / State <span class="heading-note">評估與狀態</span></h2>
     <pre>{{ run.evaluation_summary|json_pretty }}</pre>
   </div>
 </section>
 
 <section class="detail-grid">
   <div class="panel">
-    <h2>Event Timeline</h2>
+    <h2>Event Timeline <span class="heading-note">事件時間線</span></h2>
     <table>
       <thead><tr><th>Event</th><th>Status</th><th>Time</th></tr></thead>
       <tbody>
@@ -50,7 +51,7 @@
     </table>
   </div>
   <div class="panel">
-    <h2>Tool Transcript</h2>
+    <h2>Tool Transcript <span class="heading-note">工具執行紀錄</span></h2>
     <table>
       <thead><tr><th>Tool</th><th>Status</th><th>Detail</th></tr></thead>
       <tbody>
@@ -66,7 +67,7 @@
 
 <section class="detail-grid">
   <div class="panel">
-    <h2>Worker Attempts</h2>
+    <h2>Worker Attempts <span class="heading-note">Worker 嘗試紀錄</span></h2>
     <table>
       <thead><tr><th>Attempt</th><th>Status</th><th>Failure</th><th>Next Retry</th></tr></thead>
       <tbody>
@@ -79,7 +80,7 @@
     </table>
   </div>
   <div class="panel">
-    <h2>Tool Executions</h2>
+    <h2>Tool Executions <span class="heading-note">工具呼叫明細</span></h2>
     <table>
       <thead><tr><th>Tool</th><th>Status</th><th>Sandbox</th></tr></thead>
       <tbody>
@@ -95,18 +96,18 @@
 
 {% if run.evaluation_summary.get("approval") %}
 <section class="panel">
-  <h2>Approval</h2>
+  <h2>Approval <span class="heading-note">審核狀態</span></h2>
   <pre>{{ run.evaluation_summary.get("approval")|json_pretty }}</pre>
 </section>
 {% endif %}
 
 <section class="panel">
-  <h2>Execution Output</h2>
+  <h2>Execution Output <span class="heading-note">執行輸出</span></h2>
   <pre>{{ run.execution_output or "No execution output." }}</pre>
 </section>
 
 <section class="panel">
-  <h2>Incidents</h2>
+  <h2>Incidents <span class="heading-note">事件紀錄</span></h2>
   <table>
     <thead><tr><th>Severity</th><th>Code</th><th>Detail</th><th>Created</th></tr></thead>
     <tbody>

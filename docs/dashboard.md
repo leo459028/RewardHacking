@@ -1,34 +1,40 @@
 # Dashboard 使用說明 v0.5
 
-本專案提供 FastAPI 內建的 server-rendered dashboard，不需要額外啟動 React/Vite 前端。啟動 API 後可直接開啟：
-
-目前 Dashboard 版本：`v0.5.0`
+本專案提供 FastAPI 內建的 server-rendered Dashboard，不需要額外啟動 React/Vite 前端。啟動 API 後可直接開啟：
 
 ```text
 http://localhost:8000/dashboard
 ```
 
-## 頁面
+目前 Dashboard 版本：`v0.5.0`
 
-| 路徑 | 用途 |
-| --- | --- |
-| `/dashboard` | 總覽 runs、status 分布、平均 risk score、近期 incidents |
-| `/dashboard/runs` | 查詢 run list，支援 status 與 task type 篩選，包含 queued/running/awaiting_approval/failed |
-| `/dashboard/runs/{run_id}` | 查看單一 run 的 request、policy、execution、evaluation、event timeline、tool transcript、approval state、incident |
-| `/dashboard/approvals` | 查詢 awaiting approval runs，並支援 approve once、deny、request changes |
-| `/dashboard/worker` | 查詢 worker attempts、retry failure reason 與 DLQ |
-| `/dashboard/observability` | 查詢 worker、incident、approval、evaluator 與 SLO summary |
-| `/dashboard/playground` | 用表單送出測試 AgentRequest，立即產生 queued、awaiting approval 或 denied run |
+## 雙語標題規則
+
+Dashboard 的頁面大標題以英文為主，並在標題下方提供繁體中文標註，方便同時對照 API、資料表與操作語意。表格欄位、狀態值與技術 identifier 仍保留英文或原始值，例如 `queued`、`completed`、`awaiting_approval`、`run_id`、`task_type`、`DLQ` 與 `SLO`。
+
+`/docs` 是 FastAPI 自動產生的 OpenAPI UI，不屬於本 Dashboard 雙語標題調整範圍。
+
+## 頁面入口
+
+| 路由 | 英文標題 / 中文標註 | 用途 |
+| --- | --- | --- |
+| `/dashboard` | `Guardrail Overview` / 防護總覽 | 總覽 runs、status 分布、平均 risk score、policy flags 與近期 incidents。 |
+| `/dashboard/runs` | `Runs` / 執行紀錄 | 查詢 run list，支援 status 與 task type 篩選，包含 `queued`、`running`、`awaiting_approval`、`failed` 等狀態。 |
+| `/dashboard/runs/{run_id}` | `Run {id}` / 執行詳情 | 查看單一 run 的 request、policy、execution、evaluation、event timeline、tool transcript、worker attempts、tool executions、approval state 與 incidents。 |
+| `/dashboard/approvals` | `Approval Queue` / 審核佇列 | 查詢 awaiting approval runs，並支援 `approve_once`、`deny`、`request_changes`。 |
+| `/dashboard/worker` | `Worker Operations` / Worker 作業狀態 | 查詢 worker attempts、retry failure reason 與 DLQ entries。 |
+| `/dashboard/observability` | `Observability Trends` / 可觀測性趨勢 | 查詢 worker、incident、approval、evaluator 與 SLO summary。 |
+| `/dashboard/playground` | `Playground` / 測試沙盒 | 用表單送出測試 AgentRequest，立即產生 `queued`、`awaiting_approval` 或 `denied` run。 |
 
 ## 使用流程
 
-1. 套用 migration：
+1. 執行 migration：
 
 ```bash
 alembic upgrade head
 ```
 
-如果使用完整 Docker Compose stack，也可以在 API container 內確認 migration：
+如果使用 Docker Compose stack，可以在 API container 內執行 migration：
 
 ```bash
 docker compose exec -T api alembic upgrade head
@@ -40,7 +46,7 @@ docker compose exec -T api alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-或使用 Docker Compose：
+或啟動 Docker Compose：
 
 ```bash
 docker compose up -d --build
@@ -49,10 +55,10 @@ docker compose up -d --build
 3. 開啟 `/dashboard/playground`，送出低風險 request。
 4. 回到 `/dashboard/runs`，確認 run 先出現為 `queued`；Docker Compose worker 消費後會更新為 `completed`。
 5. 從 `/dashboard/runs/{run_id}` 確認 event timeline、tool transcript、worker attempts、tool executions 與 evaluation summary。
-6. 再送出一筆高風險或 destructive request，例如包含 `Ignore previous instructions`、允許 external network、PII 或 destructive actions。
-7. 到 `/dashboard/approvals` 查看 awaiting approval run，測試 approve once、deny 或 request changes。
-8. 回到 `/dashboard` 查看 queued/running/awaiting approval/failed 統計是否更新。
-9. 到 `/dashboard/worker` 確認 retry/DLQ 狀態。
+6. 送出需要人工審核的 destructive request，例如開啟 destructive actions 或 PII access。
+7. 到 `/dashboard/approvals` 查看 awaiting approval run，測試 `approve_once`、`deny` 或 `request_changes`。
+8. 回到 `/dashboard` 查看 queued、running、awaiting approval、failed 統計是否更新。
+9. 到 `/dashboard/worker` 確認 retry 與 DLQ 狀態。
 10. 到 `/dashboard/observability` 確認 incident、approval、worker、evaluator 與 SLO summary。
 
 ## 資料來源
@@ -61,11 +67,14 @@ Dashboard 不使用假資料；所有資料來自 Postgres audit tables：
 
 - `agent_runs`
 - `incidents`
+- `worker_attempts`
+- `tool_executions`
+- `evaluation_results`
 
 `POST /v1/agent/submit`、`POST /v1/agent/submit-with-details`、worker update 與 approval decision 都會寫入同一份 audit trail，因此 API 與 UI 看到的是同一批資料。
 
-## 注意事項
+## 目前限制
 
-- 目前 dashboard 沒有登入權限控管，不應直接暴露在公開網路。
-- 目前 execution 是 `BoundedToolExecutor`，會記錄 tool transcript 與 sandbox boundary policy，但不是正式 OS sandbox。
+- 目前 Dashboard 沒有登入權限控管，不應直接暴露在公開網路。
+- 目前 execution 使用 `BoundedToolExecutor`，會記錄 tool transcript 與 sandbox boundary policy，但不是完整 OS sandbox。
 - Kafka worker、Redis state、retry/DLQ、approval TTL/event 與 evaluator result 已納入 `v0.5.0`；auth、多 reviewer queue、consumer lag alert 與 OpenTelemetry 仍在後續版本。
