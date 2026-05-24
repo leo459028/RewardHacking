@@ -1,4 +1,4 @@
-# Roadmap v0.3
+# Roadmap v0.5
 
 本 roadmap 將專案從 prototype 推進到可逐步承擔 guardrail 職責的服務。`v0.3.0` 起不再把 Kafka、Redis、Tool Executor、Approval 視為互不相干的線性 phase，而是先建立一條可展示、可查詢、可審計的產品閉環，再把完整 hardening 與 production governance 放到後續版本。
 
@@ -7,9 +7,9 @@
 | 版本 | 狀態 | 主軸 | 說明 |
 | --- | --- | --- | --- |
 | `v0.2.0` | 已完成 | 同步 API + Audit + Dashboard prototype | 建立 request、policy、demo execution、evaluation、Postgres audit trail 與 server-rendered Dashboard。 |
-| `v0.3.0` | 目前版本 | Guarded Async Execution MVP | 合併 Kafka、Redis、Approval、Executor Interface 的最小閉環。 |
-| `v0.4.0` | 下一階段 | Execution Hardening | 補 retry/DLQ、完整 approval workflow、tool transcript 查詢、resource/cost limit 與 sandbox 強化。 |
-| `v0.5.0` | 規劃中 | Evaluator + Observability | 補 task-specific evaluator、LLM-as-judge signal、worker metrics、SLO 與 Dashboard 趨勢。 |
+| `v0.3.0` | 已完成 | Guarded Async Execution MVP | 合併 Kafka、Redis、Approval、Executor Interface 的最小閉環。 |
+| `v0.4.0` | 已完成 | Execution Hardening | 補 worker retry/DLQ、approval TTL/event、tool execution audit、resource/cost limit 與 sandbox policy。 |
+| `v0.5.0` | 目前版本 | Evaluator + Observability | 補 task-specific evaluator、deterministic judge signal、worker metrics、SLO 與 Dashboard 趨勢。 |
 | `v0.6+` | 規劃中 | Production Governance | 補 auth、tenant isolation、quota、backup/restore、retention、secret rotation。 |
 
 ## Milestone：v0.2.0 / Phase 0-2 + Dashboard
@@ -68,16 +68,16 @@
 
 目標：把 `v0.3.0` 的最小閉環強化成更可靠的執行層。
 
-預計項目：
+已完成項目：
 
 - Worker retry/backoff。
-- Dead-letter topic，例如 `agent.requests.dlq`。
+- DLQ audit 查詢，保留 Kafka dead-letter topic 作為後續部署延伸。
 - Worker failure reason 與 retry attempt 寫入 audit trail。
-- 完整 approval workflow：reviewer、decision reason、TTL、request changes、審核事件查詢。
-- Tool transcript 獨立查詢與 artifact refs 查詢。
-- Tool ACL 規則外部化，依 task type 管理允許工具。
-- 加入 timeout、resource limit、cost limit。
-- Sandbox 強化：network、filesystem、process、secret 邊界。
+- Approval workflow：reviewer、decision reason、TTL、request changes、審核事件查詢。
+- Tool transcript 獨立查詢與 artifact refs 查詢，落到 `tool_executions`。
+- Tool ACL 依 task type 管理允許工具。
+- 加入 timeout、resource limit、cost limit 的 audit policy。
+- Sandbox boundary policy：network、filesystem、process、secret 邊界以 fail-closed audit contract 記錄。
 
 完成條件：
 
@@ -89,16 +89,16 @@
 
 目標：讓評估訊號與營運觀測更接近真實安全需求。
 
-預計項目：
+已完成項目：
 
 - 建立 task-specific rubrics。
 - 對 code tasks 檢查 diff、test result、lint result。
 - 對 data_query 檢查來源與 query lineage。
-- 導入 LLM-as-judge，但只作為 evaluator signal，不作為唯一 hard deny。
-- 建立 labeled evaluation dataset。
-- 追蹤 evaluator precision / recall。
+- 導入 deterministic fake judge signal，保留 LLM-as-judge 插拔點，且不作為唯一 hard deny。
+- 建立 labeled evaluation dataset 的 repo fixture 方向，完整資料集管理保留後續擴充。
+- 追蹤 evaluator pass/review 作為 precision / recall 報表前置資料。
 - Worker metrics：job duration、completion latency、failure count。
-- Dashboard 趨勢：incident rate、approval turnaround、worker backlog。
+- Dashboard 趨勢：incident、approval、worker DLQ、evaluator verdict summary。
 - SLO：API latency、worker completion latency、incident response。
 
 完成條件：

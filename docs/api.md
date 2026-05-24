@@ -1,8 +1,8 @@
-# API 文件 v0.3
+# API 文件 v0.5
 
 API 由 FastAPI 提供，所有 JSON API route 都掛在 `/v1` prefix 下。啟動後可透過 OpenAPI UI 查看互動式文件：
 
-目前 API 版本：`v0.3.0`
+目前 API 版本：`v0.5.0`
 
 - `http://localhost:8000/docs`
 - `http://localhost:8000/redoc`
@@ -22,6 +22,11 @@ API 由 FastAPI 提供，所有 JSON API route 都掛在 `/v1` prefix 下。啟�
 | `GET` | `/v1/incidents` | 查詢 incidents |
 | `GET` | `/v1/approvals` | 查詢 awaiting approval 的 runs |
 | `POST` | `/v1/approvals/{run_id}/decision` | 對 awaiting approval run 做審核決策 |
+| `GET` | `/v1/runs/{run_id}/worker-attempts` | 查詢單一 run 的 worker retry/DLQ attempts |
+| `GET` | `/v1/runs/{run_id}/tool-executions` | 查詢單一 run 的 tool execution audit |
+| `GET` | `/v1/worker/dlq` | 查詢 dead-lettered worker attempts |
+| `GET` | `/v1/evaluations` | 查詢 evaluator results，支援 `task_type` 與 `verdict` |
+| `GET` | `/v1/observability/summary` | 查詢 worker、approval、incident、evaluator 與 SLO summary |
 | `GET` | `/v1/dashboard/summary` | Dashboard summary API |
 
 Dashboard UI 另提供：
@@ -30,6 +35,8 @@ Dashboard UI 另提供：
 - `/dashboard/runs`
 - `/dashboard/runs/{run_id}`
 - `/dashboard/approvals`
+- `/dashboard/worker`
+- `/dashboard/observability`
 - `/dashboard/playground`
 
 ## Health / Readiness
@@ -136,7 +143,11 @@ Dashboard UI 另提供：
 
 ## Approval API
 
-`GET /v1/approvals` 回傳所有目前 `status=awaiting_approval` 的 runs。
+`GET /v1/approvals` 回傳所有目前 `status=awaiting_approval` 的 runs，並支援：
+
+- `status`
+- `reviewer`
+- `expired`
 
 `POST /v1/approvals/{run_id}/decision`
 
@@ -153,6 +164,18 @@ Dashboard UI 另提供：
 - `approve_once`：把 run 放回 `queued`，worker 可再次處理。
 - `deny`：把 run 標記為 `denied` 並建立 approval incident。
 - `request_changes`：維持 `awaiting_approval`，並記錄 reviewer reason。
+
+## Worker / Tool / Evaluation 查詢
+
+`GET /v1/runs/{run_id}/worker-attempts` 回傳 attempt number、status、failure reason、next retry time。
+
+`GET /v1/worker/dlq` 回傳 `status=dlq` 的 worker attempts。
+
+`GET /v1/runs/{run_id}/tool-executions` 回傳 tool name、status、detail、sandbox policy 與 artifact refs。
+
+`GET /v1/evaluations?task_type=code_fix&verdict=pass` 回傳 evaluator final score、task rubric、judge signal 與 explanation。LLM-as-judge 目前預設為 deterministic fake signal，`used_for_hard_deny=false`。
+
+`GET /v1/observability/summary` 回傳 worker completed/retry/DLQ、incident count、approval count、evaluator verdict count 與 SLO target。
 
 ## 範例：低風險請求
 
@@ -214,4 +237,4 @@ schema 不合法時回傳統一 error envelope：
 }
 ```
 
-正式環境建議後續補上 request id / trace id response header、auth error、rate limit error、approval TTL error 與 worker retry/DLQ error。
+正式環境建議後續補上 request id / trace id response header、auth error、rate limit error、Kafka consumer lag alert 與 OpenTelemetry tracing。

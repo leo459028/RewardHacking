@@ -7,13 +7,22 @@ from starlette.responses import Response
 from app.api.deps import get_event_publisher, get_orchestrator, get_state_store
 from app.core.config import get_settings
 from app.infra.postgres import get_session
-from app.observability.metrics import EVALUATION_SCORE, POLICY_RISK, REQUESTS_TOTAL
+from app.observability.metrics import (
+    EVALUATION_SCORE,
+    EVALUATOR_VERDICTS_TOTAL,
+    POLICY_DECISIONS_TOTAL,
+    POLICY_RISK,
+    REQUESTS_TOTAL,
+)
 from app.schemas.agent import AgentRequest, AgentResponse
 from app.schemas.audit import (
     ApprovalDecisionRequest,
     DashboardSummaryResponse,
+    EvaluationRecord,
     IncidentRecord,
     RunRecord,
+    ToolExecutionRecord,
+    WorkerAttemptRecord,
 )
 from app.services.events import EventPublisher
 from app.services.audit_log import (
@@ -22,8 +31,12 @@ from app.services.audit_log import (
     get_run,
     incidents_for_run,
     list_approvals,
+    list_evaluation_results,
     list_incidents,
     list_runs,
+    list_tool_executions,
+    list_worker_attempts,
+    observability_summary,
     persist_orchestration_result,
 )
 from app.services.orchestrator import AgentOrchestrator
@@ -74,6 +87,7 @@ async def submit_agent_request(
         )
 
     REQUESTS_TOTAL.labels(status=result.response.status).inc()
+    POLICY_DECISIONS_TOTAL.labels(status=result.response.status).inc()
     POLICY_RISK.observe(result.response.risk_score)
 
     return result.response
@@ -103,14 +117,14 @@ async def submit_agent_request_with_details(
             event,
         )
     REQUESTS_TOTAL.labels(status=result.response.status).inc()
+    POLICY_DECISIONS_TOTAL.labels(status=result.response.status).inc()
     POLICY_RISK.observe(result.response.risk_score)
     score = 0.0
     if isinstance(result.evaluation_summary, dict):
-        score = (
-            result.evaluation_summary.get("evaluation_event", {})
-            .get("payload", {})
-            .get("final_score", 0.0)
-        )
+        payload = result.evaluation_summary.get("evaluation_event", {}).get("payload", {})
+        score = payload.get("final_score", 0.0)
+        if payload.get("verdict"):
+            EVALUATOR_VERDICTS_TOTAL.labels(verdict=payload["verdict"]).inc()
     EVALUATION_SCORE.observe(score)
     return {
         "response": result.response.model_dump(),
@@ -121,9 +135,12 @@ async def submit_agent_request_with_details(
 
 @router.get("/approvals", response_model=list[RunRecord])
 async def get_approvals(
+    status: str | None = None,
+    reviewer: str | None = None,
+    expired: bool | None = None,
     session: AsyncSession = Depends(get_session),
 ):
-    return await list_approvals(session)
+    return await list_approvals(session, status=status, reviewer=reviewer, expired=expired)
 
 
 @router.post("/approvals/{run_id}/decision", response_model=RunRecord)
@@ -170,6 +187,48 @@ async def get_run_by_id(
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
     return run
+
+
+@router.get("/runs/{run_id}/worker-attempts", response_model=list[WorkerAttemptRecord])
+async def get_run_worker_attempts(
+    run_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    return await list_worker_attempts(session, run_id=run_id)
+
+
+@router.get("/runs/{run_id}/tool-executions", response_model=list[ToolExecutionRecord])
+async def get_run_tool_executions(
+    run_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    return await list_tool_executions(session, run_id=run_id)
+
+
+@router.get("/worker/dlq", response_model=list[WorkerAttemptRecord])
+async def get_worker_dlq(session: AsyncSession = Depends(get_session)):
+    return await list_worker_attempts(session, status="dlq")
+
+
+@router.get("/evaluations", response_model=list[EvaluationRecord])
+async def get_evaluations(
+    task_type: str | None = None,
+    verdict: str | None = None,
+    session: AsyncSession = Depends(get_session),
+):
+    return await list_evaluation_results(session, task_type=task_type, verdict=verdict)
+
+
+@router.get("/observability/summary")
+async def get_observability_summary(session: AsyncSession = Depends(get_session)):
+    summary = await observability_summary(session)
+    return {
+        "worker": summary.worker,
+        "incidents": summary.incidents,
+        "approvals": summary.approvals,
+        "evaluator": summary.evaluator,
+        "slo": summary.slo,
+    }
 
 
 @router.get("/incidents", response_model=list[IncidentRecord])

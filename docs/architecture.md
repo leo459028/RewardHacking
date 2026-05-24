@@ -1,8 +1,8 @@
-# 架構文件 v0.3
+# 架構文件 v0.5
 
-本專案目前是 Agent Reward-Hacking Guardrail 的 guarded async execution MVP。核心流程是 FastAPI API 接收 agent request、進行 prompt sanitation、risk scoring 與 policy decision；低風險任務寫入 Postgres audit trail、標記為 `queued`，並 publish Kafka request event；worker 重新讀取 run、重跑 policy、執行 bounded executor、evaluate 結果並寫回 audit trail。高風險或 destructive 任務會進入 `awaiting_approval`，由 Dashboard 或 API 進行審核。
+本專案目前是 Agent Reward-Hacking Guardrail 的 guarded async execution hardening 版本。核心流程是 FastAPI API 接收 agent request、進行 prompt sanitation、risk scoring 與 policy decision；低風險任務寫入 Postgres audit trail、標記為 `queued`，並 publish Kafka request event；worker 重新讀取 run、重跑 policy、執行 bounded executor、evaluate 結果並寫回 audit trail。高風險或 destructive 任務會進入 `awaiting_approval`，由 Dashboard 或 API 進行審核。
 
-目前架構版本：`v0.3.0`
+目前架構版本：`v0.5.0`
 
 ## 目前架構
 
@@ -36,15 +36,17 @@ flowchart LR
 - Redis run state、idempotency key、tool circuit breaker。
 - Bounded executor interface、tool transcript、artifact refs。
 - Approval queue API 與 Dashboard。
+- Worker attempts、retry/backoff 與 DLQ audit。
+- Approval TTL、reviewer、decision reason 與 approval event。
+- Tool execution audit table。
+- Task-specific evaluator result table。
 - Prometheus metrics。
 - Structured logging。
 
 目前尚未完整接入：
 
-- Worker retry/backoff 與 DLQ。
-- 完整 OS sandbox、network/filesystem/process/secret 邊界。
-- 完整 approval workflow，例如 TTL、reviewer 報表與 request changes 後續流程。
-- Auth、tenant isolation、OpenTelemetry 與 production SLO。
+- 真實 OS sandbox 執行器；目前是 sandbox boundary audit contract。
+- Auth、tenant isolation、Kafka lag alert、OpenTelemetry 與 production SLO enforcement。
 
 ## Request Flow
 
@@ -148,21 +150,24 @@ sequenceDiagram
 - `GET /v1/incidents`
 - `GET /v1/approvals`
 - `POST /v1/approvals/{run_id}/decision`
+- `GET /v1/runs/{run_id}/worker-attempts`
+- `GET /v1/runs/{run_id}/tool-executions`
+- `GET /v1/worker/dlq`
+- `GET /v1/evaluations`
+- `GET /v1/observability/summary`
 - `GET /v1/dashboard/summary`
 
 ## Production Extension Points
 
-- Worker retry/backoff 與 DLQ。
-- Tool sandbox：強化 bounded executor，限制 network、filesystem、process、secret。
-- Human approval：補 TTL、reviewer 報表、request changes 後續流程。
-- LLM-as-judge evaluator：作為 evaluator signal，不作為唯一 hard deny。
+- Tool sandbox：把目前 audit contract 演進成真實 OS/process/network/filesystem sandbox。
+- LLM-as-judge evaluator：接入外部模型，但維持 signal-only，不作為唯一 hard deny。
 - OpenTelemetry：補 traces 與跨 component correlation。
 - Auth、tenant isolation、quota、retention、backup/restore。
 
 ## 重要限制
 
 - `BoundedToolExecutor` 目前不會真的呼叫外部工具，只記錄受控 tool transcript。
-- Kafka worker 已接入，但尚未包含 retry/backoff、DLQ 與 consumer lag alert。
+- Kafka worker 已接入 retry/backoff 與 DLQ audit，但尚未包含 consumer lag alert。
 - Redis 是短期 state 與 breaker，不是唯一 audit store。
-- Approval workflow 是最小可用版，完整治理流程放到後續版本。
+- Approval workflow 已有 TTL、reviewer、request changes 與 event audit；多 reviewer queue 與權限控管放到後續版本。
 - Dashboard 尚未加入登入權限，不應直接暴露在公開網路。

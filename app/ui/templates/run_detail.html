@@ -64,6 +64,35 @@
   </div>
 </section>
 
+<section class="detail-grid">
+  <div class="panel">
+    <h2>Worker Attempts</h2>
+    <table>
+      <thead><tr><th>Attempt</th><th>Status</th><th>Failure</th><th>Next Retry</th></tr></thead>
+      <tbody>
+      {% for attempt in attempts %}
+        <tr><td>{{ attempt.attempt_number }}</td><td>{{ attempt.status }}</td><td>{{ attempt.failure_reason }}</td><td>{{ attempt.next_retry_at or "" }}</td></tr>
+      {% else %}
+        <tr><td colspan="4" class="muted">No worker attempts.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="panel">
+    <h2>Tool Executions</h2>
+    <table>
+      <thead><tr><th>Tool</th><th>Status</th><th>Sandbox</th></tr></thead>
+      <tbody>
+      {% for item in tool_executions %}
+        <tr><td>{{ item.tool_name }}</td><td>{{ item.status }}</td><td><pre>{{ item.sandbox_policy|json_pretty }}</pre></td></tr>
+      {% else %}
+        <tr><td colspan="3" class="muted">No tool executions.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
 {% if run.evaluation_summary.get("approval") %}
 <section class="panel">
   <h2>Approval</h2>
