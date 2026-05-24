@@ -1,4 +1,4 @@
-# Roadmap v0.5
+# Roadmap v0.6
 
 本 roadmap 將專案從 prototype 推進到可逐步承擔 guardrail 職責的服務。`v0.3.0` 起不再把 Kafka、Redis、Tool Executor、Approval 視為互不相干的線性 phase，而是先建立一條可展示、可查詢、可審計的產品閉環，再把完整 hardening 與 production governance 放到後續版本。
 
@@ -9,8 +9,9 @@
 | `v0.2.0` | 已完成 | 同步 API + Audit + Dashboard prototype | 建立 request、policy、demo execution、evaluation、Postgres audit trail 與 server-rendered Dashboard。 |
 | `v0.3.0` | 已完成 | Guarded Async Execution MVP | 合併 Kafka、Redis、Approval、Executor Interface 的最小閉環。 |
 | `v0.4.0` | 已完成 | Execution Hardening | 補 worker retry/DLQ、approval TTL/event、tool execution audit、resource/cost limit 與 sandbox policy。 |
-| `v0.5.0` | 目前版本 | Evaluator + Observability | 補 task-specific evaluator、deterministic judge signal、worker metrics、SLO 與 Dashboard 趨勢。 |
-| `v0.6+` | 規劃中 | Production Governance | 補 auth、tenant isolation、quota、backup/restore、retention、secret rotation。 |
+| `v0.5.0` | 已完成 | Evaluator + Observability | 補 task-specific evaluator、deterministic judge signal、worker metrics、SLO 與 Dashboard 趨勢。 |
+| `v0.6.0` | 目前版本 | Tenant Governance MVP | 補 API key auth、Dashboard Basic Auth、tenant-aware audit、Redis quota 與 Governance Dashboard。 |
+| `v0.7+` | 規劃中 | Production Governance | 補完整 RBAC、tenant 管理 UI、backup/restore、retention、secret rotation。 |
 
 ## Milestone：v0.2.0 / Phase 0-2 + Dashboard
 
@@ -106,15 +107,23 @@
 - evaluator false positive/false negative 可量化。
 - worker 與 incident 可被發現、定位與回顧。
 
-## Milestone：v0.6+ / Production Governance
+## Milestone：v0.6.0 / Tenant Governance MVP
 
-目標：補上長期營運與多租戶治理能力。
+目標：先補上最小可展示的多租戶治理閉環，讓 request 可以歸屬 tenant、受 quota 限制，並能從 Dashboard 查治理事件。
 
-預計項目：
+已完成項目：
 
-- Auth 與 Dashboard 權限控管。
-- Tenant isolation。
-- Tenant/user quota 與 rate limit。
+- `AgentRequest`、`AgentRun` 與查詢 API 加入 `tenant_id`。
+- API key auth：`AUTH_ENABLED=true` 時以 `X-API-Key` 對應 tenant。
+- Dashboard Basic Auth：`DASHBOARD_AUTH_ENABLED=true` 時保護 Dashboard。
+- Tenant request quota：每分鐘 request 超限回 `429`，並寫入 `governance_events`。
+- Tenant high-risk quota：每小時 high-risk 超限時 fail closed 進入 `awaiting_approval`。
+- 新增 `/v1/governance/events`、`/v1/governance/summary` 與 `/dashboard/governance`。
+
+後續項目：
+
+- 完整 RBAC 與 tenant 管理 UI。
+- 更細的 user quota 與 per-tool quota。
 - Data retention policy。
 - Backup/restore drill。
 - Secret rotation。

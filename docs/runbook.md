@@ -1,8 +1,8 @@
-# Runbook v0.3
+# Runbook v0.6
 
-此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail、Kafka worker、Redis run state、approval queue、worker retry/DLQ、tool execution audit 與 evaluator/observability summary 已接入 request path。
+此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail、Kafka worker、Redis run state、approval queue、worker retry/DLQ、tool execution audit、evaluator/observability summary 與 tenant governance 已接入 request path。
 
-目前營運基線：`v0.5.0`
+目前營運基線：`v0.6.0`
 
 ## 快速檢查
 
@@ -28,6 +28,7 @@ curl http://localhost:8000/v1/metrics
 
 - `http://localhost:8000/dashboard/worker`
 - `http://localhost:8000/dashboard/observability`
+- `http://localhost:8000/dashboard/governance`
 
 Dashboard：
 
@@ -256,9 +257,46 @@ curl -X POST http://localhost:8000/dashboard/playground \
 3. 要求 PII redaction 或 masked dataset。
 4. 確認 logs 不輸出 PII。
 
-## 9. Kafka Topic 或 Consumer 問題
+## 9. Tenant Quota / Governance 問題
 
-目前 Kafka topics 會由 Docker Compose 建立，API 會 publish `agent.requests`，worker 會消費 queued run。`v0.5.0` 已加入 retry/backoff 與 DLQ audit；lag alert 尚未實作。
+症狀：
+
+- submit 回 `429 tenant_request_quota_exceeded`。
+- high-risk request 沒有執行，run 進入 `awaiting_approval` 且 `policy_flags` 包含 `tenant_high_risk_quota_exceeded`。
+- `/dashboard/governance` 的 quota limited count 增加。
+
+排查重點：
+
+1. 確認 `.env` 或部署環境中的 quota 設定：
+
+```bash
+QUOTA_ENABLED=true
+TENANT_REQUEST_LIMIT_PER_MINUTE=60
+TENANT_HIGH_RISK_LIMIT_PER_HOUR=10
+```
+
+2. 查詢治理事件：
+
+```bash
+curl "http://localhost:8000/v1/governance/events?tenant_id=default"
+curl "http://localhost:8000/v1/governance/summary?tenant_id=default"
+```
+
+3. 檢查 Redis quota keys：
+
+```bash
+docker compose exec redis redis-cli keys 'tenant:*:quota:*'
+```
+
+處理方向：
+
+- 若是測試環境需要重跑，可暫時降低或關閉 `QUOTA_ENABLED`，但要在 `docs/test_report.md` 記錄實際設定。
+- 若是正式環境流量暴增，先確認是否為單一 tenant 異常、是否有 prompt attack 或 retry storm，再調整 quota。
+- request quota 超過時不會建立 run，只會寫入 `governance_events`；high-risk quota 超過時會建立 run 並 fail closed 進入人工審核。
+
+## 10. Kafka Topic 或 Consumer 問題
+
+目前 Kafka topics 會由 Docker Compose 建立，API 會 publish `agent.requests`，worker 會消費 queued run。`v0.6.0` 保留 retry/backoff 與 DLQ audit；lag alert 尚未實作。
 
 若 `kafka-init` 或 worker 消費失敗：
 
@@ -275,9 +313,9 @@ docker compose up kafka-init
 - queued run 若沒有被 worker 更新，先確認 worker container 是否健康。
 - 重複 event 會被 Redis idempotency key 擋下，不應重複執行。
 
-## 10. Redis 問題
+## 11. Redis 問題
 
-目前 API 與 worker flow 依賴 Redis 管理短期 run state、idempotency key 與 tool circuit breaker。Redis 不保存唯一 audit trail，重要資料仍以 Postgres 為準。
+目前 API 與 worker flow 依賴 Redis 管理短期 run state、idempotency key、tool circuit breaker 與 tenant quota。Redis 不保存唯一 audit trail，重要資料仍以 Postgres 為準。
 
 檢查：
 
@@ -285,6 +323,7 @@ docker compose up kafka-init
 docker compose logs redis
 docker compose exec redis redis-cli keys 'run:*:state'
 docker compose exec redis redis-cli keys 'breaker:*'
+docker compose exec redis redis-cli keys 'tenant:*:quota:*'
 ```
 
 若某個 tool 被暫停，policy flag 會出現 `tool_circuit_breaker_open:<tool_name>`，run 會 fail closed 進入 `awaiting_approval`。
@@ -301,6 +340,7 @@ docker compose exec redis redis-cli keys 'breaker:*'
 ## 營運 KPI
 
 - request rate。
+- tenant quota limited count。
 - policy allow/escalate/deny rate。
 - average risk score。
 - top policy flags。
@@ -310,5 +350,5 @@ docker compose exec redis redis-cli keys 'breaker:*'
 - Postgres readiness。
 - worker completion count。
 - approval queue count。
-- current：worker job duration、retry/DLQ、approval/evaluator summary。
+- current：worker job duration、retry/DLQ、approval/evaluator/governance summary。
 - future：Kafka consumer lag、human approval turnaround time-series。

@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -23,7 +23,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.3.0",
+    version="0.6.0",
     description="Guardrail service for preventing reward hacking in agent systems.",
     lifespan=lifespan,
 )
@@ -40,6 +40,26 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
                 "details": exc.errors(),
             }
         },
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    if isinstance(exc.detail, dict) and "code" in exc.detail:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": exc.detail},
+            headers=exc.headers,
+        )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {
+                "code": "http_error",
+                "message": str(exc.detail),
+            }
+        },
+        headers=exc.headers,
     )
 
 

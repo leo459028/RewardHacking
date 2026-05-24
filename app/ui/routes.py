@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
@@ -18,8 +20,10 @@ from app.services.audit_log import (
     apply_approval_decision,
     dashboard_summary,
     get_run,
+    governance_summary,
     incidents_for_run,
     list_approvals,
+    list_governance_events,
     list_incidents,
     list_runs,
     list_tool_executions,
@@ -31,7 +35,30 @@ from app.services.orchestrator import AgentOrchestrator
 from app.services.run_state import RunStateStore
 from app.workers.producer import make_event
 
-router = APIRouter(tags=["dashboard"])
+security = HTTPBasic(auto_error=False)
+
+
+def dashboard_auth(credentials: HTTPBasicCredentials | None = Depends(security)) -> None:
+    settings = get_settings()
+    if not settings.dashboard_auth_enabled:
+        return
+    if credentials is None:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "dashboard_auth_required", "message": "Dashboard auth is required."},
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    valid_user = secrets.compare_digest(credentials.username, settings.dashboard_username)
+    valid_password = secrets.compare_digest(credentials.password, settings.dashboard_password)
+    if not (valid_user and valid_password):
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "invalid_dashboard_credentials", "message": "Dashboard credentials are invalid."},
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+
+router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth)])
 templates = Jinja2Templates(directory="app/ui/templates")
 
 
@@ -72,9 +99,16 @@ async def dashboard_runs(
     request: Request,
     status: str | None = None,
     task_type: str | None = None,
+    tenant_id: str | None = None,
     session: AsyncSession = Depends(get_session),
 ):
-    runs = await list_runs(session, status=status or None, task_type=task_type or None, limit=100)
+    runs = await list_runs(
+        session,
+        status=status or None,
+        task_type=task_type or None,
+        tenant_id=tenant_id or None,
+        limit=100,
+    )
     return templates.TemplateResponse(
         request,
         "runs.html",
@@ -82,6 +116,7 @@ async def dashboard_runs(
             "runs": runs,
             "status": status or "",
             "task_type": task_type or "",
+            "tenant_id": tenant_id or "",
             "active": "runs",
         },
     )
@@ -153,6 +188,31 @@ async def dashboard_observability(request: Request, session: AsyncSession = Depe
     )
 
 
+@router.get("/dashboard/governance", response_class=HTMLResponse)
+async def dashboard_governance(
+    request: Request,
+    tenant_id: str | None = None,
+    session: AsyncSession = Depends(get_session),
+):
+    runs = await list_runs(session, tenant_id=tenant_id or None, limit=100)
+    tenant_ids = sorted({run.tenant_id for run in await list_runs(session, limit=200)})
+    selected_tenant = tenant_id or (tenant_ids[0] if tenant_ids else "default")
+    summary = await governance_summary(session, tenant_id=selected_tenant)
+    events = await list_governance_events(session, tenant_id=tenant_id or None, limit=25)
+    return templates.TemplateResponse(
+        request,
+        "governance.html",
+        {
+            "summary": summary,
+            "events": events,
+            "runs": runs,
+            "tenant_ids": tenant_ids,
+            "tenant_id": tenant_id or "",
+            "active": "governance",
+        },
+    )
+
+
 @router.post("/dashboard/approvals/{run_id}/decision", response_class=HTMLResponse)
 async def dashboard_approval_decision(
     request: Request,
@@ -210,6 +270,7 @@ async def submit_playground(
     ]
     try:
         agent_request = AgentRequest(
+            tenant_id=str(form.get("tenant_id", "default")) or "default",
             user_id=str(form.get("user_id", "demo-user")),
             task_type=str(form.get("task_type", "analysis")),
             prompt=str(form.get("prompt", "")),

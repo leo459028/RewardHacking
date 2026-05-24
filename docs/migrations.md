@@ -1,19 +1,20 @@
-# Migration 指南 v0.5
+# Migration 指南 v0.6
 
 本專案已導入 Alembic，初始 migration 會建立：
 
-目前 migration baseline：`v0.5.0`
+目前 migration baseline：`v0.6.0`
 
 - `agent_runs`
 - `incidents`
 
-`v0.5.0` 在原本 `agent_runs`、`incidents` 之外，新增 worker、tool、approval 與 evaluation audit tables。
+`v0.5.0` 在原本 `agent_runs`、`incidents` 之外，新增 worker、tool、approval 與 evaluation audit tables。`v0.6.0` 新增 `agent_runs.tenant_id`，既有資料 backfill 為 `default`，並建立 `governance_events` audit table。
 
 Migration 檔案位於：
 
 ```text
 migrations/versions/202605190001_create_audit_tables.py
 migrations/versions/202605240001_add_v04_v05_audit_tables.py
+migrations/versions/202605240002_add_v06_tenant_governance.py
 ```
 
 ## 常用指令
@@ -87,9 +88,9 @@ alembic upgrade head
 
 ## 後續建議
 
-正式環境除了現有 models，可考慮新增：
+正式環境除了現有 models，可考慮新增或強化：
 
 - `policy_decisions`
 - `artifacts`
-- `tenants`
-- `users`
+- `tenants` / `users` 管理表與完整 RBAC 關聯
+- audit retention / purge migration 策略

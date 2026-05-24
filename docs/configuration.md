@@ -23,6 +23,20 @@
 | `KAFKA_INCIDENT_TOPIC` | `agent.incidents` | incident topic |
 | `DEFAULT_MAX_TOOL_CALLS` | `8` | 預設 tool call 預算 |
 | `DEFAULT_RISK_THRESHOLD` | `0.65` | policy engine 風險門檻 |
+| `WORKER_MAX_ATTEMPTS` | `3` | worker 處理同一 run 的最大嘗試次數 |
+| `WORKER_RETRY_BACKOFF_SECONDS` | `30` | worker transient failure 下一次 retry 的預設等待秒數 |
+| `APPROVAL_TTL_SECONDS` | `3600` | approval pending 的預設有效秒數 |
+| `WORKER_COMPLETION_LATENCY_TARGET_SECONDS` | `300` | observability summary 的 worker 完成時間目標 |
+| `INCIDENT_RESPONSE_TARGET_SECONDS` | `900` | observability summary 的 incident response 目標 |
+| `LLM_JUDGE_ENABLED` | `false` | 是否啟用外部 LLM judge；目前預設 deterministic fake judge signal |
+| `AUTH_ENABLED` | `false` | 是否啟用 API key auth |
+| `API_KEYS` | `demo-key:default` | API key 與 tenant 對應，格式為 `key:tenant_id`，多組以逗號分隔 |
+| `DASHBOARD_AUTH_ENABLED` | `false` | 是否啟用 Dashboard Basic Auth |
+| `DASHBOARD_USERNAME` | `admin` | Dashboard Basic Auth 使用者 |
+| `DASHBOARD_PASSWORD` | `admin` | Dashboard Basic Auth 密碼，本機範例值不可用於正式環境 |
+| `QUOTA_ENABLED` | `true` | 是否啟用 tenant quota 檢查 |
+| `TENANT_REQUEST_LIMIT_PER_MINUTE` | `60` | 每個 tenant 每分鐘 request 上限 |
+| `TENANT_HIGH_RISK_LIMIT_PER_HOUR` | `10` | 每個 tenant 每小時 high-risk request 上限 |
 
 ## Docker Compose 設定
 
@@ -67,6 +81,24 @@ API response status 會使用：
 - `allow` 但 evaluator review：`queued`
 - policy `escalate`：`escalated`
 - policy `deny`：`denied`
+
+## Auth / Dashboard Auth
+
+`AUTH_ENABLED=false` 時，API 保持本機 demo 友善模式。`AUTH_ENABLED=true` 時，submit、runs、incidents、approvals、evaluations 與 governance API 需要 `X-API-Key`；health、ready、metrics、部分 read-only subresource 與 summary endpoint 仍維持 demo 可讀，正式環境應在反向代理或後續版本補完整 auth coverage。`API_KEYS` 會把 key 對應到 tenant，例如：
+
+```env
+AUTH_ENABLED=true
+API_KEYS=demo-key:default,tenant-a-key:tenant-a
+```
+
+Dashboard 可用 `DASHBOARD_AUTH_ENABLED=true` 開啟 Basic Auth。這是 v0.6 MVP，用來避免 demo Dashboard 直接裸露；正式環境仍建議接入反向代理、SSO 或更完整的權限控管。
+
+## Tenant Quota
+
+`QUOTA_ENABLED=true` 時，submit API 會透過 Redis 計數：
+
+- request quota 超過 `TENANT_REQUEST_LIMIT_PER_MINUTE` 時，API 回 `429 tenant_request_quota_exceeded`，並寫入 `governance_events`。
+- high-risk quota 超過 `TENANT_HIGH_RISK_LIMIT_PER_HOUR` 時，run 會 fail closed 進入 `awaiting_approval`，並加上 `tenant_high_risk_quota_exceeded` policy flag。
 
 ## Secret 管理
 

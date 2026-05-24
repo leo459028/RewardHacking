@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     worker_completion_latency_target_seconds: int = 300
     incident_response_target_seconds: int = 900
     llm_judge_enabled: bool = False
+    auth_enabled: bool = False
+    api_keys: str = "demo-key:default"
+    dashboard_auth_enabled: bool = False
+    dashboard_username: str = "admin"
+    dashboard_password: str = "admin"
+    quota_enabled: bool = True
+    tenant_request_limit_per_minute: int = 60
+    tenant_high_risk_limit_per_hour: int = 10
 
 
 @lru_cache(maxsize=1)

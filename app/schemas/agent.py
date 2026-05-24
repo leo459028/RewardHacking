@@ -11,6 +11,7 @@ class AgentConstraints(BaseModel):
 
 
 class AgentRequest(BaseModel):
+    tenant_id: str | None = None
     user_id: str
     task_type: Literal["code_fix", "analysis", "data_query", "workflow", "other"] = "other"
     prompt: str = Field(min_length=1)
@@ -22,6 +23,7 @@ class AgentRequest(BaseModel):
 
 class AgentResponse(BaseModel):
     run_id: str
+    tenant_id: str = "default"
     status: Literal[
         "accepted",
         "denied",

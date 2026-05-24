@@ -6,9 +6,11 @@
 
 ## 專案版號
 
-目前版本：`v0.5.0`
+目前版本：`v0.6.0`
 
-`v0.5.0` 是 V0.4 Execution Hardening 與 V0.5 Evaluator + Observability 的整合版。這代表目前已經有 queue、worker retry/DLQ、Redis run state、approval TTL/event、bounded executor transcript、tool execution audit、evaluation result 與 Dashboard 查詢入口，但還不是完整的 production sandbox、auth 或多租戶 production safety platform。
+`v0.5.0` 是 V0.4 Execution Hardening 與 V0.5 Evaluator + Observability 的整合版。該版本已經有 queue、worker retry/DLQ、Redis run state、approval TTL/event、bounded executor transcript、tool execution audit、evaluation result 與 Dashboard 查詢入口，但還不是完整的 production sandbox、auth 或多租戶 production safety platform。
+
+`v0.6.0` 在 v0.5 基礎上加入 Tenant Governance MVP：每筆 run 會保存 `tenant_id`，API 可用 `X-API-Key` 對應 tenant，Redis 會做 tenant request quota 與 high-risk quota 檢查，並新增 governance audit 與 `/dashboard/governance` 查詢入口。
 
 ## 這個專案想解決什麼問題
 
@@ -36,7 +38,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 
 ## Roadmap 完成後的適用情境
 
-以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v0.5.0` 已全部完成。
+以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v0.6.0` 已全部完成。
 
 1. AI coding agent 在修改程式碼前，檢查是否跳過測試、繞過規則或做破壞性操作。
 2. 內部營運 agent 執行批次任務前，確認工具權限、任務風險與是否需要人工核准。
@@ -75,9 +77,9 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - audit trail 可以幫助追蹤問題，但不能替代資料治理與資安制度。
 - 如果 prompt、工具權限或資料權限設計不良，guardrail 也可能被繞過或誤判。
 
-## 目前 v0.5 做到哪裡
+## 目前 v0.6 做到哪裡
 
-`v0.5.0` 目前是可展示、可查詢、可審計的 guarded async execution hardening 版本。
+`v0.6.0` 目前是可展示、可查詢、可審計的 guarded async execution + tenant governance MVP。
 
 已完成：
 
@@ -94,22 +96,22 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - Worker 會記錄 attempt、failure reason、retry_scheduled 與 DLQ。
 - Tool transcript 會落到 `tool_executions` audit table，包含 sandbox policy、resource/cost limit 與 artifact refs。
 - Evaluator 會保存 task-specific rubric、deterministic fake judge signal、final score 與 verdict。
-- Dashboard 新增 `/dashboard/worker` 與 `/dashboard/observability`，可查看 DLQ、worker attempts、incident/approval/evaluator/SLO summary。
+- Dashboard 新增 `/dashboard/worker`、`/dashboard/observability` 與 `/dashboard/governance`，可查看 DLQ、worker attempts、incident/approval/evaluator/SLO summary 與 tenant governance summary。
 - 結果會寫進 Postgres audit trail。
 - Dashboard 可以查看 runs、incidents、risk score、policy flags、evaluation summary、event timeline、tool transcript 與 approval queue。
 - 已導入 Alembic migration。
 - 已有 API tests、service unit tests、dashboard HTML tests 與 GitHub CI。
+- 已有最小 API key auth、Dashboard Basic Auth、tenant quota 與 governance audit。
 
 尚未完成：
 
 - 還沒有完整 OS sandbox、network/filesystem/process/secret 邊界。
 - 還沒有完整 human approval workflow，例如 reviewer 報表、TTL 與 request changes 後續流程。
 - 還沒有 Kafka consumer lag alert 與完整 OpenTelemetry tracing。
-- 還沒有完整 rate limit、tenant quota 與 auth。
 - LLM-as-judge 目前是可插拔 signal，預設使用 deterministic fake judge 且不作為唯一 hard deny。
-- 還沒有完整 production auth、tenant isolation、quota 與 retention governance。
+- 還沒有完整 OAuth、RBAC、tenant 管理 UI、retention governance、backup/restore、secret rotation 或真實 OS sandbox。
 
-所以目前 `v0.5.0` 適合用來 demo guarded async execution hardening、驗證 queue/worker retry/DLQ/approval/evaluator/observability 的產品閉環；不建議直接當成完整 production 安全平台。
+所以目前 `v0.6.0` 適合用來 demo guarded async execution hardening 與 tenant governance MVP，驗證 queue/worker retry/DLQ/approval/evaluator/observability/governance 的產品閉環；不建議直接當成完整 production 安全平台。
 
 ## 快速啟動
 
@@ -151,6 +153,7 @@ http://localhost:8000/dashboard
 curl -X POST http://localhost:8000/v1/agent/submit-with-details \
   -H "Content-Type: application/json" \
   -d '{
+    "tenant_id": "default",
     "user_id": "u-1001",
     "task_type": "code_fix",
     "prompt": "Fix the bug in the payment workflow without changing business rules.",
@@ -178,7 +181,7 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
 
 如果你要繼續開發，建議先看 [Roadmap](docs/roadmap.md)。下一階段通常會優先補：
 
-- Auth、tenant isolation、tenant/user quota 與 rate limit。
+- 完整 OAuth/RBAC、tenant 管理 UI 與更細的 user quota。
 - Data retention、backup/restore drill、secret rotation 與 rollback/release gate。
 - OpenTelemetry tracing、Kafka consumer lag alert 與跨 component trace id。
 - 真實 tool sandbox 與外部 artifact/object storage。
