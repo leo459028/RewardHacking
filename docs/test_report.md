@@ -4,6 +4,147 @@
 
 請不要只填預期結果；如果某項驗證沒有執行，要清楚寫明原因。例如：純文件修改未啟動 Docker、Docker Desktop 尚未開啟、或本次沒有影響 Dashboard。
 
+## 2026-05-24 - v0.6 文件同步檢查
+
+- 版本：`v0.6.0`
+- 變更範圍：檢查並同步 README、API、Dashboard、架構、設定、部署、開發、測試指南、資料模型、Kafka、Migration、Observability、Security、Runbook 與 `.env.example`。重點修正 v0.5 舊版現況描述、auth coverage、tenant/governance 路由、`governance_events` 資料表、Redis quota 與 Settings 環境變數清單。
+- 測試環境：Windows PowerShell、Python 3.11；本次為文件與 `.env.example` 同步，未重新啟動 Docker stack。
+
+### 測試命令
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `python -m pytest -q` | 通過，27 passed。 |
+| `python -m ruff check app tests` | 通過，All checks passed。 |
+| `git diff --check` | 通過，沒有 whitespace error。 |
+| 舊版目前狀態掃描 | 通過，無命中；`docs/test_report.md` 與 `docs/roadmap.md` 保留歷史版本紀錄與 milestone，不視為目前狀態落差。 |
+| `Settings` vs `docs/configuration.md` / `.env.example` 欄位比對 | 通過，`missing_docs=`、`missing_env=` 皆為空。 |
+| FastAPI route list | 通過，列出 `/v1/governance/events`、`/v1/governance/summary`、`/dashboard/governance`、`/dashboard/runs`、`/dashboard/playground` 等路由，與文件入口同步。 |
+
+補充命令細節：
+
+```powershell
+rg -n "# .*v0\.3|# .*v0\.5|目前.*v0\.5|基線：`v0\.5\.0`|部署版本：`v0\.5\.0`|目前 API 版本：`v0\.5\.0`|Auth、tenant isolation|Dashboard 尚未加入登入|tenant/user filters|資料與操作 API 需要 `X-API-Key`|tenant_id` \| request payload" README.md docs --glob '!docs/test_report.md' --glob '!docs/roadmap.md'
+
+$fields = python -c "from app.core.config import Settings; print('\n'.join(k.upper() for k in Settings.model_fields.keys()))"
+$docs = Get-Content -Raw -Encoding UTF8 docs\configuration.md
+$env = Get-Content -Raw -Encoding UTF8 .env.example
+$missingDocs = @($fields | Where-Object { $docs -notmatch [regex]::Escape($_) })
+$missingEnv = @($fields | Where-Object { $env -notmatch [regex]::Escape($_) })
+
+python -c "from app.main import app; routes=[]
+for route in app.routes:
+    methods=getattr(route, 'methods', None)
+    path=getattr(route, 'path', '')
+    if methods and (path.startswith('/v1') or path.startswith('/dashboard')):
+        routes.append('{} {}'.format(','.join(sorted(methods)), path))
+print('\n'.join(sorted(routes)))"
+```
+
+### Dashboard 驗證結果
+
+- 本次未改 Dashboard route 或 template，因此未重新做瀏覽器點擊測試。
+- Dashboard 相關文件已同步目前程式碼入口：`/dashboard/governance`、`/dashboard/runs` tenant filter、`/dashboard/playground` tenant input、Dashboard Basic Auth。
+- 實際 Dashboard 行為由同日「v0.6 Dashboard 完整互動測試」與 `tests/test_v06_governance.py` 覆蓋，包含 governance render、runs tenant filter 與 Dashboard Basic Auth。
+
+### Docker 驗證結果
+
+- 本次未重新啟動 Docker stack；原因是變更範圍為文件與 `.env.example`，未修改 runtime code、migration 或 Docker Compose。
+- 同日「v0.6 Tenant Governance MVP」紀錄已完成 Docker Compose、container migration、health/ready 與 Dashboard smoke。
+
+### 限制與已知問題
+
+- `docs/test_report.md` 保留 v0.3/v0.5 歷史測試紀錄，部分歷史掃描結果仍提到舊版標題，屬當時實際結果，不代表目前文件狀態。
+- `docs/roadmap.md` 保留 v0.3/v0.5 milestone 作為歷史脈絡，未改成 v0.6 標題。
+
+## 2026-05-24 - v0.6 Tenant Governance MVP
+
+- 版本：`v0.6.0`
+- 變更範圍：新增 tenant-aware audit、API key auth、Dashboard Basic Auth、Redis tenant quota、governance events、governance summary API 與 `/dashboard/governance`。
+- 測試環境：Windows PowerShell、Python 3.11、Docker Desktop、Docker Compose stack `rewardhacking-*`。
+
+### 測試命令
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `python -m pytest tests\test_v06_governance.py -q` | 通過，7 passed。 |
+| `python -m pytest -q` | 通過，27 passed。 |
+| `python -m ruff check app tests` | 通過，All checks passed。 |
+| `alembic upgrade head` | 第一次在 Docker Postgres 未啟動時失敗，錯誤為 `ConnectionRefusedError [WinError 1225]`；Docker stack 啟動後重跑通過。 |
+| `docker compose up -d --build` | 通過，api、worker、postgres、redis、kafka 啟動，postgres/redis/kafka healthy。 |
+| `docker compose exec -T api alembic upgrade head` | 通過，PostgresqlImpl migration context，無 pending migration 錯誤。 |
+| `Invoke-RestMethod http://localhost:8000/v1/healthz` | 通過，回傳 `{"status":"ok"}`。 |
+| `Invoke-RestMethod http://localhost:8000/v1/readyz` | 通過，回傳 `{"status":"ready"}`。 |
+| `POST http://localhost:8000/v1/agent/submit` | 通過，回傳 `queued` run，包含 `tenant_id="default"`。 |
+| `GET http://localhost:8000/v1/governance/summary?tenant_id=default` | 通過，回傳 tenant summary。 |
+
+### Dashboard 驗證結果
+
+- `/dashboard/governance`：HTTP 200。
+- `/dashboard/runs?tenant_id=default`：HTTP 200。
+- `/dashboard/playground`：HTTP 200。
+- Dashboard Basic Auth：測試環境中 `DASHBOARD_AUTH_ENABLED=true` 時，未帶 Basic Auth 回 `401`，正確帳密回 `200`。
+
+### Docker 驗證結果
+
+- `docker compose up -d --build` 成功重建 API/worker image。
+- `docker compose exec -T api alembic upgrade head` 成功。
+- API health、ready、Dashboard governance/runs/playground smoke 均成功。
+
+### API / Governance 驗證結果
+
+- `AUTH_ENABLED=true` 時，缺少 `X-API-Key` 回 `401 auth_required`。
+- 錯誤 API key 回 `401 invalid_api_key`。
+- API key tenant 與 body `tenant_id` 不一致回 `403 tenant_mismatch`。
+- request quota 超過時回 `429 tenant_request_quota_exceeded`，並寫入 `governance_events`。
+- high-risk quota 超過時 run 進入 `awaiting_approval`，policy flags 包含 `tenant_high_risk_quota_exceeded`。
+
+### 限制與已知問題
+
+- v0.6 是 MVP，尚未包含 OAuth、完整 RBAC、tenant 管理 UI、retention purge、backup/restore、secret rotation 或真實 OS sandbox。
+- Docker smoke 使用預設 `AUTH_ENABLED=false`，auth 行為由 pytest 的 in-memory API 測試覆蓋。
+- PowerShell `Invoke-WebRequest` 需使用 `-UseBasicParsing` 才能在此環境讀取 Dashboard HTTP status。
+
+## 2026-05-24 - v0.6 Dashboard 完整互動測試
+
+- 版本：`v0.6.0`
+- 變更範圍：針對 v0.6 Dashboard 做瀏覽器互動驗證，包含表單輸入、篩選、連結開啟、審核按鈕與手機尺寸 smoke。
+- 測試環境：Windows PowerShell、Python 3.11、Docker Compose stack `rewardhacking-*`、Codex in-app Browser。
+
+### 後端與 Migration 驗證
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `docker compose ps` | 通過，api、worker、postgres、redis、kafka 皆 Up；postgres/redis/kafka healthy。 |
+| `python -m pytest -q` | 通過，27 passed。 |
+| `python -m ruff check app tests` | 通過，All checks passed。 |
+| `alembic upgrade head` | 通過，PostgresqlImpl migration context，無錯誤。 |
+| `docker compose exec -T api alembic upgrade head` | 通過，container 內 migration 可重複執行。 |
+
+### Dashboard Browser 互動驗證
+
+| 流程 | 實際結果 |
+| --- | --- |
+| `/dashboard` 載入 | 通過，title 為 `Dashboard | 儀表板`，DOM 含 `Guardrail Overview`，console error/warn 為空。 |
+| Playground 低風險 submit | 通過，填入 tenant `qa-ui-tenant`、user、task type、tools、goal、prompt 後送出，頁面顯示 `Result / 執行結果` 與 `queued`。 |
+| Run detail link | 通過，點擊 `Open run detail` 後進入 run detail，顯示 `Policy` 與 request/user 資訊。 |
+| Runs tenant filter | 通過，在 `/dashboard/runs` 輸入 `qa-ui-tenant` 並點擊 Apply，URL 變為 `/dashboard/runs?status=&task_type=&tenant_id=qa-ui-tenant`，表格顯示該 tenant run。 |
+| Governance filter | 通過，開啟 `/dashboard/governance?tenant_id=qa-ui-tenant`，顯示 `Governance / 治理中心`、tenant summary 與 tenant runs。 |
+| Playground destructive submit | 通過，填入 tenant `qa-approval-tenant`、task type `workflow`、tool `deploy_service`，勾選 destructive actions 後送出，頁面顯示 `awaiting_approval`。 |
+| Approval decision click | 通過，在 `/dashboard/approvals` 找到新 awaiting run，填寫 reason `Browser QA deny click` 並點擊 Deny，該 run 從 approval queue 移除。 |
+| Denied run detail | 通過，開啟 denied run detail，狀態為 `denied`，Policy 顯示 `Denied by dashboard-operator: Browser QA deny click`。 |
+| 手機尺寸 smoke | 通過，viewport `390x844` 開啟 governance page，DOM 含 `Governance`、`治理中心` 與 `qa-ui-tenant`，console error/warn 為空。 |
+
+### 截圖證據
+
+- 已透過 Codex in-app Browser 輸出截圖：Runs tenant filter、Governance filter、Playground approval result、Approval Queue、Denied run detail、手機尺寸 governance。
+- 截圖沒有寫入 repo；嘗試寫入本機暫存路徑時環境拒絕存取，因此改用 Browser runtime 直接回傳影像。
+
+### 限制與已知問題
+
+- 本次 Docker stack 使用目前 `.env` 預設值，因此 Dashboard auth 在瀏覽器 smoke 中未開啟；Basic Auth 行為由 pytest `test_dashboard_basic_auth_can_protect_dashboard` 覆蓋。
+- 手機尺寸測試為 smoke，不包含所有表單互動；桌面尺寸已覆蓋主要輸入與點擊流程。
+
 ## 2026-05-24 - v0.5 主機端與 Docker DSN 設定分離
 
 - 版本：v0.5.0

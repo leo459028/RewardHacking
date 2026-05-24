@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 class RunRecord(BaseModel):
     run_id: str
+    tenant_id: str
     user_id: str
     task_type: str
     status: str
@@ -87,3 +88,29 @@ class EvaluationRecord(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class GovernanceEventRecord(BaseModel):
+    tenant_id: str
+    user_id: str
+    run_id: str
+    event_type: str
+    decision: str
+    reason: str
+    limit_value: int
+    used: int
+    remaining: int
+    details: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class GovernanceSummaryResponse(BaseModel):
+    tenant_id: str
+    total_runs: int
+    awaiting_approval: int
+    denied: int
+    quota_limited: int
+    average_risk_score: float
+    recent_events: list[GovernanceEventRecord] = Field(default_factory=list)

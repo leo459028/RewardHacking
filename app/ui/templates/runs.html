@@ -28,6 +28,9 @@
         {% endfor %}
       </select>
     </label>
+    <label>Tenant
+      <input name="tenant_id" value="{{ tenant_id }}" placeholder="default">
+    </label>
     <label>&nbsp;<button class="button" type="submit">Apply</button></label>
     <label>&nbsp;<a class="button secondary" href="/dashboard/runs">Reset</a></label>
   </form>
@@ -35,11 +38,12 @@
 
 <section class="panel">
   <table>
-    <thead><tr><th>Run</th><th>User</th><th>Status</th><th>Task</th><th>Risk</th><th>Flags</th><th>Created</th></tr></thead>
+    <thead><tr><th>Run</th><th>Tenant</th><th>User</th><th>Status</th><th>Task</th><th>Risk</th><th>Flags</th><th>Created</th></tr></thead>
     <tbody>
     {% for run in runs %}
       <tr>
         <td><a href="/dashboard/runs/{{ run.run_id }}">{{ run.run_id[:8] }}</a></td>
+        <td>{{ run.tenant_id }}</td>
         <td>{{ run.user_id }}</td>
         <td><span class="status {{ run.status }}">{{ run.status }}</span></td>
         <td>{{ run.task_type }}</td>
@@ -48,7 +52,7 @@
         <td>{{ run.created_at }}</td>
       </tr>
     {% else %}
-      <tr><td colspan="7" class="muted">No runs found.</td></tr>
+      <tr><td colspan="8" class="muted">No runs found.</td></tr>
     {% endfor %}
     </tbody>
   </table>

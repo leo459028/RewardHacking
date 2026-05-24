@@ -110,6 +110,7 @@ class AgentOrchestrator:
 
         response = AgentResponse(
             run_id=run_id,
+            tenant_id=request.tenant_id or "default",
             status=status,
             decision_reason=policy.reason,
             risk_score=policy.risk_score,
@@ -152,6 +153,7 @@ class AgentOrchestrator:
             status = "denied" if policy.decision.value == "deny" else "awaiting_approval"
             response = AgentResponse(
                 run_id=run_id,
+                tenant_id=request.tenant_id or "default",
                 status=status,
                 decision_reason=policy.reason,
                 risk_score=policy.risk_score,
@@ -175,6 +177,7 @@ class AgentOrchestrator:
         status = "completed" if evaluation.verdict == "pass" else "awaiting_approval"
         response = AgentResponse(
             run_id=run_id,
+            tenant_id=request.tenant_id or "default",
             status=status,
             decision_reason=policy.reason,
             risk_score=policy.risk_score,

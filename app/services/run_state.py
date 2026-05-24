@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
@@ -34,6 +35,26 @@ class RunStateStore(Protocol):
     async def get_open_breakers(self, tool_names: list[str]) -> dict[str, dict[str, Any]]:
         ...
 
+    async def increment_quota(
+        self,
+        tenant_id: str,
+        bucket: str,
+        *,
+        limit: int,
+        ttl_seconds: int,
+    ) -> "QuotaResult":
+        ...
+
+
+@dataclass(frozen=True)
+class QuotaResult:
+    tenant_id: str
+    bucket: str
+    limit: int
+    used: int
+    remaining: int
+    allowed: bool
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -44,6 +65,7 @@ class InMemoryRunStateStore:
         self.run_states: dict[str, dict[str, Any]] = {}
         self.idempotency_keys: set[str] = set()
         self.breakers: dict[str, dict[str, Any]] = {}
+        self.quota_counters: dict[str, int] = {}
 
     async def set_run_state(
         self,
@@ -86,6 +108,27 @@ class InMemoryRunStateStore:
             for tool_name, breaker in self.breakers.items()
             if tool_name in set(tool_names) and breaker.get("status") == "open"
         }
+
+    async def increment_quota(
+        self,
+        tenant_id: str,
+        bucket: str,
+        *,
+        limit: int,
+        ttl_seconds: int,
+    ) -> QuotaResult:
+        key = f"tenant:{tenant_id}:quota:{bucket}"
+        used = self.quota_counters.get(key, 0) + 1
+        self.quota_counters[key] = used
+        remaining = max(limit - used, 0)
+        return QuotaResult(
+            tenant_id=tenant_id,
+            bucket=bucket,
+            limit=limit,
+            used=used,
+            remaining=remaining,
+            allowed=used <= limit,
+        )
 
 
 class RedisRunStateStore:
@@ -132,3 +175,25 @@ class RedisRunStateStore:
             if breaker and breaker.get("status") == "open":
                 open_breakers[tool_name] = breaker
         return open_breakers
+
+    async def increment_quota(
+        self,
+        tenant_id: str,
+        bucket: str,
+        *,
+        limit: int,
+        ttl_seconds: int,
+    ) -> QuotaResult:
+        key = f"tenant:{tenant_id}:quota:{bucket}"
+        used = int(await self.redis.incr(key))
+        if used == 1:
+            await self.redis.expire(key, ttl_seconds)
+        remaining = max(limit - used, 0)
+        return QuotaResult(
+            tenant_id=tenant_id,
+            bucket=bucket,
+            limit=limit,
+            used=used,
+            remaining=remaining,
+            allowed=used <= limit,
+        )

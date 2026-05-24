@@ -19,7 +19,8 @@
 ```mermaid
 flowchart LR
   A["Untrusted Request"] --> B["Schema Validation"]
-  B --> C["Prompt Sanitizer"]
+  B --> T["Auth / Tenant Quota"]
+  T --> C["Prompt Sanitizer"]
   C --> D["Risk Scoring"]
   D --> E["Policy Engine"]
   E -->|allow| F["Bounded Execution"]
@@ -71,6 +72,16 @@ Score 會 clamp 在 `0.0` 到 `1.0`。
 - large tool budget。
 - prompt injection signals。
 
+### Tenant Governance MVP
+
+`v0.6.0` 已加入最小租戶治理防護：
+
+- API key auth：`AUTH_ENABLED=true` 時，`X-API-Key` 會對應到 `API_KEYS` 中設定的 tenant。
+- Tenant isolation：submit body 或 query 的 `tenant_id` 與 API key tenant 不一致時回 `403 tenant_mismatch`。
+- Dashboard Basic Auth：`DASHBOARD_AUTH_ENABLED=true` 時保護 Dashboard。
+- Tenant quota：request quota 超過時回 `429 tenant_request_quota_exceeded`；high-risk quota 超過時 fail closed 進入 `awaiting_approval`。
+- Governance audit：quota 事件會寫入 `governance_events`，可從 `/v1/governance/events` 與 `/dashboard/governance` 查詢。
+
 ### Evaluator
 
 目前用 heuristic 評估：
@@ -116,15 +127,15 @@ agent 不能只靠自己的輸出宣稱安全。結果必須經 evaluator 或人
 
 正式環境必做：
 
-- AuthN/AuthZ。
-- Tenant isolation。
+- 完整 AuthN/AuthZ，例如 OAuth、SSO、RBAC 或反向代理 auth。
+- 完整 Tenant isolation 與 tenant 管理 UI；v0.6 僅提供 API key tenant mapping MVP。
 - Tool ACL。
 - Sandboxed executor。
 - Secret redaction。
 - PII detection/masking。
 - Human approval workflow。
 - Audit persistence。
-- Rate limit。
+- 更細的 user/tool quota 與 rate limit；v0.6 已有 tenant request quota 與 high-risk quota MVP。
 - Circuit breaker。
 - Network egress policy。
 - Dependency vulnerability scanning。

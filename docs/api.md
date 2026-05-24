@@ -1,8 +1,8 @@
-# API 文件 v0.5
+# API 文件 v0.6
 
 API 由 FastAPI 提供，所有 JSON API route 都掛在 `/v1` prefix 下。啟動後可透過 OpenAPI UI 查看互動式文件：
 
-目前 API 版本：`v0.5.0`
+目前 API 版本：`v0.6.0`
 
 - `http://localhost:8000/docs`
 - `http://localhost:8000/redoc`
@@ -25,8 +25,10 @@ API 由 FastAPI 提供，所有 JSON API route 都掛在 `/v1` prefix 下。啟�
 | `GET` | `/v1/runs/{run_id}/worker-attempts` | 查詢單一 run 的 worker retry/DLQ attempts |
 | `GET` | `/v1/runs/{run_id}/tool-executions` | 查詢單一 run 的 tool execution audit |
 | `GET` | `/v1/worker/dlq` | 查詢 dead-lettered worker attempts |
-| `GET` | `/v1/evaluations` | 查詢 evaluator results，支援 `task_type` 與 `verdict` |
+| `GET` | `/v1/evaluations` | 查詢 evaluator results，支援 `task_type`、`verdict` 與 `tenant_id` |
 | `GET` | `/v1/observability/summary` | 查詢 worker、approval、incident、evaluator 與 SLO summary |
+| `GET` | `/v1/governance/events` | 查詢 tenant governance events，支援 `tenant_id` 與 `event_type` |
+| `GET` | `/v1/governance/summary` | 查詢單一 tenant 的 run、risk 與 quota limited 摘要 |
 | `GET` | `/v1/dashboard/summary` | Dashboard summary API |
 
 Dashboard UI 另提供：
@@ -37,7 +39,34 @@ Dashboard UI 另提供：
 - `/dashboard/approvals`
 - `/dashboard/worker`
 - `/dashboard/observability`
+- `/dashboard/governance`
 - `/dashboard/playground`
+
+## Auth 與 Tenant
+
+`v0.6.0` 新增最小 API key auth。當 `AUTH_ENABLED=false` 時，API 保持本機 demo 行為；若 request 沒有帶 `tenant_id`，會使用 `default`。當 `AUTH_ENABLED=true` 時，下列 API 需要 `X-API-Key`：
+
+- `POST /v1/agent/submit`
+- `POST /v1/agent/submit-with-details`
+- `GET /v1/runs`
+- `GET /v1/runs/{run_id}`
+- `GET /v1/incidents`
+- `GET /v1/approvals`
+- `POST /v1/approvals/{run_id}/decision`
+- `GET /v1/evaluations`
+- `GET /v1/governance/events`
+- `GET /v1/governance/summary`
+
+目前 `healthz`、`readyz`、`metrics`、run subresource 查詢、`/v1/worker/dlq`、`/v1/observability/summary` 與 `/v1/dashboard/summary` 維持 demo 可直接讀取；正式環境需要在反向代理或後續版本補齊完整 auth coverage。
+
+`API_KEYS` 格式為逗號分隔的 `key:tenant_id`，例如：
+
+```env
+AUTH_ENABLED=true
+API_KEYS=demo-key:default,tenant-a-key:tenant-a
+```
+
+若 body 內的 `tenant_id` 與 API key 對應 tenant 不一致，API 會回 `403 tenant_mismatch`。缺少或錯誤 key 會回 `401 auth_required` 或 `401 invalid_api_key`。
 
 ## Health / Readiness
 
@@ -61,6 +90,7 @@ Dashboard UI 另提供：
 
 ```json
 {
+  "tenant_id": "default",
   "user_id": "u-1001",
   "task_type": "code_fix",
   "prompt": "Fix the bug without changing business rules.",
@@ -81,6 +111,7 @@ Dashboard UI 另提供：
 
 | 欄位 | 必填 | 說明 |
 | --- | --- | --- |
+| `tenant_id` | 否 | 租戶識別。auth 關閉時可由 request 指定，auth 開啟時以 API key 對應 tenant 為準 |
 | `user_id` | 是 | 呼叫者或租戶內使用者識別 |
 | `task_type` | 否 | `code_fix`、`analysis`、`data_query`、`workflow`、`other` |
 | `prompt` | 是 | 原始任務內容，最短 1 字元 |
@@ -104,6 +135,7 @@ Dashboard UI 另提供：
 ```json
 {
   "run_id": "a1b2c3",
+  "tenant_id": "default",
   "status": "queued",
   "decision_reason": "Request passed deterministic policy checks.",
   "risk_score": 0.1,
@@ -114,6 +146,7 @@ Dashboard UI 另提供：
 | 欄位 | 說明 |
 | --- | --- |
 | `run_id` | 單次執行識別碼 |
+| `tenant_id` | run 所屬租戶 |
 | `status` | `accepted`、`denied`、`escalated`、`queued`、`running`、`awaiting_approval`、`completed`、`failed` |
 | `decision_reason` | policy decision 原因 |
 | `risk_score` | `0.0` 到 `1.0` |
@@ -125,12 +158,14 @@ Dashboard UI 另提供：
 
 - `status`
 - `task_type`
+- `tenant_id`
 - `limit`
 - `offset`
 
 `GET /v1/incidents` 支援 query params：
 
 - `severity`
+- `tenant_id`
 - `limit`
 - `offset`
 
@@ -148,6 +183,7 @@ Dashboard UI 另提供：
 - `status`
 - `reviewer`
 - `expired`
+- `tenant_id`
 
 `POST /v1/approvals/{run_id}/decision`
 
@@ -173,7 +209,7 @@ Dashboard UI 另提供：
 
 `GET /v1/runs/{run_id}/tool-executions` 回傳 tool name、status、detail、sandbox policy 與 artifact refs。
 
-`GET /v1/evaluations?task_type=code_fix&verdict=pass` 回傳 evaluator final score、task rubric、judge signal 與 explanation。LLM-as-judge 目前預設為 deterministic fake signal，`used_for_hard_deny=false`。
+`GET /v1/evaluations?task_type=code_fix&verdict=pass&tenant_id=default` 回傳 evaluator final score、task rubric、judge signal 與 explanation。LLM-as-judge 目前預設為 deterministic fake signal，`used_for_hard_deny=false`。
 
 `GET /v1/observability/summary` 回傳 worker completed/retry/DLQ、incident count、approval count、evaluator verdict count 與 SLO target。
 
@@ -237,4 +273,19 @@ schema 不合法時回傳統一 error envelope：
 }
 ```
 
-正式環境建議後續補上 request id / trace id response header、auth error、rate limit error、Kafka consumer lag alert 與 OpenTelemetry tracing。
+## Quota 與 Governance
+
+`QUOTA_ENABLED=true` 時，API 會使用 Redis 檢查 tenant quota：
+
+- `TENANT_REQUEST_LIMIT_PER_MINUTE`：每個 tenant 每分鐘 request 數，超過時回 `429 tenant_request_quota_exceeded`，不建立 run。
+- `TENANT_HIGH_RISK_LIMIT_PER_HOUR`：每個 tenant 每小時 high-risk request 數，超過時 fail closed，run 進入 `awaiting_approval`，policy flags 會包含 `tenant_high_risk_quota_exceeded`。
+
+治理事件可透過下列 API 查詢：
+
+```text
+GET /v1/governance/events?tenant_id=default
+GET /v1/governance/events?tenant_id=default&event_type=request_quota_exceeded
+GET /v1/governance/summary?tenant_id=default
+```
+
+正式環境建議後續補上 request id / trace id response header、Kafka consumer lag alert 與 OpenTelemetry tracing。

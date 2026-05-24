@@ -1,15 +1,16 @@
-# 架構文件 v0.5
+# 架構文件 v0.6
 
 本專案目前是 Agent Reward-Hacking Guardrail 的 guarded async execution hardening 版本。核心流程是 FastAPI API 接收 agent request、進行 prompt sanitation、risk scoring 與 policy decision；低風險任務寫入 Postgres audit trail、標記為 `queued`，並 publish Kafka request event；worker 重新讀取 run、重跑 policy、執行 bounded executor、evaluate 結果並寫回 audit trail。高風險或 destructive 任務會進入 `awaiting_approval`，由 Dashboard 或 API 進行審核。
 
-目前架構版本：`v0.5.0`
+目前架構版本：`v0.6.0`
 
 ## 目前架構
 
 ```mermaid
 flowchart LR
   C["Client / Dashboard / Agent"] --> A["FastAPI API"]
-  A --> S["Prompt Sanitizer"]
+  A --> G["Auth / Tenant Quota"]
+  G --> S["Prompt Sanitizer"]
   S --> P["Policy Engine"]
   P --> R[("Redis State / Breaker")]
   P -->|allow| K["Kafka agent.requests"]
@@ -23,6 +24,7 @@ flowchart LR
   Q --> DB
   I --> DB
   DB --> UI["Dashboard UI"]
+  DB --> GD["Governance Dashboard"]
   A --> M["Prometheus Metrics"]
 ```
 
@@ -42,11 +44,13 @@ flowchart LR
 - Task-specific evaluator result table。
 - Prometheus metrics。
 - Structured logging。
+- API key auth 與 Dashboard Basic Auth MVP。
+- Tenant-aware audit trail、Redis tenant quota 與 governance event 查詢。
 
 目前尚未完整接入：
 
 - 真實 OS sandbox 執行器；目前是 sandbox boundary audit contract。
-- Auth、tenant isolation、Kafka lag alert、OpenTelemetry 與 production SLO enforcement。
+- 完整 OAuth/RBAC、tenant 管理 UI、Kafka lag alert、OpenTelemetry 與 production SLO enforcement。
 
 ## Request Flow
 
@@ -96,6 +100,7 @@ sequenceDiagram
 - 提供 agent submit endpoints。
 - 提供 run、incident、approval、dashboard summary 查詢 endpoints。
 - submit 時讀取 Redis breaker、寫入 Postgres audit trail，並在 queued 時 publish Kafka event。
+- submit 時會解析 tenant、檢查 quota，必要時寫入 governance event。
 
 ### `app/ui`
 
@@ -104,6 +109,9 @@ sequenceDiagram
   - `/dashboard/runs`
   - `/dashboard/runs/{run_id}`
   - `/dashboard/approvals`
+  - `/dashboard/worker`
+  - `/dashboard/observability`
+  - `/dashboard/governance`
   - `/dashboard/playground`
 - UI 使用 Jinja2 template，不需要獨立前端 build chain。
 
@@ -115,6 +123,8 @@ sequenceDiagram
 - `orchestrator.py`：負責 submit / execute 兩段流程，串接 sanitizer、policy、executor、evaluator。
 - `executor.py`：bounded executor interface，記錄 tool transcript 與 artifact refs。
 - `run_state.py`：Redis 與 in-memory state store，管理 run state、idempotency、breaker。
+- `auth.py`：解析 `X-API-Key` 與 tenant 對應，提供最小 auth context。
+- `quota.py`：使用 state store 做 tenant request quota 與 high-risk quota 檢查。
 - `events.py`：Kafka 與 in-memory event publisher。
 - `evaluator.py`：以 heuristic 評估 shortcut、hallucination、policy violation。
 - `audit_log.py`：封裝 run/incident persistence、approval decision 與 dashboard summary 查詢。
@@ -129,6 +139,7 @@ sequenceDiagram
 
 - `AgentRun`：保存 request、status、risk score、policy flags、execution output、evaluation summary。
 - `Incident`：保存 policy/evaluation/approval/worker 產生的事件。
+- `GovernanceEvent`：保存 quota hit 與 high-risk quota fail-closed 等治理事件。
 
 ### `app/workers`
 
@@ -155,6 +166,8 @@ sequenceDiagram
 - `GET /v1/worker/dlq`
 - `GET /v1/evaluations`
 - `GET /v1/observability/summary`
+- `GET /v1/governance/events`
+- `GET /v1/governance/summary`
 - `GET /v1/dashboard/summary`
 
 ## Production Extension Points
@@ -162,7 +175,7 @@ sequenceDiagram
 - Tool sandbox：把目前 audit contract 演進成真實 OS/process/network/filesystem sandbox。
 - LLM-as-judge evaluator：接入外部模型，但維持 signal-only，不作為唯一 hard deny。
 - OpenTelemetry：補 traces 與跨 component correlation。
-- Auth、tenant isolation、quota、retention、backup/restore。
+- 完整 OAuth/RBAC、tenant 管理 UI、retention、backup/restore。
 
 ## 重要限制
 
@@ -170,4 +183,4 @@ sequenceDiagram
 - Kafka worker 已接入 retry/backoff 與 DLQ audit，但尚未包含 consumer lag alert。
 - Redis 是短期 state 與 breaker，不是唯一 audit store。
 - Approval workflow 已有 TTL、reviewer、request changes 與 event audit；多 reviewer queue 與權限控管放到後續版本。
-- Dashboard 尚未加入登入權限，不應直接暴露在公開網路。
+- Dashboard 已有可選 Basic Auth MVP；正式公開前仍應接入更完整的 SSO/RBAC 或反向代理保護。

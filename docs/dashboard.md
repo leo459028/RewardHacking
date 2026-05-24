@@ -1,4 +1,4 @@
-# Dashboard 使用說明 v0.5
+# Dashboard 使用說明 v0.6
 
 本專案提供 FastAPI 內建的 server-rendered Dashboard，不需要額外啟動 React/Vite 前端。啟動 API 後可直接開啟：
 
@@ -6,7 +6,7 @@
 http://localhost:8000/dashboard
 ```
 
-目前 Dashboard 版本：`v0.5.0`
+目前 Dashboard 版本：`v0.6.0`
 
 ## 雙語標題規則
 
@@ -19,11 +19,12 @@ Dashboard 的頁面大標題以英文為主，並在標題下方提供繁體中�
 | 路由 | 英文標題 / 中文標註 | 用途 |
 | --- | --- | --- |
 | `/dashboard` | `Guardrail Overview` / 防護總覽 | 總覽 runs、status 分布、平均 risk score、policy flags 與近期 incidents。 |
-| `/dashboard/runs` | `Runs` / 執行紀錄 | 查詢 run list，支援 status 與 task type 篩選，包含 `queued`、`running`、`awaiting_approval`、`failed` 等狀態。 |
+| `/dashboard/runs` | `Runs` / 執行紀錄 | 查詢 run list，支援 status、task type 與 tenant 篩選，包含 `queued`、`running`、`awaiting_approval`、`failed` 等狀態。 |
 | `/dashboard/runs/{run_id}` | `Run {id}` / 執行詳情 | 查看單一 run 的 request、policy、execution、evaluation、event timeline、tool transcript、worker attempts、tool executions、approval state 與 incidents。 |
 | `/dashboard/approvals` | `Approval Queue` / 審核佇列 | 查詢 awaiting approval runs，並支援 `approve_once`、`deny`、`request_changes`。 |
 | `/dashboard/worker` | `Worker Operations` / Worker 作業狀態 | 查詢 worker attempts、retry failure reason 與 DLQ entries。 |
 | `/dashboard/observability` | `Observability Trends` / 可觀測性趨勢 | 查詢 worker、incident、approval、evaluator 與 SLO summary。 |
+| `/dashboard/governance` | `Governance` / 治理中心 | 查詢 tenant runs、average risk、quota limited count 與 governance events。 |
 | `/dashboard/playground` | `Playground` / 測試沙盒 | 用表單送出測試 AgentRequest，立即產生 `queued`、`awaiting_approval` 或 `denied` run。 |
 
 ## 使用流程
@@ -60,6 +61,7 @@ docker compose up -d --build
 8. 回到 `/dashboard` 查看 queued、running、awaiting approval、failed 統計是否更新。
 9. 到 `/dashboard/worker` 確認 retry 與 DLQ 狀態。
 10. 到 `/dashboard/observability` 確認 incident、approval、worker、evaluator 與 SLO summary。
+11. 到 `/dashboard/governance` 確認 tenant `default` 或指定 tenant 的 quota 與治理事件。
 
 ## 資料來源
 
@@ -70,11 +72,12 @@ Dashboard 不使用假資料；所有資料來自 Postgres audit tables：
 - `worker_attempts`
 - `tool_executions`
 - `evaluation_results`
+- `governance_events`
 
-`POST /v1/agent/submit`、`POST /v1/agent/submit-with-details`、worker update 與 approval decision 都會寫入同一份 audit trail，因此 API 與 UI 看到的是同一批資料。
+`POST /v1/agent/submit`、`POST /v1/agent/submit-with-details`、worker update、approval decision 與 quota governance event 都會寫入同一份 audit trail，因此 API 與 UI 看到的是同一批資料。
 
 ## 目前限制
 
-- 目前 Dashboard 沒有登入權限控管，不應直接暴露在公開網路。
+- Dashboard Basic Auth 可用 `DASHBOARD_AUTH_ENABLED=true` 啟用；預設關閉以維持本機 demo 便利性。
 - 目前 execution 使用 `BoundedToolExecutor`，會記錄 tool transcript 與 sandbox boundary policy，但不是完整 OS sandbox。
-- Kafka worker、Redis state、retry/DLQ、approval TTL/event 與 evaluator result 已納入 `v0.5.0`；auth、多 reviewer queue、consumer lag alert 與 OpenTelemetry 仍在後續版本。
+- Kafka worker、Redis state、retry/DLQ、approval TTL/event、evaluator result 與 tenant governance 已納入 `v0.6.0`；完整 RBAC、多 reviewer queue、consumer lag alert 與 OpenTelemetry 仍在後續版本。
