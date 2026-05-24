@@ -10,8 +10,8 @@ app/
   models/         SQLAlchemy models
   observability/  Prometheus metrics
   schemas/        Pydantic schemas
-  services/       policy engine, evaluator, orchestrator
-  workers/        Kafka worker placeholder
+  services/       policy engine, evaluator, orchestrator, executor, state, events
+  workers/        Kafka worker consumer
 docs/             project documents
 tests/            unit tests
 ```
@@ -52,6 +52,12 @@ make lint
 
 `requirements.txt` 目前包含 runtime 與 test dependencies；`pyproject.toml` 另外定義了 `dev` optional dependencies。
 
+## Dashboard Form 開發注意
+
+Dashboard route 若使用 `request.form()` 解析 HTML form，runtime dependencies 必須包含 `python-multipart`。新增或修改 form submit 行為時，測試不能只覆蓋 GET page render，也要補 POST route test，確認實際 submit 不會回 `internal_server_error`。
+
+若新增或移除 runtime dependency，請同步更新 `requirements.txt` 與 `pyproject.toml`；Docker runtime 只會從 image 內的 dependencies 判斷，不會因本機環境已安裝而自動可用。
+
 ## 新增 Policy Rule
 
 建議流程：
@@ -88,7 +94,7 @@ Policy rule 應該可解釋、可測試、可回滾。避免把難以重現的 m
 
 ## 接入真實 Tool Executor
 
-目前 `DummyToolExecutor` 僅回傳 demo 字串。正式 executor 應至少具備：
+目前 `BoundedToolExecutor` 會記錄受控 tool transcript 與 artifact refs，但不呼叫真實外部工具。正式 executor 應至少具備：
 
 - tool ACL：只允許 request 中被核准的 tools。
 - sandbox：限制檔案、網路、process、secret access。
@@ -96,11 +102,11 @@ Policy rule 應該可解釋、可測試、可回滾。避免把難以重現的 m
 - audit artifact：紀錄 tool input/output、diff、test result。
 - approval gate：destructive action 前確認人工核准。
 
-可先把 executor 抽成 interface，再由不同 task type 實作不同 adapter。
+目前已先抽出 executor interface，後續可由不同 task type 實作不同 adapter。
 
 ## 接入 Kafka Worker
 
-`app/workers/consumer.py` 目前是 placeholder。建議 worker flow：
+`app/workers/consumer.py` 已可消費 `agent.requests` 並依 run id 處理 queued run。目前 worker flow：
 
 1. Consume `agent.requests`。
 2. Validate event schema。
@@ -111,7 +117,7 @@ Policy rule 應該可解釋、可測試、可回滾。避免把難以重現的 m
 7. Publish `agent.executions`、`agent.evaluations`、`agent.incidents`。
 8. Commit offset。
 
-失敗時應區分 transient error 與 permanent error，並導向 retry 或 dead-letter topic。
+失敗時目前會把 run 標記為 `failed` 並寫入 audit trail。後續應區分 transient error 與 permanent error，並導向 retry 或 dead-letter topic。
 
 ## Coding Style
 

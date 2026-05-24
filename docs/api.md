@@ -1,8 +1,8 @@
-# API 文件 v0.2
+# API 文件 v0.3
 
 API 由 FastAPI 提供，所有 JSON API route 都掛在 `/v1` prefix 下。啟動後可透過 OpenAPI UI 查看互動式文件：
 
-目前 API 版本：`v0.2.0`
+目前 API 版本：`v0.3.0`
 
 - `http://localhost:8000/docs`
 - `http://localhost:8000/redoc`
@@ -20,6 +20,8 @@ API 由 FastAPI 提供，所有 JSON API route 都掛在 `/v1` prefix 下。啟�
 | `GET` | `/v1/runs/{run_id}` | 查詢單一 run |
 | `GET` | `/v1/runs/{run_id}/incidents` | 查詢單一 run 的 incidents |
 | `GET` | `/v1/incidents` | 查詢 incidents |
+| `GET` | `/v1/approvals` | 查詢 awaiting approval 的 runs |
+| `POST` | `/v1/approvals/{run_id}/decision` | 對 awaiting approval run 做審核決策 |
 | `GET` | `/v1/dashboard/summary` | Dashboard summary API |
 
 Dashboard UI 另提供：
@@ -27,6 +29,7 @@ Dashboard UI 另提供：
 - `/dashboard`
 - `/dashboard/runs`
 - `/dashboard/runs/{run_id}`
+- `/dashboard/approvals`
 - `/dashboard/playground`
 
 ## Health / Readiness
@@ -94,7 +97,7 @@ Dashboard UI 另提供：
 ```json
 {
   "run_id": "a1b2c3",
-  "status": "completed",
+  "status": "queued",
   "decision_reason": "Request passed deterministic policy checks.",
   "risk_score": 0.1,
   "policy_flags": []
@@ -104,7 +107,7 @@ Dashboard UI 另提供：
 | 欄位 | 說明 |
 | --- | --- |
 | `run_id` | 單次執行識別碼 |
-| `status` | `accepted`、`denied`、`escalated`、`queued`、`completed` |
+| `status` | `accepted`、`denied`、`escalated`、`queued`、`running`、`awaiting_approval`、`completed`、`failed` |
 | `decision_reason` | policy decision 原因 |
 | `risk_score` | `0.0` 到 `1.0` |
 | `policy_flags` | 命中的 policy flags |
@@ -127,9 +130,29 @@ Dashboard UI 另提供：
 `GET /v1/dashboard/summary` 回傳：
 
 - total runs。
-- completed / escalated / denied / queued counts。
+- completed / escalated / denied / queued / running / awaiting_approval / failed counts。
 - average risk score。
 - recent incidents。
+
+## Approval API
+
+`GET /v1/approvals` 回傳所有目前 `status=awaiting_approval` 的 runs。
+
+`POST /v1/approvals/{run_id}/decision`
+
+```json
+{
+  "decision": "approve_once",
+  "reviewer": "operator-1",
+  "reason": "Approved for controlled demo."
+}
+```
+
+`decision` 支援：
+
+- `approve_once`：把 run 放回 `queued`，worker 可再次處理。
+- `deny`：把 run 標記為 `denied` 並建立 approval incident。
+- `request_changes`：維持 `awaiting_approval`，並記錄 reviewer reason。
 
 ## 範例：低風險請求
 
@@ -152,7 +175,7 @@ curl -X POST http://localhost:8000/v1/agent/submit \
   }'
 ```
 
-預期結果：`status` 通常為 `completed`，`policy_flags` 為空，並建立一筆 `agent_runs`。
+預期結果：`status` 通常為 `queued`，`policy_flags` 為空，並建立一筆 `agent_runs`。Docker Compose 的 worker 消費後，run 會更新為 `completed`，並在 run detail 中顯示 execution output、event timeline 與 tool transcript。
 
 ## 範例：高風險請求
 
@@ -175,7 +198,7 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
   }'
 ```
 
-預期結果：`status` 為 `escalated` 或 `denied`，並建立一筆 incident。
+預期結果：`status` 為 `awaiting_approval` 或 `denied`，並建立一筆 incident。若進入 `awaiting_approval`，可從 `/v1/approvals` 或 `/dashboard/approvals` 查詢。
 
 ## 錯誤處理
 
@@ -191,4 +214,4 @@ schema 不合法時回傳統一 error envelope：
 }
 ```
 
-正式環境建議後續補上 request id / trace id response header、auth error、rate limit error 與 human approval pending response。
+正式環境建議後續補上 request id / trace id response header、auth error、rate limit error、approval TTL error 與 worker retry/DLQ error。

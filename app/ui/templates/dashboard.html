@@ -15,6 +15,9 @@
   <div class="stat"><div class="stat-label">Escalated</div><div class="stat-value">{{ summary.escalated }}</div></div>
   <div class="stat"><div class="stat-label">Denied</div><div class="stat-value">{{ summary.denied }}</div></div>
   <div class="stat"><div class="stat-label">Queued</div><div class="stat-value">{{ summary.queued }}</div></div>
+  <div class="stat"><div class="stat-label">Running</div><div class="stat-value">{{ summary.running }}</div></div>
+  <div class="stat"><div class="stat-label">Awaiting</div><div class="stat-value">{{ summary.awaiting_approval }}</div></div>
+  <div class="stat"><div class="stat-label">Failed</div><div class="stat-value">{{ summary.failed }}</div></div>
   <div class="stat"><div class="stat-label">Avg Risk</div><div class="stat-value">{{ "%.3f"|format(summary.average_risk_score) }}</div></div>
 </section>
 

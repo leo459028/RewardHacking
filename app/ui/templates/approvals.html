@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Approvals{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Approval Queue</h1>
+    <div class="muted">處理 awaiting approval 的高風險或 destructive runs。</div>
+  </div>
+  <a class="button" href="/dashboard/playground">New Test Run</a>
+</div>
+
+<section class="panel">
+  <table>
+    <thead><tr><th>Run</th><th>User</th><th>Task</th><th>Risk</th><th>Flags</th><th>Request</th><th>Decision</th></tr></thead>
+    <tbody>
+    {% for run in approvals %}
+      <tr>
+        <td><a href="/dashboard/runs/{{ run.run_id }}">{{ run.run_id[:8] }}</a></td>
+        <td>{{ run.user_id }}</td>
+        <td>{{ run.task_type }}</td>
+        <td>{{ "%.3f"|format(run.risk_score) }}</td>
+        <td>{% for flag in run.policy_flags %}<span class="flag">{{ flag }}</span>{% else %}<span class="muted">none</span>{% endfor %}</td>
+        <td>{{ run.goal }}</td>
+        <td>
+          <form class="decision-form" method="post" action="/dashboard/approvals/{{ run.run_id }}/decision">
+            <input type="hidden" name="reviewer" value="dashboard-operator">
+            <input name="reason" value="Reviewed in dashboard">
+            <button class="button" name="decision" value="approve_once" type="submit">Approve Once</button>
+            <button class="button secondary" name="decision" value="request_changes" type="submit">Request Changes</button>
+            <button class="button danger" name="decision" value="deny" type="submit">Deny</button>
+          </form>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="muted">No runs are waiting for approval.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

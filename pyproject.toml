@@ -1,6 +1,6 @@
 [project]
 name = "reward-hacking-guardrail"
-version = "0.2.0"
+version = "0.3.0"
 description = "Agent guardrail prototype for preventing reward hacking"
 requires-python = ">=3.11"
 dependencies = [
@@ -17,6 +17,7 @@ dependencies = [
   "orjson>=3.10.0",
   "alembic>=1.13.2",
   "jinja2>=3.1.4",
+  "python-multipart>=0.0.20",
 ]
 
 [project.optional-dependencies]

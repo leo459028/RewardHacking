@@ -4,20 +4,31 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
-from app.api.deps import get_orchestrator
+from app.api.deps import get_event_publisher, get_orchestrator, get_state_store
+from app.core.config import get_settings
 from app.infra.postgres import get_session
 from app.observability.metrics import EVALUATION_SCORE, POLICY_RISK, REQUESTS_TOTAL
 from app.schemas.agent import AgentRequest, AgentResponse
-from app.schemas.audit import DashboardSummaryResponse, IncidentRecord, RunRecord
+from app.schemas.audit import (
+    ApprovalDecisionRequest,
+    DashboardSummaryResponse,
+    IncidentRecord,
+    RunRecord,
+)
+from app.services.events import EventPublisher
 from app.services.audit_log import (
+    apply_approval_decision,
     dashboard_summary,
     get_run,
     incidents_for_run,
+    list_approvals,
     list_incidents,
     list_runs,
     persist_orchestration_result,
 )
 from app.services.orchestrator import AgentOrchestrator
+from app.services.run_state import RunStateStore
+from app.workers.producer import make_event
 
 router = APIRouter(prefix="/v1", tags=["agent"])
 
@@ -43,9 +54,24 @@ async def submit_agent_request(
     agent_request: AgentRequest,
     orchestrator: AgentOrchestrator = Depends(get_orchestrator),
     session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+    event_publisher: EventPublisher = Depends(get_event_publisher),
 ):
-    result = orchestrator.run(agent_request)
+    disabled_tools = list((await state_store.get_open_breakers(agent_request.allowed_tools)).keys())
+    result = orchestrator.submit(agent_request, disabled_tools=disabled_tools)
     await persist_orchestration_result(session, agent_request, result)
+    await state_store.set_run_state(result.response.run_id, result.response.status)
+    if result.response.status == "queued":
+        event = make_event(
+            "agent.requested",
+            result.response.run_id,
+            {"request": agent_request.model_dump()},
+        )
+        await event_publisher.publish(
+            get_settings().kafka_request_topic,
+            result.response.run_id,
+            event,
+        )
 
     REQUESTS_TOTAL.labels(status=result.response.status).inc()
     POLICY_RISK.observe(result.response.risk_score)
@@ -58,9 +84,24 @@ async def submit_agent_request_with_details(
     agent_request: AgentRequest,
     orchestrator: AgentOrchestrator = Depends(get_orchestrator),
     session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+    event_publisher: EventPublisher = Depends(get_event_publisher),
 ):
-    result = orchestrator.run(agent_request)
+    disabled_tools = list((await state_store.get_open_breakers(agent_request.allowed_tools)).keys())
+    result = orchestrator.submit(agent_request, disabled_tools=disabled_tools)
     await persist_orchestration_result(session, agent_request, result)
+    await state_store.set_run_state(result.response.run_id, result.response.status)
+    if result.response.status == "queued":
+        event = make_event(
+            "agent.requested",
+            result.response.run_id,
+            {"request": agent_request.model_dump()},
+        )
+        await event_publisher.publish(
+            get_settings().kafka_request_topic,
+            result.response.run_id,
+            event,
+        )
     REQUESTS_TOTAL.labels(status=result.response.status).inc()
     POLICY_RISK.observe(result.response.risk_score)
     score = 0.0
@@ -76,6 +117,31 @@ async def submit_agent_request_with_details(
         "execution_output": result.execution_output,
         "evaluation_summary": result.evaluation_summary,
     }
+
+
+@router.get("/approvals", response_model=list[RunRecord])
+async def get_approvals(
+    session: AsyncSession = Depends(get_session),
+):
+    return await list_approvals(session)
+
+
+@router.post("/approvals/{run_id}/decision", response_model=RunRecord)
+async def decide_approval(
+    run_id: str,
+    decision: ApprovalDecisionRequest,
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+    event_publisher: EventPublisher = Depends(get_event_publisher),
+):
+    run = await apply_approval_decision(session, run_id, decision)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    await state_store.set_run_state(run.run_id, run.status)
+    if run.status == "queued":
+        event = make_event("agent.requested", run.run_id, {"request": run.request_payload})
+        await event_publisher.publish(get_settings().kafka_request_topic, run.run_id, event)
+    return run
 
 
 @router.get("/runs", response_model=list[RunRecord])
@@ -133,6 +199,9 @@ async def get_dashboard_summary(session: AsyncSession = Depends(get_session)):
         escalated=summary.escalated,
         denied=summary.denied,
         queued=summary.queued,
+        running=summary.running,
+        awaiting_approval=summary.awaiting_approval,
+        failed=summary.failed,
         average_risk_score=summary.average_risk_score,
         recent_incidents=summary.recent_incidents,
     )

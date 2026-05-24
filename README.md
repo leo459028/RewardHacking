@@ -6,9 +6,9 @@
 
 ## 專案版號
 
-目前版本：`v0.2.0`
+目前版本：`v0.3.0`
 
-`v0.2.0` 是 Phase 0-2 + Dashboard milestone。這代表目前已經有可展示、可查詢、可審計的 prototype，但還不是完整的 production safety platform。
+`v0.3.0` 是 Guarded Async Execution MVP。這代表目前已經有 queue、worker、Redis run state、approval queue、bounded executor transcript 與 Dashboard 查詢入口，但還不是完整的 production sandbox 或 production safety platform。
 
 ## 這個專案想解決什麼問題
 
@@ -36,7 +36,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 
 ## Roadmap 完成後的適用情境
 
-以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v0.2.0` 已全部完成。
+以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v0.3.0` 已全部完成。
 
 1. AI coding agent 在修改程式碼前，檢查是否跳過測試、繞過規則或做破壞性操作。
 2. 內部營運 agent 執行批次任務前，確認工具權限、任務風險與是否需要人工核准。
@@ -75,31 +75,36 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - audit trail 可以幫助追蹤問題，但不能替代資料治理與資安制度。
 - 如果 prompt、工具權限或資料權限設計不良，guardrail 也可能被繞過或誤判。
 
-## 目前 v0.2 做到哪裡
+## 目前 v0.3 做到哪裡
 
-`v0.2.0` 目前是可展示、可查詢、可審計的 prototype。
+`v0.3.0` 目前是可展示、可查詢、可審計的 guarded async execution MVP。
 
 已完成：
 
 - 可以送出 agent request。
 - 系統會計算 risk score。
 - policy engine 會做 `allow`、`escalated`、`denied` 判斷。
-- 允許執行的任務會經過 demo executor 與 evaluator。
+- 低風險任務會先建立 `queued` run，並 publish `agent.requests` event。
+- Worker 可以消費 queued run，重新檢查 policy，執行 bounded executor，並寫回 evaluation。
+- Bounded executor 會記錄 tool transcript 與 artifact refs，但不呼叫真實外部工具。
+- Destructive 或需要審核的任務會進入 `awaiting_approval`，不會執行工具。
+- Redis 已接入 run state、idempotency key 與 tool circuit breaker 的最小閉環。
+- Approval API 支援查詢 queue 與 `approve_once`、`deny`、`request_changes`。
 - 結果會寫進 Postgres audit trail。
-- Dashboard 可以查看 runs、incidents、risk score、policy flags、evaluation summary。
+- Dashboard 可以查看 runs、incidents、risk score、policy flags、evaluation summary、event timeline、tool transcript 與 approval queue。
 - 已導入 Alembic migration。
-- 已有 API tests、service unit tests 與 GitHub CI。
+- 已有 API tests、service unit tests、dashboard HTML tests 與 GitHub CI。
 
 尚未完成：
 
-- 還沒有真正的工具執行 sandbox。
-- 還沒有 human approval workflow。
-- 還沒有 Kafka worker 與 async execution。
-- 還沒有 Redis run state、rate limit、circuit breaker。
+- 還沒有完整 OS sandbox、network/filesystem/process/secret 邊界。
+- 還沒有完整 human approval workflow，例如 reviewer 報表、TTL 與 request changes 後續流程。
+- 還沒有 worker retry/backoff、DLQ 與 consumer lag alert。
+- 還沒有完整 rate limit、tenant quota 與 auth。
 - 還沒有 LLM-as-judge evaluator。
 - 還沒有完整 production observability、auth、tenant isolation。
 
-所以目前 `v0.2.0` 適合用來 demo、驗證架構、建立測試基線與討論下一階段設計；不建議直接當成完整 production 安全平台。
+所以目前 `v0.3.0` 適合用來 demo guarded async execution、驗證 queue/worker/approval/safety state 的產品閉環，以及建立下一階段 hardening 基線；不建議直接當成完整 production 安全平台。
 
 ## 快速啟動
 
@@ -133,7 +138,7 @@ curl http://localhost:8000/v1/readyz
 http://localhost:8000/dashboard
 ```
 
-6. 送出測試請求：
+6. 送出測試請求。低風險任務會先回 `queued`，Docker Compose 的 worker 消費後會把 run 更新為 `completed`：
 
 ```bash
 curl -X POST http://localhost:8000/v1/agent/submit-with-details \
@@ -154,7 +159,7 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
 
 ## 文件導覽
 
-- [專案文件總覽](docs/README.md)
+- [專案文件總覽](docs/OVERVIEW.md)
 - [Roadmap](docs/roadmap.md)
 - [Dashboard 使用說明](docs/dashboard.md)
 - [API 文件](docs/api.md)
@@ -166,8 +171,8 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
 
 如果你要繼續開發，建議先看 [Roadmap](docs/roadmap.md)。下一階段通常會優先補：
 
-- Kafka worker 與 async execution。
-- Redis run state、rate limit、circuit breaker。
-- 真實 tool executor 與 sandbox。
-- human approval workflow。
-- auth、tenant isolation 與 production observability。
+- Worker retry/backoff 與 DLQ。
+- 完整 approval workflow，包括 TTL、reviewer、request changes 後續處理。
+- Tool ACL 外部化、resource/cost limit 與 sandbox 強化。
+- Evaluator task-specific rubrics 與 LLM-as-judge signal。
+- worker/incident observability、auth、tenant isolation 與 production governance。

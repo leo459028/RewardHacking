@@ -8,18 +8,25 @@ from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_orchestrator
+from app.api.deps import get_event_publisher, get_orchestrator, get_state_store
+from app.core.config import get_settings
 from app.infra.postgres import get_session
+from app.schemas.audit import ApprovalDecisionRequest
+from app.services.events import EventPublisher
 from app.schemas.agent import AgentConstraints, AgentRequest
 from app.services.audit_log import (
+    apply_approval_decision,
     dashboard_summary,
     get_run,
     incidents_for_run,
+    list_approvals,
     list_incidents,
     list_runs,
     persist_orchestration_result,
 )
 from app.services.orchestrator import AgentOrchestrator
+from app.services.run_state import RunStateStore
+from app.workers.producer import make_event
 
 router = APIRouter(tags=["dashboard"])
 templates = Jinja2Templates(directory="app/ui/templates")
@@ -98,6 +105,46 @@ async def dashboard_run_detail(
     )
 
 
+@router.get("/dashboard/approvals", response_class=HTMLResponse)
+async def dashboard_approvals(request: Request, session: AsyncSession = Depends(get_session)):
+    approvals = await list_approvals(session)
+    return templates.TemplateResponse(
+        request,
+        "approvals.html",
+        {
+            "approvals": approvals,
+            "active": "approvals",
+        },
+    )
+
+
+@router.post("/dashboard/approvals/{run_id}/decision", response_class=HTMLResponse)
+async def dashboard_approval_decision(
+    request: Request,
+    run_id: str,
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+    event_publisher: EventPublisher = Depends(get_event_publisher),
+):
+    form = await request.form()
+    decision = ApprovalDecisionRequest(
+        decision=str(form.get("decision", "")),
+        reviewer=str(form.get("reviewer", "dashboard-operator")),
+        reason=str(form.get("reason", "Dashboard decision")),
+    )
+    run = await apply_approval_decision(session, run_id, decision)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    await state_store.set_run_state(run.run_id, run.status)
+    if run.status == "queued":
+        event = make_event("agent.requested", run.run_id, {"request": run.request_payload})
+        await event_publisher.publish(get_settings().kafka_request_topic, run.run_id, event)
+    return HTMLResponse(
+        '<meta http-equiv="refresh" content="0; url=/dashboard/approvals">'
+        '<a href="/dashboard/approvals">Back to approvals</a>'
+    )
+
+
 @router.get("/dashboard/playground", response_class=HTMLResponse)
 async def playground(request: Request):
     return templates.TemplateResponse(
@@ -117,6 +164,8 @@ async def submit_playground(
     request: Request,
     session: AsyncSession = Depends(get_session),
     orchestrator: AgentOrchestrator = Depends(get_orchestrator),
+    state_store: RunStateStore = Depends(get_state_store),
+    event_publisher: EventPublisher = Depends(get_event_publisher),
 ):
     form = await request.form()
     allowed_tools = [
@@ -140,8 +189,21 @@ async def submit_playground(
             ),
             metadata={"source": "dashboard_playground"},
         )
-        result = orchestrator.run(agent_request)
+        disabled_tools = list((await state_store.get_open_breakers(agent_request.allowed_tools)).keys())
+        result = orchestrator.submit(agent_request, disabled_tools=disabled_tools)
         await persist_orchestration_result(session, agent_request, result)
+        await state_store.set_run_state(result.response.run_id, result.response.status)
+        if result.response.status == "queued":
+            event = make_event(
+                "agent.requested",
+                result.response.run_id,
+                {"request": agent_request.model_dump()},
+            )
+            await event_publisher.publish(
+                get_settings().kafka_request_topic,
+                result.response.run_id,
+                event,
+            )
         error = ""
     except (ValueError, ValidationError) as exc:
         agent_request = None

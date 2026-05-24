@@ -1,8 +1,8 @@
-# Runbook v0.2
+# Runbook v0.3
 
-此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail 已接入；Kafka worker 與 Redis state 尚未接入 request path。
+此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail、Kafka worker、Redis run state 與 approval queue 已接入最小 request path。
 
-目前營運基線：`v0.2.0`
+目前營運基線：`v0.3.0`
 
 ## 快速檢查
 
@@ -35,6 +35,7 @@ Docker Compose：
 ```bash
 docker compose ps
 docker compose logs -f api
+docker compose logs -f worker
 ```
 
 ## 1. API 無法啟動
@@ -123,7 +124,55 @@ curl http://localhost:8000/v1/dashboard/summary
 3. 查看 API logs 是否有 persistence error。
 4. 確認服務實際連到同一個 Postgres database。
 
-## 4. Escalation / Deny Rate 突然升高
+若 run 停在 `queued` 太久：
+
+```bash
+docker compose ps worker
+docker compose logs worker
+```
+
+確認 worker 有啟動且可連到 Kafka、Redis 與 Postgres。
+
+## 4. Dashboard Playground Submit 回 internal_server_error
+
+症狀：
+
+- 在 `/dashboard/playground` 按下 Submit Run 後，頁面回傳 `{"error":{"code":"internal_server_error"}}`。
+- API logs 顯示 stack trace 指向 `request.form()`。
+- 錯誤訊息提到需要 `python-multipart` 才能解析 form。
+
+可能原因：
+
+- Docker image 或本機 runtime 沒有安裝 `python-multipart`。
+- `requirements.txt` 與 `pyproject.toml` 的 runtime dependencies 不同步。
+- 修改 Dashboard form route 後只測 GET page render，沒有測 POST submit flow。
+
+處理步驟：
+
+1. 查看 API logs：
+
+```bash
+docker compose logs api
+```
+
+2. 確認 `requirements.txt` 與 `pyproject.toml` 都包含 `python-multipart`。
+3. 若是 Docker runtime 問題，重新 build：
+
+```bash
+docker compose up -d --build
+```
+
+4. 用表單 endpoint 做回歸驗證：
+
+```bash
+curl -X POST http://localhost:8000/dashboard/playground \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "user_id=demo-user&task_type=code_fix&allowed_tools=read_repo%2C+run_tests&max_tool_calls=8&goal=fix+bug1699&prompt=fix+bug&no_external_network=on"
+```
+
+預期結果：HTTP 200，頁面內容包含 `queued`，且不包含 `internal_server_error`。
+
+## 5. Escalation / Deny Rate 突然升高
 
 症狀：
 
@@ -146,11 +195,11 @@ curl http://localhost:8000/v1/dashboard/summary
 3. 若是 false positive，調整 sanitizer、risk scoring 或 policy rule，並補 regression test。
 4. 若是攻擊，先維持 fail closed，再加強 rate limit 或上游阻擋。
 
-## 5. Evaluator Review Rate 過高
+## 6. Evaluator Review Rate 過高
 
 症狀：
 
-- 許多 allow 後的任務最後 status 是 `queued`。
+- 許多 allow 後的任務最後 status 是 `awaiting_approval`。
 - run detail 中 `evaluation_summary` verdict 為 `review`。
 
 可能原因：
@@ -167,7 +216,7 @@ curl http://localhost:8000/v1/dashboard/summary
 3. 對 code task 要求 test report 或 diff artifact。
 4. 調整 evaluator 前先補測試資料。
 
-## 6. Destructive Action Request
+## 7. Destructive Action Request
 
 症狀：
 
@@ -177,12 +226,12 @@ curl http://localhost:8000/v1/dashboard/summary
 
 處理步驟：
 
-1. 預設 escalated 或 denied。
+1. 預設進入 `awaiting_approval` 或 `denied`。
 2. 確認 incident 已建立。
-3. 要求人工審核與 rollback plan。
+3. 到 `/dashboard/approvals` 要求人工審核與 rollback plan。
 4. 不要為了單一流程放寬全域規則；應建立特定 workflow policy。
 
-## 7. PII Access Request
+## 8. PII Access Request
 
 症狀：
 
@@ -196,21 +245,38 @@ curl http://localhost:8000/v1/dashboard/summary
 3. 要求 PII redaction 或 masked dataset。
 4. 確認 logs 不輸出 PII。
 
-## 8. Kafka Topic 或 Consumer 問題
+## 9. Kafka Topic 或 Consumer 問題
 
-目前 Kafka topics 會由 Docker Compose 建立，但 API 尚未 publish events，worker 也尚未實作。Kafka lag、DLQ、consumer group 相關 runbook 會在 Phase 3 導入 worker 後正式啟用。
+目前 Kafka topics 會由 Docker Compose 建立，API 會 publish `agent.requests`，worker 會消費 queued run。`v0.3.0` 尚未加入 retry/backoff、DLQ 與 lag alert。
 
-目前若 `kafka-init` 失敗：
+若 `kafka-init` 或 worker 消費失敗：
 
 ```bash
 docker compose logs kafka
 docker compose logs kafka-init
+docker compose logs worker
 docker compose up kafka-init
 ```
 
-## 9. Redis 問題
+常見檢查：
 
-目前 API flow 尚未依賴 Redis。Redis 會在 Phase 4 用於 run state、approval token、rate limit、circuit breaker。正式接入後，Redis 故障時高風險 action 應 fail closed。
+- `.env` 在 Docker Compose 中應使用 `KAFKA_BOOTSTRAP_SERVERS=kafka:9092`。
+- queued run 若沒有被 worker 更新，先確認 worker container 是否健康。
+- 重複 event 會被 Redis idempotency key 擋下，不應重複執行。
+
+## 10. Redis 問題
+
+目前 API 與 worker flow 依賴 Redis 管理短期 run state、idempotency key 與 tool circuit breaker。Redis 不保存唯一 audit trail，重要資料仍以 Postgres 為準。
+
+檢查：
+
+```bash
+docker compose logs redis
+docker compose exec redis redis-cli keys 'run:*:state'
+docker compose exec redis redis-cli keys 'breaker:*'
+```
+
+若某個 tool 被暫停，policy flag 會出現 `tool_circuit_breaker_open:<tool_name>`，run 會 fail closed 進入 `awaiting_approval`。
 
 ## Severity 分級
 
@@ -231,4 +297,6 @@ docker compose up kafka-init
 - incident count by severity。
 - Dashboard run count。
 - Postgres readiness。
+- worker completion count。
+- approval queue count。
 - future：Kafka consumer lag、worker job duration、human approval turnaround time。
