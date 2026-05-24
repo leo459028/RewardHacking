@@ -1,6 +1,6 @@
 # Redis Keys
 
-Redis 用於短期 state、cache、approval token、rate limit、circuit breaker 與 worker coordination。現階段專案已有 Redis helper，但尚未接入 API flow。
+Redis 用於短期 state、cache、approval token、rate limit、circuit breaker 與 worker coordination。`v0.3.0` 起已接入最小 API/worker flow：run state、idempotency key 與 tool circuit breaker。rate limit、tenant quota 與完整 approval token TTL 仍在後續版本。
 
 ## Key 命名原則
 
@@ -57,6 +57,8 @@ Redis 用於短期 state、cache、approval token、rate limit、circuit breaker
 
 Policy engine 在評估時可查 Redis breaker，若 tool 被停用，直接 `escalate` 或 `deny`。
 
+`v0.3.0` 的實作會把命中的 breaker 加入 policy flags，例如 `tool_circuit_breaker_open:read_data`，並讓 run 進入 `awaiting_approval`。這是 fail closed 行為：operator 暫停工具後，任務不會繼續執行該工具。
+
 ## Rate Limit 建議
 
 可用 Redis 記錄：
@@ -66,6 +68,8 @@ Policy engine 在評估時可查 Redis breaker，若 tool 被停用，直接 `es
 - 每個 tool 每分鐘呼叫數。
 
 超過限制時，API 應回傳明確錯誤或 `escalate`，而不是靜默丟棄。
+
+目前 `v0.3.0` 尚未實作 rate limit；此段保留為 `v0.4+`/`v0.6+` 設計方向。
 
 ## 運維注意事項
 

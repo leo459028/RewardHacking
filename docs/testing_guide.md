@@ -1,8 +1,8 @@
-# 測試指南 v0.2
+# 測試指南 v0.3
 
-目前測試涵蓋 policy 周邊邏輯、API persistence、dashboard HTML response 與 basic evaluator behavior。
+目前測試涵蓋 policy 周邊邏輯、API persistence、queued submit、worker processing、approval queue、Redis breaker、dashboard HTML response 與 basic evaluator behavior。
 
-目前測試基線：`v0.2.0`
+目前測試基線：`v0.3.0`
 
 ## 執行測試
 
@@ -36,9 +36,9 @@ make lint
 | `tests/test_prompt_sanitizer.py` | prompt injection pattern 偵測 |
 | `tests/test_risk_scoring.py` | risk score baseline、clamp |
 | `tests/test_evaluator.py` | shortcut、policy bypass signal |
-| `tests/test_api.py` | health/readyz、submit persistence、incident、summary、dashboard pages |
+| `tests/test_api.py` | health/readyz、queued submit、worker update、approval API、breaker fail closed、incident、summary、dashboard pages |
 
-API tests 使用 SQLite in-memory database 覆寫 `get_session()`，不需要啟動 Docker Compose。
+API tests 使用 SQLite in-memory database 覆寫 `get_session()`，並用 in-memory state store / event publisher 取代 Redis/Kafka，不需要啟動 Docker Compose。
 
 ## CI Gate
 
@@ -59,7 +59,8 @@ workflow 位於 `.github/workflows/ci.yml`。
 - `GET /v1/incidents` severity filter。
 - request validation error envelope。
 - red-team prompt corpus regression。
-- 未來 Kafka worker 的 retry/DLQ integration tests。
+- Kafka worker retry/DLQ integration tests。
+- approval TTL、request changes 後續流程。
 
 ## Manual Verification
 
@@ -82,5 +83,7 @@ curl http://localhost:8000/v1/readyz
 http://localhost:8000/dashboard
 ```
 
-4. 在 `/dashboard/playground` 送一筆低風險 request 與一筆高風險 request。
-5. 確認 `/dashboard` summary、`/dashboard/runs` list、run detail 與 incidents 都有更新。
+4. 在 `/dashboard/playground` 送一筆低風險 request，確認 run 先是 `queued`，worker 處理後變成 `completed`。
+5. 送一筆高風險或 destructive request，確認進入 `awaiting_approval` 或 `denied`。
+6. 到 `/dashboard/approvals` 測試 approve once、deny 或 request changes。
+7. 確認 `/dashboard` summary、`/dashboard/runs` list、run detail、tool transcript、event timeline 與 incidents 都有更新。

@@ -22,7 +22,16 @@ class AgentRequest(BaseModel):
 
 class AgentResponse(BaseModel):
     run_id: str
-    status: Literal["accepted", "denied", "escalated", "queued", "completed"]
+    status: Literal[
+        "accepted",
+        "denied",
+        "escalated",
+        "queued",
+        "running",
+        "awaiting_approval",
+        "completed",
+        "failed",
+    ]
     decision_reason: str
     risk_score: float
     policy_flags: list[str] = Field(default_factory=list)

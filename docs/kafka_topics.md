@@ -1,12 +1,12 @@
 # Kafka Topics
 
-Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execution、evaluation 與 incident processing。現階段 `docker-compose.yml` 會建立 topics，但 API 尚未實際 publish，worker 也仍是 placeholder。
+Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execution、evaluation 與 incident processing。`v0.3.0` 起 API 會在低風險 request 建立 `queued` run 後 publish `agent.requests`，worker 會消費該 topic 並寫回 Postgres audit trail。retry/backoff、DLQ 與 lag alert 尚未納入本版。
 
 ## Topic 清單
 
 | Topic | Producer | Consumer | 說明 |
 | --- | --- | --- | --- |
-| `agent.requests` | API | Worker | policy allow 後的待執行任務 |
+| `agent.requests` | API / Approval | Worker | policy allow 或 approve once 後的待執行任務 |
 | `agent.decisions` | API / Worker | Audit / UI | policy decision event |
 | `agent.executions` | Worker | Evaluator / Audit | tool execution result |
 | `agent.evaluations` | Evaluator / Worker | UI / Alerting / Audit | evaluation result |
@@ -29,7 +29,7 @@ Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execut
 
 ## `agent.requests`
 
-用途：policy engine 已允許任務後，送給 worker 執行。
+用途：policy engine 已允許任務後，或 operator approve once 後，送給 worker 執行。
 
 建議 key：`run_id`
 
@@ -132,6 +132,6 @@ Payload 範例：
 
 - retry with exponential backoff。
 - dead-letter topic，例如 `agent.requests.dlq`。
-- idempotency by `event_id` 或 `run_id`。
+- idempotency by `event_id` 或 `run_id`。`v0.3.0` 已用 Redis idempotency key 避免同一 run 重複執行。
 - schema version，例如 payload 加上 `schema_version`。
 - consumer lag alert。

@@ -1,12 +1,12 @@
-# 專案文件總覽 v0.2
+# 專案文件總覽 v0.3
 
 本目錄收錄 Agent Reward-Hacking Guardrail 的繁體中文文件。專有名詞保留英文，方便與程式碼、API schema、infra component 對照。
 
 ## 版本
 
-目前版本：`v0.2.0`
+目前版本：`v0.3.0`
 
-`v0.2.0` 對應 Phase 0-2 + Dashboard milestone。此版本已完成同步 API、Postgres audit trail、Alembic migration、run/incident 查詢 API、內建 Dashboard、測試與 GitHub CI 基線。
+`v0.3.0` 對應 Guarded Async Execution MVP。此版本已完成 queued submit、Kafka request event、worker consumer、Redis run state / idempotency / circuit breaker、approval API、bounded executor transcript、內建 Dashboard approval queue、測試與 GitHub CI 基線。
 
 ## 專案定位
 
@@ -14,10 +14,11 @@
 
 - 請求進入時做 prompt sanitation 與 risk scoring。
 - 使用 deterministic policy engine 做 `allow`、`escalate`、`deny`。
-- 對允許執行的任務進行 bounded execution。
+- 對低風險任務建立 queued run，交由 worker 進行 bounded execution。
+- 對 destructive 或需審核任務建立 approval queue，不直接執行工具。
 - 用 evaluator 檢查輸出是否有 reward hacking、shortcut、未驗證或 policy violation 訊號。
 - 將 run、policy decision、evaluation summary 與 incident 保存到 Postgres audit trail。
-- 用內建 dashboard 查看 runs、incidents、risk score 與 playground 測試結果。
+- 用內建 dashboard 查看 runs、incidents、risk score、event timeline、tool transcript、approval queue 與 playground 測試結果。
 
 ## 文件清單
 
@@ -29,7 +30,7 @@
 | [設定文件](configuration.md) | `.env`、環境變數、預設值與調整建議 |
 | [部署文件](deployment.md) | Docker Compose、本機與正式部署注意事項 |
 | [開發指南](development.md) | 專案結構、開發流程、擴充方式 |
-| [測試指南](testing.md) | 目前測試、建議測試策略與 CI gate |
+| [測試指南](testing_guide.md) | 目前測試、建議測試策略與 CI gate |
 | [資料模型](data_model.md) | SQLAlchemy model、event schema、資料生命週期 |
 | [Kafka Topics](kafka_topics.md) | Topic 設計、payload 建議與運維注意事項 |
 | [Redis Keys](redis_keys.md) | Key convention、TTL、state/cache/breaker 用途 |
@@ -83,7 +84,7 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
 - Prompt injection pattern detection。
 - Risk scoring。
 - Deterministic policy engine。
-- Dummy bounded executor。
+- Bounded executor interface 與 tool transcript。
 - Heuristic evaluator。
 - Prometheus metrics。
 - Alembic migration。
@@ -91,21 +92,23 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
 - Run / incident query APIs。
 - Server-rendered dashboard UI。
 - Dashboard playground。
-- Docker Compose for Postgres、Redis、Kafka、API。
+- Kafka request publish 與 worker consumer。
+- Redis run state、idempotency key 與 circuit breaker。
+- Approval queue API 與 Dashboard。
+- Docker Compose for Postgres、Redis、Kafka、API、worker。
 - API 與 service unit tests。
 
 預留但尚未完成：
 
-- API event publish 到 Kafka。
-- Worker consumer loop。
-- Redis state/circuit breaker flow。
-- Human approval workflow。
-- 真實 tool executor、sandbox、artifact store。
+- Worker retry/backoff 與 DLQ。
+- 完整 human approval workflow，例如 TTL、reviewer 報表與 request changes 後續流程。
+- 真實 tool sandbox、resource/cost limit、artifact store。
+- Auth、tenant isolation 與 production observability。
 
 ## 閱讀順序建議
 
 1. 先讀 [架構文件](architecture.md)，理解資料流和模組邊界。
 2. 再讀 [Dashboard 使用說明](dashboard.md) 與 [API 文件](api.md)，確認目前可操作的介面。
 3. 若要啟動或部署，讀 [設定文件](configuration.md) 與 [部署文件](deployment.md)。
-4. 若要接手開發，讀 [開發指南](development.md)、[測試指南](testing.md) 與 [Roadmap](roadmap.md)。
+4. 若要接手開發，讀 [開發指南](development.md)、[測試指南](testing_guide.md) 與 [Roadmap](roadmap.md)。
 5. 若要營運服務，讀 [Runbook](runbook.md)、[Observability](observability.md)、[Kafka Topics](kafka_topics.md)、[Redis Keys](redis_keys.md)。

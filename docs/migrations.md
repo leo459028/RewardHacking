@@ -1,11 +1,13 @@
-# Migration 指南 v0.2
+# Migration 指南 v0.3
 
 本專案已導入 Alembic，初始 migration 會建立：
 
-目前 migration baseline：`v0.2.0`
+目前 migration baseline：`v0.3.0`
 
 - `agent_runs`
 - `incidents`
+
+`v0.3.0` 沒有新增資料表；queued state、approval state、event timeline、tool transcript 目前存於既有 `agent_runs.evaluation_summary` / `result` JSON 欄位，短期 run state 與 breaker 存 Redis。
 
 Migration 檔案位於：
 
