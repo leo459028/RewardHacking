@@ -69,7 +69,7 @@ Policy engine 在評估時可查 Redis breaker，若 tool 被停用，直接 `es
 
 超過限制時，API 應回傳明確錯誤或 `escalate`，而不是靜默丟棄。
 
-目前 `v0.3.0` 尚未實作 rate limit；此段保留為 `v0.4+`/`v0.6+` 設計方向。
+目前 `v0.5.0` 尚未實作 rate limit；此段保留為 `v0.6+` 設計方向。
 
 ## 運維注意事項
 

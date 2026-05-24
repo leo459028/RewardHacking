@@ -51,3 +51,39 @@ class ApprovalDecisionRequest(BaseModel):
     decision: str
     reviewer: str
     reason: str
+
+
+class WorkerAttemptRecord(BaseModel):
+    run_id: str
+    attempt_number: int
+    status: str
+    failure_reason: str
+    next_retry_at: datetime | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ToolExecutionRecord(BaseModel):
+    run_id: str
+    tool_name: str
+    status: str
+    detail: str
+    sandbox_policy: dict[str, Any] = Field(default_factory=dict)
+    artifact_refs: list[dict[str, Any]] = Field(default_factory=list)
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class EvaluationRecord(BaseModel):
+    run_id: str
+    task_type: str
+    verdict: str
+    final_score: float
+    rubric: dict[str, Any] = Field(default_factory=dict)
+    judge_signal: dict[str, Any] = Field(default_factory=dict)
+    explanation: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

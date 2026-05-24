@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Worker Operations{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Worker Operations</h1>
+    <div class="muted">Retry attempts, failure reasons, and DLQ entries.</div>
+  </div>
+</div>
+
+<section class="panel">
+  <h2>Dead Letter Queue</h2>
+  <table>
+    <thead><tr><th>Run</th><th>Attempt</th><th>Reason</th><th>Created</th></tr></thead>
+    <tbody>
+    {% for item in dlq %}
+      <tr>
+        <td><a href="/dashboard/runs/{{ item.run_id }}">{{ item.run_id }}</a></td>
+        <td>{{ item.attempt_number }}</td>
+        <td>{{ item.failure_reason }}</td>
+        <td>{{ item.created_at }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="muted">No DLQ entries.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Recent Attempts</h2>
+  <table>
+    <thead><tr><th>Run</th><th>Attempt</th><th>Status</th><th>Failure</th><th>Next Retry</th></tr></thead>
+    <tbody>
+    {% for item in attempts %}
+      <tr>
+        <td><a href="/dashboard/runs/{{ item.run_id }}">{{ item.run_id }}</a></td>
+        <td>{{ item.attempt_number }}</td>
+        <td><span class="status {{ item.status }}">{{ item.status }}</span></td>
+        <td>{{ item.failure_reason }}</td>
+        <td>{{ item.next_retry_at or "" }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="muted">No worker attempts yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

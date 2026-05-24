@@ -22,6 +22,9 @@ from app.services.audit_log import (
     list_approvals,
     list_incidents,
     list_runs,
+    list_tool_executions,
+    list_worker_attempts,
+    observability_summary,
     persist_orchestration_result,
 )
 from app.services.orchestrator import AgentOrchestrator
@@ -94,12 +97,16 @@ async def dashboard_run_detail(
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
     incidents = await incidents_for_run(session, run_id)
+    attempts = await list_worker_attempts(session, run_id=run_id)
+    tool_executions = await list_tool_executions(session, run_id=run_id)
     return templates.TemplateResponse(
         request,
         "run_detail.html",
         {
             "run": run,
             "incidents": incidents,
+            "attempts": attempts,
+            "tool_executions": tool_executions,
             "active": "runs",
         },
     )
@@ -114,6 +121,34 @@ async def dashboard_approvals(request: Request, session: AsyncSession = Depends(
         {
             "approvals": approvals,
             "active": "approvals",
+        },
+    )
+
+
+@router.get("/dashboard/worker", response_class=HTMLResponse)
+async def dashboard_worker(request: Request, session: AsyncSession = Depends(get_session)):
+    attempts = await list_worker_attempts(session)
+    dlq = await list_worker_attempts(session, status="dlq")
+    return templates.TemplateResponse(
+        request,
+        "worker.html",
+        {
+            "attempts": attempts,
+            "dlq": dlq,
+            "active": "worker",
+        },
+    )
+
+
+@router.get("/dashboard/observability", response_class=HTMLResponse)
+async def dashboard_observability(request: Request, session: AsyncSession = Depends(get_session)):
+    summary = await observability_summary(session)
+    return templates.TemplateResponse(
+        request,
+        "observability.html",
+        {
+            "summary": summary,
+            "active": "observability",
         },
     )
 

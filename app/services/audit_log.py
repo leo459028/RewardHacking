@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
+from app.models.approval_event import ApprovalEvent
 from app.models.agent_run import AgentRun
+from app.models.evaluation_result import EvaluationResultRecord
 from app.models.incident import Incident
+from app.models.tool_execution import ToolExecution
+from app.models.worker_attempt import WorkerAttempt
 from app.schemas.agent import AgentRequest
 from app.schemas.audit import ApprovalDecisionRequest
 from app.services.orchestrator import OrchestrationResult
@@ -26,6 +31,15 @@ class DashboardSummary:
     failed: int
     average_risk_score: float
     recent_incidents: list[Incident]
+
+
+@dataclass(frozen=True)
+class ObservabilitySummary:
+    worker: dict[str, int]
+    incidents: dict[str, int]
+    approvals: dict[str, int]
+    evaluator: dict[str, int]
+    slo: dict[str, int]
 
 
 def _requires_review(status: str, summary: dict[str, Any]) -> bool:
@@ -62,12 +76,199 @@ def _incident_payload(result: OrchestrationResult) -> tuple[str, str, str] | Non
     return None
 
 
+def _approval_expiry(request: AgentRequest) -> datetime:
+    ttl = int(request.metadata.get("approval_ttl_seconds", get_settings().approval_ttl_seconds))
+    return datetime.now(timezone.utc) + timedelta(seconds=ttl)
+
+
+def _sync_approval_summary(
+    summary: dict[str, Any],
+    *,
+    status: str,
+    reviewer: str = "",
+    reason: str = "",
+    expires_at: datetime | None = None,
+) -> dict[str, Any]:
+    approval = dict(summary.get("approval", {}))
+    approval.update(
+        {
+            "status": status,
+            "reviewer": reviewer,
+            "reason": reason or approval.get("reason", ""),
+        }
+    )
+    if expires_at is not None:
+        approval["expires_at"] = expires_at.isoformat()
+        approval["expired"] = expires_at <= datetime.now(timezone.utc)
+    summary["approval"] = approval
+    return summary
+
+
+def _append_event(summary: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
+    events = list(summary.get("event_timeline", []))
+    events.append(event)
+    summary["event_timeline"] = events
+    return summary
+
+
+async def _persist_approval_required(
+    session: AsyncSession,
+    request: AgentRequest,
+    result: OrchestrationResult,
+    run_summary: dict[str, Any],
+) -> None:
+    if result.response.status != "awaiting_approval":
+        return
+    expires_at = _approval_expiry(request)
+    _sync_approval_summary(
+        run_summary,
+        status="pending",
+        reason=result.response.decision_reason,
+        expires_at=expires_at,
+    )
+    session.add(
+        ApprovalEvent(
+            run_id=result.response.run_id,
+            status="pending",
+            reviewer="",
+            reason=result.response.decision_reason,
+            expires_at=expires_at,
+            expired=expires_at <= datetime.now(timezone.utc),
+        )
+    )
+
+
+async def persist_worker_attempt(
+    session: AsyncSession,
+    *,
+    run_id: str,
+    attempt_number: int,
+    status: str,
+    failure_reason: str = "",
+    next_retry_at: datetime | None = None,
+) -> WorkerAttempt:
+    attempt = WorkerAttempt(
+        run_id=run_id,
+        attempt_number=attempt_number,
+        status=status,
+        failure_reason=failure_reason,
+        next_retry_at=next_retry_at,
+    )
+    session.add(attempt)
+    await session.flush()
+    return attempt
+
+
+async def worker_attempt_count(session: AsyncSession, run_id: str) -> int:
+    return (
+        await session.scalar(
+            select(func.count()).select_from(WorkerAttempt).where(WorkerAttempt.run_id == run_id)
+        )
+        or 0
+    )
+
+
+async def list_worker_attempts(
+    session: AsyncSession,
+    *,
+    run_id: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+) -> list[WorkerAttempt]:
+    stmt = select(WorkerAttempt).order_by(WorkerAttempt.created_at.desc()).limit(limit)
+    if run_id:
+        stmt = stmt.where(WorkerAttempt.run_id == run_id)
+    if status:
+        stmt = stmt.where(WorkerAttempt.status == status)
+    return list((await session.scalars(stmt)).all())
+
+
+async def persist_tool_executions(
+    session: AsyncSession,
+    *,
+    run_id: str,
+    summary: dict[str, Any],
+) -> None:
+    transcript = (
+        summary.get("execution_event", {})
+        .get("payload", {})
+        .get("tool_transcript", [])
+        if isinstance(summary, dict)
+        else []
+    )
+    for entry in transcript:
+        session.add(
+            ToolExecution(
+                run_id=run_id,
+                tool_name=str(entry.get("tool_name", "")),
+                status=str(entry.get("status", "")),
+                detail=str(entry.get("detail", "")),
+                sandbox_policy=dict(entry.get("sandbox_policy", {})),
+                artifact_refs=list(entry.get("artifact_refs", [])),
+            )
+        )
+
+
+async def list_tool_executions(
+    session: AsyncSession,
+    *,
+    run_id: str,
+    limit: int = 100,
+) -> list[ToolExecution]:
+    stmt = (
+        select(ToolExecution)
+        .where(ToolExecution.run_id == run_id)
+        .order_by(ToolExecution.created_at.desc())
+        .limit(limit)
+    )
+    return list((await session.scalars(stmt)).all())
+
+
+async def persist_evaluation_result(
+    session: AsyncSession,
+    *,
+    request: AgentRequest,
+    result: OrchestrationResult,
+) -> None:
+    payload = result.evaluation_summary.get("evaluation_event", {}).get("payload", {})
+    if not payload:
+        return
+    session.add(
+        EvaluationResultRecord(
+            run_id=result.response.run_id,
+            task_type=request.task_type,
+            verdict=str(payload.get("verdict", "")),
+            final_score=float(payload.get("final_score", 0.0)),
+            rubric=dict(payload.get("rubric", {"task_type": request.task_type})),
+            judge_signal=dict(payload.get("judge_signal", {"enabled": False})),
+            explanation=str(payload.get("explanation", "")),
+        )
+    )
+
+
+async def list_evaluation_results(
+    session: AsyncSession,
+    *,
+    task_type: str | None = None,
+    verdict: str | None = None,
+    limit: int = 100,
+) -> list[EvaluationResultRecord]:
+    stmt = select(EvaluationResultRecord).order_by(EvaluationResultRecord.created_at.desc()).limit(limit)
+    if task_type:
+        stmt = stmt.where(EvaluationResultRecord.task_type == task_type)
+    if verdict:
+        stmt = stmt.where(EvaluationResultRecord.verdict == verdict)
+    return list((await session.scalars(stmt)).all())
+
+
 async def persist_orchestration_result(
     session: AsyncSession,
     request: AgentRequest,
     result: OrchestrationResult,
 ) -> AgentRun:
     response = result.response
+    summary = dict(result.evaluation_summary)
+    await _persist_approval_required(session, request, result, summary)
     run = AgentRun(
         run_id=response.run_id,
         user_id=request.user_id,
@@ -80,13 +281,13 @@ async def persist_orchestration_result(
         policy_flags=response.policy_flags,
         request_payload=request.model_dump(),
         execution_output=result.execution_output,
-        evaluation_summary=result.evaluation_summary,
+        evaluation_summary=summary,
         result={
             "response": response.model_dump(),
             "execution_output": result.execution_output,
-            "evaluation_summary": result.evaluation_summary,
+            "evaluation_summary": summary,
         },
-        requires_human_review=_requires_review(response.status, result.evaluation_summary),
+        requires_human_review=_requires_review(response.status, summary),
     )
     session.add(run)
 
@@ -101,6 +302,8 @@ async def persist_orchestration_result(
                 detail=detail,
             )
         )
+    await persist_tool_executions(session, run_id=response.run_id, summary=summary)
+    await persist_evaluation_result(session, request=request, result=result)
 
     await session.commit()
     await session.refresh(run)
@@ -114,19 +317,21 @@ async def update_orchestration_result(
     result: OrchestrationResult,
 ) -> AgentRun:
     response = result.response
+    summary = dict(result.evaluation_summary)
+    await _persist_approval_required(session, request, result, summary)
     run.status = response.status
     run.decision_reason = response.decision_reason
     run.risk_score = response.risk_score
     run.policy_flags = response.policy_flags
     run.request_payload = request.model_dump()
     run.execution_output = result.execution_output
-    run.evaluation_summary = result.evaluation_summary
+    run.evaluation_summary = summary
     run.result = {
         "response": response.model_dump(),
         "execution_output": result.execution_output,
-        "evaluation_summary": result.evaluation_summary,
+        "evaluation_summary": summary,
     }
-    run.requires_human_review = _requires_review(response.status, result.evaluation_summary)
+    run.requires_human_review = _requires_review(response.status, summary)
 
     incident = _incident_payload(result)
     if incident is not None:
@@ -139,6 +344,8 @@ async def update_orchestration_result(
                 detail=detail,
             )
         )
+    await persist_tool_executions(session, run_id=response.run_id, summary=summary)
+    await persist_evaluation_result(session, request=request, result=result)
 
     await session.commit()
     await session.refresh(run)
@@ -183,8 +390,29 @@ async def incidents_for_run(session: AsyncSession, run_id: str) -> list[Incident
     return list((await session.scalars(stmt)).all())
 
 
-async def list_approvals(session: AsyncSession, *, limit: int = 100) -> list[AgentRun]:
-    return await list_runs(session, status="awaiting_approval", limit=limit)
+async def list_approvals(
+    session: AsyncSession,
+    *,
+    status: str | None = None,
+    reviewer: str | None = None,
+    expired: bool | None = None,
+    limit: int = 100,
+) -> list[AgentRun]:
+    stmt = (
+        select(AgentRun)
+        .join(ApprovalEvent, ApprovalEvent.run_id == AgentRun.run_id)
+        .where(AgentRun.status == "awaiting_approval")
+        .order_by(ApprovalEvent.created_at.desc())
+        .limit(limit)
+    )
+    if status:
+        stmt = stmt.where(ApprovalEvent.status == status)
+    if reviewer:
+        stmt = stmt.where(ApprovalEvent.reviewer == reviewer)
+    if expired is not None:
+        now = datetime.now(timezone.utc)
+        stmt = stmt.where((ApprovalEvent.expired.is_(expired)) | (ApprovalEvent.expires_at <= now if expired else ApprovalEvent.expires_at > now))
+    return list((await session.scalars(stmt)).unique().all())
 
 
 async def apply_approval_decision(
@@ -207,6 +435,15 @@ async def apply_approval_decision(
         }
     )
     summary["approval"] = approval
+    session.add(
+        ApprovalEvent(
+            run_id=run.run_id,
+            status=decision.decision,
+            reviewer=decision.reviewer,
+            reason=decision.reason,
+            expired=bool(approval.get("expired", False)),
+        )
+    )
 
     events = list(summary.get("event_timeline", []))
     events.append(
@@ -299,4 +536,39 @@ async def dashboard_summary(session: AsyncSession) -> DashboardSummary:
         failed=await count_status("failed"),
         average_risk_score=round(float(average_risk_score), 3),
         recent_incidents=await list_incidents(session, limit=5),
+    )
+
+
+async def observability_summary(session: AsyncSession) -> ObservabilitySummary:
+    async def count(model, *where) -> int:
+        stmt = select(func.count()).select_from(model)
+        for condition in where:
+            stmt = stmt.where(condition)
+        return await session.scalar(stmt) or 0
+
+    settings = get_settings()
+    return ObservabilitySummary(
+        worker={
+            "completed": await count(WorkerAttempt, WorkerAttempt.status == "completed"),
+            "retry_scheduled": await count(WorkerAttempt, WorkerAttempt.status == "retry_scheduled"),
+            "dlq": await count(WorkerAttempt, WorkerAttempt.status == "dlq"),
+        },
+        incidents={
+            "total": await count(Incident),
+            "high": await count(Incident, Incident.severity == "high"),
+            "medium": await count(Incident, Incident.severity == "medium"),
+        },
+        approvals={
+            "pending": await count(ApprovalEvent, ApprovalEvent.status == "pending"),
+            "request_changes": await count(ApprovalEvent, ApprovalEvent.status == "request_changes"),
+            "expired": await count(ApprovalEvent, ApprovalEvent.expired.is_(True)),
+        },
+        evaluator={
+            "pass": await count(EvaluationResultRecord, EvaluationResultRecord.verdict == "pass"),
+            "review": await count(EvaluationResultRecord, EvaluationResultRecord.verdict == "review"),
+        },
+        slo={
+            "worker_completion_latency_target_seconds": settings.worker_completion_latency_target_seconds,
+            "incident_response_target_seconds": settings.incident_response_target_seconds,
+        },
     )

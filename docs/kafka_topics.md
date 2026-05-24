@@ -1,6 +1,6 @@
 # Kafka Topics
 
-Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execution、evaluation 與 incident processing。`v0.3.0` 起 API 會在低風險 request 建立 `queued` run 後 publish `agent.requests`，worker 會消費該 topic 並寫回 Postgres audit trail。retry/backoff、DLQ 與 lag alert 尚未納入本版。
+Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execution、evaluation 與 incident processing。`v0.5.0` 起 API 會在低風險 request 建立 `queued` run 後 publish `agent.requests`，worker 會消費該 topic 並寫回 Postgres audit trail；retry/backoff 與 DLQ audit 已納入，Kafka consumer lag alert 尚未納入本版。
 
 ## Topic 清單
 
@@ -130,8 +130,8 @@ Payload 範例：
 
 正式 worker 應加入：
 
-- retry with exponential backoff。
-- dead-letter topic，例如 `agent.requests.dlq`。
+- retry with exponential backoff。`v0.5.0` 已在 worker attempt audit 中記錄 retry_scheduled。
+- dead-letter topic，例如 `agent.requests.dlq`。`v0.5.0` 先提供 `/v1/worker/dlq` 與 `/dashboard/worker` 的 DLQ audit 查詢。
 - idempotency by `event_id` 或 `run_id`。`v0.3.0` 已用 Redis idempotency key 避免同一 run 重複執行。
 - schema version，例如 payload 加上 `schema_version`。
 - consumer lag alert。

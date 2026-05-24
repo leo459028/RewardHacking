@@ -1,8 +1,8 @@
 # Runbook v0.3
 
-此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail、Kafka worker、Redis run state 與 approval queue 已接入最小 request path。
+此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail、Kafka worker、Redis run state、approval queue、worker retry/DLQ、tool execution audit 與 evaluator/observability summary 已接入 request path。
 
-目前營運基線：`v0.3.0`
+目前營運基線：`v0.5.0`
 
 ## 快速檢查
 
@@ -23,6 +23,11 @@ Prometheus metrics：
 ```bash
 curl http://localhost:8000/v1/metrics
 ```
+
+常用 Dashboard：
+
+- `http://localhost:8000/dashboard/worker`
+- `http://localhost:8000/dashboard/observability`
 
 Dashboard：
 
@@ -247,7 +252,7 @@ curl -X POST http://localhost:8000/dashboard/playground \
 
 ## 9. Kafka Topic 或 Consumer 問題
 
-目前 Kafka topics 會由 Docker Compose 建立，API 會 publish `agent.requests`，worker 會消費 queued run。`v0.3.0` 尚未加入 retry/backoff、DLQ 與 lag alert。
+目前 Kafka topics 會由 Docker Compose 建立，API 會 publish `agent.requests`，worker 會消費 queued run。`v0.5.0` 已加入 retry/backoff 與 DLQ audit；lag alert 尚未實作。
 
 若 `kafka-init` 或 worker 消費失敗：
 
@@ -299,4 +304,5 @@ docker compose exec redis redis-cli keys 'breaker:*'
 - Postgres readiness。
 - worker completion count。
 - approval queue count。
-- future：Kafka consumer lag、worker job duration、human approval turnaround time。
+- current：worker job duration、retry/DLQ、approval/evaluator summary。
+- future：Kafka consumer lag、human approval turnaround time-series。
