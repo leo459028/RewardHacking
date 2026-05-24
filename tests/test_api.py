@@ -90,6 +90,11 @@ def test_destructive_request_enters_approval_queue(client, low_risk_payload):
     assert len(approvals.json()) == 1
     assert approvals.json()[0]["run_id"] == body["response"]["run_id"]
 
+    detail_page = client.get(f"/dashboard/runs/{body['response']['run_id']}")
+    assert detail_page.status_code == 200
+    assert "Approval" in detail_page.text
+    assert "審核狀態" in detail_page.text
+
     decision = client.post(
         f"/v1/approvals/{body['response']['run_id']}/decision",
         json={"decision": "approve_once", "reviewer": "operator-1", "reason": "Allowed for demo."},
@@ -129,16 +134,38 @@ def test_dashboard_summary(client, low_risk_payload, high_risk_payload):
 
 
 def test_dashboard_pages_render(client):
-    dashboard = client.get("/dashboard")
-    playground = client.get("/dashboard/playground")
-    approvals = client.get("/dashboard/approvals")
+    response = client.post(
+        "/v1/agent/submit",
+        json={
+            "user_id": "demo-user",
+            "task_type": "analysis",
+            "goal": "Summarize the audit trail",
+            "prompt": "Summarize the latest run status.",
+            "allowed_tools": ["read_data"],
+            "constraints": {
+                "max_tool_calls": 3,
+                "no_external_network": True,
+                "requires_human_approval": False,
+            },
+        },
+    )
+    run_id = response.json()["run_id"]
 
-    assert dashboard.status_code == 200
-    assert "Guardrail Overview" in dashboard.text
-    assert playground.status_code == 200
-    assert "Playground" in playground.text
-    assert approvals.status_code == 200
-    assert "Approval Queue" in approvals.text
+    pages = [
+        ("/dashboard", ["Guardrail Overview", "防護總覽", "Recent Runs", "近期執行", "Recent Incidents", "近期事件"]),
+        ("/dashboard/runs", ["Runs", "執行紀錄"]),
+        (f"/dashboard/runs/{run_id}", ["Run", "執行詳情", "Policy", "政策判定", "Evaluation / State", "評估與狀態"]),
+        ("/dashboard/approvals", ["Approval Queue", "審核佇列"]),
+        ("/dashboard/worker", ["Worker Operations", "Worker 作業狀態", "Dead Letter Queue", "死信佇列"]),
+        ("/dashboard/observability", ["Observability Trends", "可觀測性趨勢", "SLO", "服務水準目標"]),
+        ("/dashboard/playground", ["Playground", "測試沙盒"]),
+    ]
+
+    for path, expected_texts in pages:
+        page = client.get(path)
+        assert page.status_code == 200
+        for expected in expected_texts:
+            assert expected in page.text
 
 
 def test_dashboard_playground_submit_queues_run(client):
@@ -156,5 +183,7 @@ def test_dashboard_playground_submit_queues_run(client):
     )
 
     assert response.status_code == 200
+    assert "Result" in response.text
+    assert "執行結果" in response.text
     assert "queued" in response.text
     assert "internal_server_error" not in response.text

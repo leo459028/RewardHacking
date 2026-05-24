@@ -1,10 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Dashboard{% endblock %}
+{% block title %}Dashboard | 儀表板{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
     <h1>Guardrail Overview</h1>
-    <div class="muted">即時查看 runs、risk、policy flags 與 incidents。</div>
+    <div class="title-note">防護總覽</div>
+    <div class="muted">總覽 runs、risk score、policy flags 與 incidents。</div>
   </div>
   <a class="button" href="/dashboard/playground">New Test Run</a>
 </div>
@@ -22,7 +23,7 @@
 </section>
 
 <section class="panel">
-  <h2>Recent Runs</h2>
+  <h2>Recent Runs <span class="heading-note">近期執行</span></h2>
   <table>
     <thead><tr><th>Run</th><th>Status</th><th>Task</th><th>Risk</th><th>Flags</th><th>Created</th></tr></thead>
     <tbody>
@@ -43,7 +44,7 @@
 </section>
 
 <section class="panel">
-  <h2>Recent Incidents</h2>
+  <h2>Recent Incidents <span class="heading-note">近期事件</span></h2>
   <table>
     <thead><tr><th>Run</th><th>Severity</th><th>Code</th><th>Detail</th><th>Created</th></tr></thead>
     <tbody>
