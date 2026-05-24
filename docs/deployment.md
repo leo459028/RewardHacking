@@ -24,6 +24,8 @@ Dockerfile 會在 API 啟動前執行：
 alembic upgrade head
 ```
 
+Compose 會在 `api` 與 `worker` service 內覆蓋 Postgres、Redis、Kafka 的 container network hostnames；因此 `.env.example` 可以保留 host 端 `localhost` 設定，方便直接執行本機 migration 或 API。
+
 3. 檢查服務：
 
 ```bash
@@ -88,6 +90,7 @@ Dockerfile 使用 `python:3.12-slim`：
 ## Docker Compose 常見陷阱
 
 - `.env` 必須存在；本機 demo 建議從 `.env.example` 複製後再啟動 Compose。
+- `.env.example` 預設使用 host 端 `localhost`；Docker container 內連線值由 `docker-compose.yml` 的 service environment 覆蓋，不要把這兩種 hostname 混成同一份設定。
 - Kafka 目前使用 `bitnamilegacy/kafka:3.7.0`，不要改回不存在或未驗證的 `bitnami/kafka:3.7` tag。
 - `kafka-init` 使用 `/opt/bitnami/kafka/bin/kafka-topics.sh` 建立 topics，不要假設 `kafka-topics.sh` 一定在 PATH。
 - Migration 應維持單一 owner；目前由 API 啟動前執行 `alembic upgrade head`，worker 不應同時跑 migration，避免 Alembic version table 競態。

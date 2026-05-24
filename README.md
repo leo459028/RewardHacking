@@ -119,6 +119,8 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 cp .env.example .env
 ```
 
+`.env.example` 預設使用 host 端 `localhost`，方便直接跑 `alembic` 或 `uvicorn`；Docker Compose 會在 `api` / `worker` container 內覆蓋成 `postgres`、`redis`、`kafka` service hostnames。
+
 2. 啟動服務：
 
 ```bash

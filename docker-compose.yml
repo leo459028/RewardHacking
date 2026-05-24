@@ -69,6 +69,10 @@ services:
         condition: service_completed_successfully
     env_file:
       - .env
+    environment:
+      POSTGRES_DSN: postgresql+asyncpg://app:app@postgres:5432/app
+      REDIS_URL: redis://redis:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     ports:
       - "8000:8000"
 
@@ -85,4 +89,8 @@ services:
         condition: service_completed_successfully
     env_file:
       - .env
+    environment:
+      POSTGRES_DSN: postgresql+asyncpg://app:app@postgres:5432/app
+      REDIS_URL: redis://redis:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     command: ["sh", "-c", "python -m app.workers.consumer"]

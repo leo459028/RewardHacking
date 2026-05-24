@@ -4,6 +4,115 @@
 
 請不要只填預期結果；如果某項驗證沒有執行，要清楚寫明原因。例如：純文件修改未啟動 Docker、Docker Desktop 尚未開啟、或本次沒有影響 Dashboard。
 
+## 2026-05-24 - v0.5 主機端與 Docker DSN 設定分離
+
+- 版本：v0.5.0
+- 變更範圍：修正 `.env.example` 與 Docker Compose 的設定分工，讓主機端可直接執行 `alembic upgrade head`，Docker container 內仍使用 `postgres`、`redis`、`kafka` service hostnames。
+- 測試環境：本機 PowerShell、Python 3.11、Docker Desktop；使用既有預設 `rewardhacking-*` Docker stack。
+
+### 測試命令
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `alembic upgrade head` | 通過，直接使用本機 `.env` 的 `localhost:5432`，不需臨時覆蓋 `POSTGRES_DSN`。 |
+| `python -m pytest -q` | 通過，20 passed。 |
+| `python -m ruff check app tests` | 通過，All checks passed。 |
+| `docker compose up -d` | 通過，套用新的 compose service environment；api、worker、postgres、redis、kafka 皆維持 Up。 |
+| `docker compose exec -T api alembic upgrade head` | 通過，container 內使用 `postgres:5432`，無 pending migration 錯誤。 |
+| `docker compose exec -T api python -c "import os; ..."` | 通過，確認 api container 內 `POSTGRES_DSN=postgresql+asyncpg://app:app@postgres:5432/app`、`REDIS_URL=redis://redis:6379/0`、`KAFKA_BOOTSTRAP_SERVERS=kafka:9092`。 |
+| `curl http://localhost:8000/v1/healthz` | 通過，回 `{"status":"ok"}`。 |
+| `curl http://localhost:8000/v1/readyz` | 通過，回 `{"status":"ready"}`。 |
+
+### Dashboard 驗證
+
+- 驗證網址：不適用，本次是設定與 migration 執行路徑修正，未改 Dashboard 使用者介面。
+- 實際結果：API health/readyz 正常，代表 Dashboard 所需的 API 與 Postgres 連線仍可用。
+- 未執行原因：本次沒有修改 Dashboard route、template 或互動行為；前一筆紀錄已完成最新 Docker stack 的 Dashboard 點擊驗證。
+
+### Docker 驗證
+
+- 驗證命令：`docker compose up -d`、`docker compose ps`、`docker compose exec -T api alembic upgrade head`、container env check、API health/readyz。
+- 實際結果：Docker container 端明確覆蓋為 Docker network hostnames；主機端 `.env` 改為 `localhost` 後不會影響 container 內連線。
+- 未執行原因：不適用，本次已執行 Docker 驗證。
+
+### 限制與已知問題
+
+- `.env` 是本機未追蹤檔案；本次已同步改成本機可用的 `localhost` 設定，版本控制中則以 `.env.example` 記錄主機端預設。
+- Kafka advertised listener 仍以 container-to-container demo 為主；若要從 host 直接跑完整 worker 並連 Kafka，仍需另行調整 Kafka advertised listeners。
+
+## 2026-05-24 - v0.5 最新 Docker stack 直接重測
+
+- 版本：v0.5.0
+- 變更範圍：依使用者要求，直接使用目前已啟動並重建完成的預設 Docker stack `rewardhacking-*` 重跑測試，不另開獨立 compose project，也不修改設定。
+- 測試環境：本機 PowerShell、Python 3.11、Docker Desktop、Codex in-app Browser；Docker services 使用預設 ports：API `8000`、Postgres `5432`、Redis `6379`、Kafka `9092`。
+
+### 測試命令
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `docker compose ps` | 通過，`rewardhacking-api-1`、`rewardhacking-worker-1`、`rewardhacking-postgres-1`、`rewardhacking-redis-1`、`rewardhacking-kafka-1` 皆 Up；Postgres/Redis/Kafka healthy。 |
+| `python -m pytest -q` | 通過，20 passed。 |
+| `python -m ruff check app tests` | 通過，All checks passed。 |
+| `alembic upgrade head` | 第一次使用 `.env` 內的容器 hostname `postgres`，主機端無法解析而失敗；未改設定，改用臨時環境變數 `POSTGRES_DSN=postgresql+asyncpg://app:app@localhost:5432/app` 後通過。 |
+| `curl http://localhost:8000/v1/healthz` | 通過，回 `{"status":"ok"}`。 |
+| `curl http://localhost:8000/v1/readyz` | 通過，回 `{"status":"ready"}`。 |
+| `curl http://localhost:8000/dashboard` | 通過，HTML 內已包含 `Worker` 與 `Observability` 側邊欄連結。 |
+| `POST http://localhost:8000/v1/agent/submit` | 通過，建立 run `dac58d70-f49f-4f36-b730-8815ed25ed36`；worker 處理後狀態為 `completed`，worker attempts=1，tool executions=2。 |
+
+### Dashboard 驗證
+
+- 驗證網址：`http://localhost:8000/dashboard/runs`、`/dashboard/runs/dac58d70-f49f-4f36-b730-8815ed25ed36`、`/dashboard/worker`、`/dashboard/observability`
+- 實際結果：用 Codex in-app Browser 點擊最新 Docker Dashboard。Runs 頁可找到 `dac58d70` 並點入 detail；run detail 顯示 `completed`，且有 `Worker Attempts` 與 `Tool Executions` 區塊。側邊欄已顯示 `Worker` 與 `Observability`；點擊 `Worker` 進入 `/dashboard/worker`，頁面顯示 `Dead Letter Queue`、`Recent Attempts` 與該 run 的 completed attempt；點擊 `Observability` 進入 `/dashboard/observability`，頁面顯示 Worker Completed=1、Worker DLQ=0、Eval Pass=1 與 SLO。瀏覽器 console error/warn 為空。
+- 截圖：已由 Browser 驗證流程擷取 Run detail、Worker、Observability 三張截圖。
+- 未執行原因：不適用，本次已執行 Dashboard 點擊驗證。
+
+### Docker 驗證
+
+- 驗證命令：直接使用目前的預設 `rewardhacking-*` Docker stack，未建立獨立 container/project。
+- 實際結果：最新 Docker image 已在 `localhost:8000` 生效；Dashboard 側邊欄包含 Worker/Observability；API health/readyz、worker processing、audit 查詢與 Dashboard 點擊皆通過。
+- 未執行原因：不適用，本次已執行 Docker 驗證。
+
+### 限制與已知問題
+
+- 主機端直接執行 `alembic upgrade head` 時，`.env` 的 `postgres` 是 Docker network 內 hostname；主機端不需改設定，只要在命令層臨時指定 `localhost:5432` DSN 即可。
+- Browser 表單文字輸入在本環境受虛擬剪貼簿限制影響，因此本次用 API 建立測試 run，再用 Dashboard 實際點擊驗證 run detail、Worker 與 Observability。
+
+## 2026-05-24 - v0.5 完整重測與 Dashboard 點擊驗證
+
+- 版本：v0.5.0
+- 變更範圍：依使用者要求重跑完整測試，包含 Dashboard 實際瀏覽器點擊流程；本次未修改程式碼。
+- 測試環境：本機 PowerShell、Python 3.11、Docker Desktop、Codex in-app Browser；隔離 Docker Compose project `rewardhacking-v05-clicktest`。
+
+### 測試命令
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `python -m pytest -q` | 通過，20 passed。 |
+| `python -m ruff check app tests` | 通過，All checks passed。 |
+| `POSTGRES_DSN=postgresql+asyncpg://app:app@localhost:15432/app alembic upgrade head` | 通過，Alembic 顯示 PostgreSQL migration context，無錯誤。 |
+| `docker compose -p rewardhacking-v05-clicktest -f docker-compose.yml -f - up -d --build` | 通過，使用 ports：API `18080`、Postgres `15432`、Redis `16379`、Kafka `19092`；api、worker、postgres、redis、kafka 皆 Up，postgres/redis/kafka healthy。 |
+| `curl http://localhost:18080/v1/healthz` | 通過，回 `{"status":"ok"}`。 |
+| `curl http://localhost:18080/v1/readyz` | 通過，回 `{"status":"ready"}`。 |
+| `curl http://localhost:18080/v1/observability/summary` | 通過，Dashboard 點擊測試後回 worker completed=1、evaluator pass=1、DLQ=0。 |
+
+### Dashboard 驗證
+
+- 驗證網址：`http://localhost:18080/dashboard`、`/dashboard/runs`、`/dashboard/approvals`、`/dashboard/worker`、`/dashboard/observability`、`/dashboard/playground`、`/dashboard/runs/{run_id}`
+- 實際結果：用 Codex in-app Browser 點擊側邊欄 nav，Overview/Runs/Approvals/Worker/Observability/Playground 皆可開啟且 title 與主要 heading 正確。Playground 表單填入 `code_fix`、`read_repo, run_tests` 後 submit，頁面顯示 `Result` 與 `queued`；點擊 `Open run detail` 後等待 worker，run detail 顯示 `completed`，且有 `Worker Attempts` 與 `Tool Executions` 區塊。再點 `/dashboard/worker` 顯示該 run 的 completed attempt；點 `/dashboard/observability` 顯示 Worker Completed=1、Eval Pass=1。瀏覽器 console error/warn 為空。
+- 截圖：已由 Browser 驗證流程擷取 Playground 初始頁、Playground submit 結果、Run detail、Worker、Observability 五張截圖。
+- 未執行原因：不適用，本次已執行 Dashboard 點擊驗證。
+
+### Docker 驗證
+
+- 驗證命令：隔離 project `rewardhacking-v05-clicktest`，使用 compose override 避免占用既有 `rewardhacking-*` 容器 ports。
+- 實際結果：Docker stack 啟動成功；`docker compose -p rewardhacking-v05-clicktest ps` 顯示 api、worker、postgres、redis、kafka 皆 Up；API 與 Dashboard 點擊測試皆通過。
+- 未執行原因：不適用，本次已執行 Docker 驗證。
+
+### 限制與已知問題
+
+- 因既有 `rewardhacking-*` stack 已占用預設 ports，本次使用替代 host ports 驗證。
+- `/v1/metrics` 的 API process 可看到 metric family；worker process metrics 不會出現在 API process 的 `/v1/metrics` 中，Dashboard observability 以 Postgres audit tables 驗證。
+
 ## 2026-05-24 - v0.5 Execution Hardening 與 Observability
 
 - 版本：v0.5.0
