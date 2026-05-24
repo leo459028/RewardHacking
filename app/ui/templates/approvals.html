@@ -1,10 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Approvals{% endblock %}
+{% block title %}Approvals | 審核佇列{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
     <h1>Approval Queue</h1>
-    <div class="muted">處理 awaiting approval 的高風險或 destructive runs。</div>
+    <div class="title-note">審核佇列</div>
+    <div class="muted">檢視 awaiting approval 與 destructive runs，並送出審核決策。</div>
   </div>
   <a class="button" href="/dashboard/playground">New Test Run</a>
 </div>

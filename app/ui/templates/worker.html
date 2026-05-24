@@ -1,15 +1,16 @@
 {% extends "base.html" %}
-{% block title %}Worker Operations{% endblock %}
+{% block title %}Worker Operations | Worker 作業狀態{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
     <h1>Worker Operations</h1>
+    <div class="title-note">Worker 作業狀態</div>
     <div class="muted">Retry attempts, failure reasons, and DLQ entries.</div>
   </div>
 </div>
 
 <section class="panel">
-  <h2>Dead Letter Queue</h2>
+  <h2>Dead Letter Queue <span class="heading-note">死信佇列</span></h2>
   <table>
     <thead><tr><th>Run</th><th>Attempt</th><th>Reason</th><th>Created</th></tr></thead>
     <tbody>
@@ -28,7 +29,7 @@
 </section>
 
 <section class="panel">
-  <h2>Recent Attempts</h2>
+  <h2>Recent Attempts <span class="heading-note">近期嘗試</span></h2>
   <table>
     <thead><tr><th>Run</th><th>Attempt</th><th>Status</th><th>Failure</th><th>Next Retry</th></tr></thead>
     <tbody>

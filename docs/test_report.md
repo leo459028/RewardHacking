@@ -386,3 +386,36 @@
 
 -
 ```
+# 測試紀錄
+
+## 2026-05-24 - Dashboard 全頁面雙語標題與中文標註
+
+- 版本：`v0.5.0`
+- 變更範圍：Dashboard server-rendered templates 新增英文主標＋繁體中文標註，涵蓋 `/dashboard`、`/dashboard/runs`、`/dashboard/runs/{run_id}`、`/dashboard/approvals`、`/dashboard/worker`、`/dashboard/observability`、`/dashboard/playground`；同步修正 `docs/dashboard.md` 亂碼與頁面說明。
+- 測試環境：Windows PowerShell、Python 3.11、Docker Desktop、Codex in-app Browser。
+
+### 測試命令
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `pytest tests/test_api.py::test_dashboard_pages_render` | 先失敗，錯誤原因為 `/dashboard` 缺少 `防護總覽`，確認測試可抓到缺中文標註的問題。 |
+| `pytest tests/test_api.py::test_dashboard_pages_render` | 修改 templates 後通過，1 passed。 |
+| `pytest` | 通過，20 passed。 |
+| `ruff check app tests` | 通過，All checks passed。 |
+| `docker info` | sandbox 內因 Docker API 權限被拒；使用核准後的 Docker 權限重跑成功，Docker Desktop 可用。 |
+| `docker compose ps` | 通過，api、worker、postgres、redis、kafka 皆為 Up，postgres/redis/kafka healthy。 |
+| `docker compose up -d --build` | 通過，api 與 worker image 重新 build，api/worker container 重新建立並啟動。 |
+| `Invoke-WebRequest http://localhost:8000/dashboard...` | 通過，Overview、Runs、Approvals、Worker、Observability、Playground 皆回 HTTP 200，且各頁包含對應中文標註。 |
+
+### Dashboard 驗證
+
+- 驗證網址：`http://localhost:8000/dashboard`、`/dashboard/runs`、`/dashboard/runs/{run_id}`、`/dashboard/approvals`、`/dashboard/worker`、`/dashboard/observability`、`/dashboard/playground`。
+- 實際結果：用 Codex in-app Browser 載入每個 Dashboard 頁面，英文主標與繁體中文標註皆可見。Run detail 測試 run 為 `0335ab43-c891-4f91-b99a-42d4fe9ae98d`。`Observability Trends` 保留英文，並顯示 `可觀測性趨勢`；`SLO` 保留英文，並顯示 `服務水準目標`。頁面 heading 與中文標註的垂直間距檢查通過，沒有發現標題重疊；browser console error/warn 為空。
+- 截圖：已由 Browser 驗證流程擷取 `/dashboard/observability` 畫面，可看到 `Observability Trends / 可觀測性趨勢` 與 `SLO / 服務水準目標`。
+- 未執行原因：不適用，本次已執行 Docker 版 Dashboard 點擊/載入驗證。
+
+### Docker 驗證
+
+- 驗證命令：`docker info`、`docker compose ps`、`docker compose up -d --build`。
+- 實際結果：Docker Desktop 可用；重新 build 後 `rewardhacking-api-1` 與 `rewardhacking-worker-1` 已重建並啟動，Postgres、Redis、Kafka 仍維持 healthy。
+- 限制或已知問題：一般 sandbox 權限無法直接連到 Docker API，需要核准後的 Docker 權限執行 Docker 驗證。
