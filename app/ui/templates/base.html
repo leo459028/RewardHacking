@@ -60,7 +60,7 @@
     h2 { font-size: 17px; margin: 0 0 12px; }
     .muted { color: var(--muted); font-size: 13px; }
     .grid { display: grid; gap: 14px; }
-    .stats { grid-template-columns: repeat(6, minmax(120px, 1fr)); }
+    .stats { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
     .stat, .panel, .card {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -82,8 +82,9 @@
       padding: 3px 8px;
     }
     .status.completed { background: #ecfdf3; color: var(--ok); }
-    .status.escalated, .status.queued { background: #fffaeb; color: var(--warning); }
-    .status.denied { background: #fef3f2; color: var(--danger); }
+    .status.escalated, .status.queued, .status.awaiting_approval { background: #fffaeb; color: var(--warning); }
+    .status.running { background: #eef4ff; color: #3538cd; }
+    .status.denied, .status.failed { background: #fef3f2; color: var(--danger); }
     .flag {
       background: #eef4ff;
       border-radius: 999px;
@@ -106,6 +107,7 @@
       padding: 8px 12px;
     }
     .button.secondary { background: #344054; }
+    .button.danger { background: var(--danger); }
     .button:hover { background: var(--brand-dark); }
     .filters, .form-grid { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
     label { color: var(--muted); display: grid; font-size: 12px; font-weight: 700; gap: 6px; }
@@ -132,6 +134,7 @@
     }
     .detail-grid { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
     .error { background: #fef3f2; border: 1px solid #fecdca; border-radius: 8px; color: var(--danger); padding: 12px; }
+    .decision-form { display: grid; gap: 8px; min-width: 220px; }
     @media (max-width: 980px) {
       .app-shell { grid-template-columns: 1fr; }
       .sidebar { height: auto; position: static; }
@@ -147,6 +150,7 @@
       <nav class="nav">
         <a class="{{ 'active' if active == 'dashboard' else '' }}" href="/dashboard">Overview</a>
         <a class="{{ 'active' if active == 'runs' else '' }}" href="/dashboard/runs">Runs</a>
+        <a class="{{ 'active' if active == 'approvals' else '' }}" href="/dashboard/approvals">Approvals</a>
         <a class="{{ 'active' if active == 'playground' else '' }}" href="/dashboard/playground">Playground</a>
         <a href="/docs">OpenAPI</a>
       </nav>
