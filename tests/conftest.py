@@ -8,6 +8,9 @@ import asyncio
 from app.infra.postgres import get_session
 from app.main import app
 from app.models.base import Base
+from app.api.deps import get_event_publisher, get_state_store
+from app.services.events import InMemoryEventPublisher
+from app.services.run_state import InMemoryRunStateStore
 
 
 @pytest.fixture
@@ -25,12 +28,19 @@ def session_factory():
 
 @pytest.fixture
 def client(session_factory):
+    state_store = InMemoryRunStateStore()
+    event_publisher = InMemoryEventPublisher()
+
     async def override_get_session():
         async with session_factory() as session:
             yield session
 
     app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_state_store] = lambda: state_store
+    app.dependency_overrides[get_event_publisher] = lambda: event_publisher
     with TestClient(app) as client:
+        client.state_store = state_store
+        client.event_publisher = event_publisher
         yield client
     app.dependency_overrides.clear()
 

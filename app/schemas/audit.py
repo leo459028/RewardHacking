@@ -40,5 +40,14 @@ class DashboardSummaryResponse(BaseModel):
     escalated: int
     denied: int
     queued: int
+    running: int
+    awaiting_approval: int
+    failed: int
     average_risk_score: float
     recent_incidents: list[IncidentRecord]
+
+
+class ApprovalDecisionRequest(BaseModel):
+    decision: str
+    reviewer: str
+    reason: str

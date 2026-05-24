@@ -1,6 +1,16 @@
-# Roadmap v0.2
+# Roadmap v0.3
 
-本 roadmap 將專案從目前 prototype 推進到可在 production 中承擔 guardrail 職責的服務。優先順序以安全性、可觀測性、資料可靠性與可展示性為主。
+本 roadmap 將專案從 prototype 推進到可逐步承擔 guardrail 職責的服務。`v0.3.0` 起不再把 Kafka、Redis、Tool Executor、Approval 視為互不相干的線性 phase，而是先建立一條可展示、可查詢、可審計的產品閉環，再把完整 hardening 與 production governance 放到後續版本。
+
+## 版本節奏
+
+| 版本 | 狀態 | 主軸 | 說明 |
+| --- | --- | --- | --- |
+| `v0.2.0` | 已完成 | 同步 API + Audit + Dashboard prototype | 建立 request、policy、demo execution、evaluation、Postgres audit trail 與 server-rendered Dashboard。 |
+| `v0.3.0` | 目前版本 | Guarded Async Execution MVP | 合併 Kafka、Redis、Approval、Executor Interface 的最小閉環。 |
+| `v0.4.0` | 下一階段 | Execution Hardening | 補 retry/DLQ、完整 approval workflow、tool transcript 查詢、resource/cost limit 與 sandbox 強化。 |
+| `v0.5.0` | 規劃中 | Evaluator + Observability | 補 task-specific evaluator、LLM-as-judge signal、worker metrics、SLO 與 Dashboard 趨勢。 |
+| `v0.6+` | 規劃中 | Production Governance | 補 auth、tenant isolation、quota、backup/restore、retention、secret rotation。 |
 
 ## Milestone：v0.2.0 / Phase 0-2 + Dashboard
 
@@ -23,156 +33,99 @@
 - 真實 tool executor / sandbox。
 - Human approval workflow。
 
-## Phase 0：文件與基線整理
+## Milestone：v0.3.0 / Guarded Async Execution MVP
 
-目標：讓團隊能理解現況並安全接手。
+目標：讓低風險任務能先進入 queue，由 worker 非同步處理；高風險或 destructive 任務進入 approval queue；所有重要狀態仍寫回 Postgres audit trail，並可從 Dashboard 查詢。
 
-- 完成繁中專案文件。
-- 標示已實作與未實作能力。
-- 修正文件中的 endpoint path，例如 `/v1/healthz`。
-- 補 quick start、runbook、architecture、roadmap。
-- 補 Dashboard 使用說明。
+已完成項目：
 
-完成條件：
-
-- 新成員可依文件啟動服務、送出測試 request，並開啟 dashboard。
-- 文件不把 placeholder 描述成 production-ready。
-
-## Phase 1：測試與 API 穩定化
-
-目標：讓目前同步 API flow 可靠、可回歸。
-
-- 補 API tests。
-- 補 sanitizer、risk scoring、evaluator unit tests。
-- 建立 red-team prompt corpus。
-- 統一 error response。
-- 回傳 request id / trace id。
-- 補 health/readiness endpoint。
-- 補 ruff 到 `requirements.txt` 或調整 Makefile。
+- API submit 後會先建立 run，低風險任務回傳 `queued`，不再同步執行工具。
+- `POST /v1/agent/submit` 與 `POST /v1/agent/submit-with-details` 會 publish `agent.requests` event，供 worker 消費。
+- Worker 可依 run id 重新讀取 request、重跑 policy、執行 bounded executor、寫回 execution/evaluation/incident。
+- Redis state store 接入最小閉環：`run:{run_id}:state`、`idempotency:{event_id}`、`breaker:{tool_name}`。
+- Policy 會檢查已開啟的 tool circuit breaker；命中時 fail closed，進入 `awaiting_approval`。
+- Executor 從 `DummyToolExecutor` 演進為 bounded executor interface，記錄 tool transcript 與 artifact refs，但仍不是完整 OS sandbox。
+- Destructive 或需審核任務會進入 `awaiting_approval`，不執行工具。
+- 新增 approval API：`GET /v1/approvals`、`POST /v1/approvals/{run_id}/decision`。
+- Dashboard 新增 `/dashboard/approvals`，run detail 顯示 event timeline、tool transcript、approval state。
+- Docker Compose 新增 `worker` service，與 API 共用映像檔並消費 Kafka request topic。
 
 完成條件：
 
-- CI 可跑 `ruff check app tests` 與 `pytest -q`。
-- policy/evaluator 變更會觸發安全 regression tests。
+- 低風險 request：API 回 `queued`，worker 完成後 run 變 `completed`，Dashboard 可查 timeline。
+- 高風險或 destructive request：進入 `denied` 或 `awaiting_approval`，incident 與 approval state 可查。
+- breaker 開啟的 tool：policy fail closed，Dashboard 顯示對應 policy flag。
+- 重複 worker event：idempotency key 避免重複執行。
 
-## Phase 2：Persistence 與 Migration
+目前限制：
 
-目標：讓 policy decision、run、incident 可審計。
+- `v0.3.0` 不是完整 production sandbox；bounded executor 只記錄受控 transcript，不呼叫真實外部工具。
+- Approval workflow 是最小版，支援 approve once、deny、request changes；完整 reviewer queue、TTL 與稽核報表放到 `v0.4.0`。
+- Kafka publish/consume 已接入，但 retry/backoff、DLQ、consumer lag alert 放到 `v0.4.0`。
+- Redis 不作為唯一 audit store；重要決策仍以 Postgres 為準。
 
-- 導入 Alembic。
-- 建立初始 migrations。
-- API 或 orchestrator 寫入 `AgentRun`。
-- policy deny/escalate 寫入 `Incident`。
-- evaluation result persist。
-- 設計 artifact reference，避免大型 output 直接塞 DB。
-- 補 DB integration tests。
+## Milestone：v0.4.0 / Execution Hardening
 
-完成條件：
+目標：把 `v0.3.0` 的最小閉環強化成更可靠的執行層。
 
-- 每個 request 都有可查詢的 audit trail。
-- schema 變更有 migration 與 rollback plan。
+預計項目：
 
-## Phase 3：Kafka Worker 與 Async Execution
-
-目標：把 request ingestion 與 execution 解耦。
-
-- API policy allow 後 publish `agent.requests`。
-- 實作 worker consumer group。
-- worker re-run policy check。
-- publish `agent.executions`、`agent.evaluations`、`agent.incidents`。
-- 實作 retry/backoff。
-- 建立 DLQ。
-- 監控 consumer lag。
-
-完成條件：
-
-- API 可快速接收任務。
-- worker 可水平擴充。
-- 失敗任務不會造成資料遺失或無限重試。
-
-## Phase 4：Redis State、Approval 與 Circuit Breaker
-
-目標：補上短期狀態、審核狀態與保護開關。
-
-- `run:{run_id}:state`。
-- approval token/state。
-- tenant/user rate limit。
-- tool circuit breaker。
-- idempotency key。
-- high-risk tenant risk window。
-
-完成條件：
-
-- 高風險 action 可 fail closed。
-- operator 可暫停特定 tool。
-- 重複 event 不會造成重複執行。
-
-## Phase 5：真實 Tool Executor 與 Sandbox
-
-目標：從 demo executor 進入可控的實際執行。
-
-- 定義 executor interface。
-- 實作 tool ACL。
-- 限制 network、filesystem、process、secret。
-- 記錄 tool transcript 與 artifact refs。
-- destructive action 前強制 approval gate。
-- 每個 task type 定義允許 tool set。
+- Worker retry/backoff。
+- Dead-letter topic，例如 `agent.requests.dlq`。
+- Worker failure reason 與 retry attempt 寫入 audit trail。
+- 完整 approval workflow：reviewer、decision reason、TTL、request changes、審核事件查詢。
+- Tool transcript 獨立查詢與 artifact refs 查詢。
+- Tool ACL 規則外部化，依 task type 管理允許工具。
 - 加入 timeout、resource limit、cost limit。
+- Sandbox 強化：network、filesystem、process、secret 邊界。
 
 完成條件：
 
-- agent 無法呼叫未授權 tool。
-- destructive action 沒有人審不能執行。
+- 失敗任務不會資料遺失或無限重試。
+- Destructive action 沒有人審不能執行。
 - 所有 tool action 可追蹤。
 
-## Phase 6：Evaluator 升級
+## Milestone：v0.5.0 / Evaluator + Observability
 
-目標：讓評估更接近真實安全與品質需求。
+目標：讓評估訊號與營運觀測更接近真實安全需求。
+
+預計項目：
 
 - 建立 task-specific rubrics。
 - 對 code tasks 檢查 diff、test result、lint result。
 - 對 data_query 檢查來源與 query lineage。
 - 導入 LLM-as-judge，但只作為 evaluator signal，不作為唯一 hard deny。
 - 建立 labeled evaluation dataset。
-- 追蹤 precision / recall。
+- 追蹤 evaluator precision / recall。
+- Worker metrics：job duration、completion latency、failure count。
+- Dashboard 趨勢：incident rate、approval turnaround、worker backlog。
+- SLO：API latency、worker completion latency、incident response。
 
 完成條件：
 
 - evaluator false positive/false negative 可量化。
-- 新 evaluator rule 有資料集驗證。
+- worker 與 incident 可被發現、定位與回顧。
 
-## Phase 7：Human Approval Workflow
+## Milestone：v0.6+ / Production Governance
 
-目標：讓 `escalated` 有完整處理流程。
+目標：補上長期營運與多租戶治理能力。
 
-- 建立 review queue。
-- 顯示 request summary、flags、risk score、artifact refs。
-- 記錄 reviewer、decision、reason。
-- 支援 approve once、deny、request changes。
-- 對 approval 設 TTL。
-- 審核操作進 audit trail。
+預計項目：
 
-完成條件：
-
-- `escalated` 不再只是 terminal response，而是可被處理的 workflow。
-
-## Phase 8：Production Observability 與治理
-
-目標：服務能被營運與安全團隊長期管理。
-
-- OpenTelemetry tracing。
-- Dashboard。
-- Alert rules。
-- SLO：API latency、worker completion latency、incident response。
-- Backup/restore drill。
+- Auth 與 Dashboard 權限控管。
+- Tenant isolation。
+- Tenant/user quota 與 rate limit。
 - Data retention policy。
+- Backup/restore drill。
 - Secret rotation。
-- Tenant quota 與 SLA。
+- OpenTelemetry tracing。
+- Release gate 與 rollback runbook。
+- 多租戶 billing/cost governance。
 
 完成條件：
 
-- incident 可被發現、定位、處理與回顧。
 - production 變更有可靠 release gate。
+- 長期保存、權限、配額與事故回顧有明確治理方式。
 
 ## 優先順序
 
@@ -186,7 +139,7 @@
 中優先：
 
 - LLM-as-judge evaluator。
-- Dashboard 與 SLO。
+- Dashboard 趨勢與 SLO。
 - Tenant quota。
 
 較後期：

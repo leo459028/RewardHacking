@@ -1,8 +1,8 @@
-# 部署文件 v0.2
+# 部署文件 v0.3
 
-本專案提供 Dockerfile 與 Docker Compose，適合本機開發、demo、CI smoke test。正式環境部署前仍需補上 auth、secrets、observability、worker lifecycle 與安全控制。
+本專案提供 Dockerfile 與 Docker Compose，適合本機開發、demo、CI smoke test。`v0.3.0` 已包含 API 與 worker 兩個服務。正式環境部署前仍需補上 auth、secrets、observability、完整 worker lifecycle 與安全控制。
 
-目前部署版本：`v0.2.0`
+目前部署版本：`v0.3.0`
 
 ## 本機 Docker Compose
 
@@ -30,6 +30,7 @@ alembic upgrade head
 docker compose ps
 curl http://localhost:8000/v1/healthz
 curl http://localhost:8000/v1/readyz
+docker compose logs worker
 ```
 
 4. 開啟 Dashboard：
@@ -42,6 +43,7 @@ http://localhost:8000/dashboard
 
 ```bash
 docker compose logs -f api
+docker compose logs -f worker
 ```
 
 6. 停止服務：
@@ -67,10 +69,11 @@ uvicorn app.main:app --reload
 | Service | Image/Build | 說明 |
 | --- | --- | --- |
 | `postgres` | `postgres:16` | 預設 DB `app`，使用者 `app` |
-| `redis` | `redis:7` | Phase 4 state/cache/circuit breaker 預留 |
-| `kafka` | `bitnami/kafka:3.7` | Phase 3 event bus 預留 |
-| `kafka-init` | `bitnami/kafka:3.7` | 建立 Kafka topics |
+| `redis` | `redis:7` | run state、idempotency、circuit breaker |
+| `kafka` | `bitnamilegacy/kafka:3.7.0` | event bus，本機 demo 沿用 Bitnami KRaft 設定 |
+| `kafka-init` | `bitnamilegacy/kafka:3.7.0` | 建立 Kafka topics |
 | `api` | local Dockerfile | FastAPI app、JSON API、Dashboard |
+| `worker` | local Dockerfile | Kafka worker，等待 API service 啟動後消費 `agent.requests` 並寫回 audit trail |
 
 ## Dockerfile 行為
 
@@ -82,15 +85,22 @@ Dockerfile 使用 `python:3.12-slim`：
 - 啟動時先執行 `alembic upgrade head`。
 - 再以 `uvicorn app.main:app --host 0.0.0.0 --port 8000` 啟動。
 
+## Docker Compose 常見陷阱
+
+- `.env` 必須存在；本機 demo 建議從 `.env.example` 複製後再啟動 Compose。
+- Kafka 目前使用 `bitnamilegacy/kafka:3.7.0`，不要改回不存在或未驗證的 `bitnami/kafka:3.7` tag。
+- `kafka-init` 使用 `/opt/bitnami/kafka/bin/kafka-topics.sh` 建立 topics，不要假設 `kafka-topics.sh` 一定在 PATH。
+- Migration 應維持單一 owner；目前由 API 啟動前執行 `alembic upgrade head`，worker 不應同時跑 migration，避免 Alembic version table 競態。
+
 ## Production Checklist
 
 正式部署前至少補齊：
 
 - 使用 managed Postgres，並設定 backup/restore drill。
-- 將 Redis/Kafka 改成 managed service 或高可用叢集，並等 Phase 3/4 接入後納入 readiness。
+- 將 Redis/Kafka 改成 managed service 或高可用叢集，並納入 readiness。
 - 設定 TLS、auth、network policy。
 - Dashboard 加入登入與權限控管。
-- 拆分 API 與 worker deployment。
+- 在正式環境拆分 API 與 worker deployment，分開設定 replica、資源限制與 autoscaling。
 - 建立 Prometheus scrape config 與 alert rules。
 - 建立 log aggregation。
 - 設定 resource requests/limits 與 autoscaling。
@@ -107,11 +117,11 @@ Dockerfile 使用 `python:3.12-slim`：
 - `ConfigMap`：非敏感設定。
 - `Secret`：DSN、密碼、API keys。
 - `ServiceMonitor`：Prometheus metrics。
-- `Deployment/worker`：Phase 3 導入 Kafka worker 後再新增。
+- `Deployment/worker`：在 migration 完成後執行 `python -m app.workers.consumer`，消費 Kafka request topic。
 
 ## Rollback 建議
 
 - API image rollback：保留最近可用 image tag。
 - DB migration rollback：每個 migration 都要有 downgrade 或 forward-fix playbook。
 - Policy rule rollback：policy thresholds 與 rules 應可透過 config 或 feature flag 回退。
-- Kafka schema rollback：Phase 3 導入 event payload 後保持 backward compatible。
+- Kafka schema rollback：event payload 變更要保持 backward compatible。

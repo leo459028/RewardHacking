@@ -14,7 +14,7 @@
     <label>Status
       <select name="status">
         <option value="" {{ "selected" if not status else "" }}>All</option>
-        {% for item in ["completed", "queued", "escalated", "denied"] %}
+        {% for item in ["completed", "queued", "running", "awaiting_approval", "failed", "escalated", "denied"] %}
         <option value="{{ item }}" {{ "selected" if status == item else "" }}>{{ item }}</option>
         {% endfor %}
       </select>

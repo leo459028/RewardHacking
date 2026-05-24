@@ -12,8 +12,8 @@
 | `API_HOST` | `0.0.0.0` | API listen host |
 | `API_PORT` | `8000` | API listen port |
 | `POSTGRES_DSN` | `postgresql+asyncpg://app:app@localhost:5432/app` | SQLAlchemy async Postgres DSN |
-| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection URL，保留給 Phase 4 |
-| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka bootstrap servers，保留給 Phase 3 |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection URL，用於 run state、idempotency、circuit breaker |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka bootstrap servers，用於 API publish 與 worker consume |
 | `KAFKA_REQUEST_TOPIC` | `agent.requests` | request topic |
 | `KAFKA_DECISION_TOPIC` | `agent.decisions` | policy decision topic |
 | `KAFKA_EXECUTION_TOPIC` | `agent.executions` | execution result topic |
@@ -46,7 +46,7 @@ KAFKA_BOOTSTRAP_SERVERS=localhost:9092
 
 `GET /v1/readyz` 目前檢查 Postgres connection，因為 Postgres 是 submit、audit trail 與 Dashboard 的必要依賴。
 
-Redis 與 Kafka 目前不是 request path 的必要依賴，因此尚未納入 `/v1/readyz`。Phase 3/4 導入後再加入 worker/Kafka/Redis readiness。
+Redis 與 Kafka 已在 `v0.3.0` request path 中使用，但 `/v1/readyz` 目前仍只檢查 Postgres。後續版本會補 worker/Kafka/Redis readiness 與更清楚的 degraded mode。
 
 ## Policy Threshold
 

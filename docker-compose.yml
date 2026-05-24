@@ -24,7 +24,7 @@ services:
       retries: 20
 
   kafka:
-    image: bitnami/kafka:3.7
+    image: bitnamilegacy/kafka:3.7.0
     ports:
       - "9092:9092"
     environment:
@@ -45,17 +45,17 @@ services:
       retries: 30
 
   kafka-init:
-    image: bitnami/kafka:3.7
+    image: bitnamilegacy/kafka:3.7.0
     depends_on:
       kafka:
         condition: service_healthy
     entrypoint: ["/bin/bash", "-lc"]
     command: >
-      "kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic agent.requests --partitions 3 --replication-factor 1 &&
-       kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic agent.decisions --partitions 3 --replication-factor 1 &&
-       kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic agent.executions --partitions 3 --replication-factor 1 &&
-       kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic agent.evaluations --partitions 3 --replication-factor 1 &&
-       kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic agent.incidents --partitions 3 --replication-factor 1"
+      "/opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic agent.requests --partitions 3 --replication-factor 1 &&
+       /opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic agent.decisions --partitions 3 --replication-factor 1 &&
+       /opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic agent.executions --partitions 3 --replication-factor 1 &&
+       /opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic agent.evaluations --partitions 3 --replication-factor 1 &&
+       /opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic agent.incidents --partitions 3 --replication-factor 1"
     restart: "no"
 
   api:
@@ -71,3 +71,18 @@ services:
       - .env
     ports:
       - "8000:8000"
+
+  worker:
+    build: .
+    depends_on:
+      api:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    command: ["sh", "-c", "python -m app.workers.consumer"]

@@ -17,10 +17,16 @@ class PolicyEngine:
     def __init__(self, risk_threshold: float = 0.65):
         self.risk_threshold = risk_threshold
 
-    def evaluate(self, request: AgentRequest, prompt_flags: list[str]) -> PolicyDecision:
+    def evaluate(
+        self,
+        request: AgentRequest,
+        prompt_flags: list[str],
+        disabled_tools: list[str] | None = None,
+    ) -> PolicyDecision:
         risk_score = compute_risk_score(request, prompt_flags)
         context = RuleContext(request=request, prompt_flags=prompt_flags, risk_score=risk_score)
         flags: list[str] = []
+        disabled_tools = disabled_tools or []
 
         if context.prompt_flags:
             flags.append("prompt_injection_signals")
@@ -39,6 +45,9 @@ class PolicyEngine:
 
         if request.constraints.max_tool_calls > 12:
             flags.append("large_tool_budget")
+
+        for tool_name in sorted(set(request.allowed_tools).intersection(disabled_tools)):
+            flags.append(f"tool_circuit_breaker_open:{tool_name}")
 
         if risk_score >= self.risk_threshold:
             return PolicyDecision(

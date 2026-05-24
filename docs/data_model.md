@@ -16,7 +16,7 @@ Table：`agent_runs`
 | `task_type` | string | 任務類型 |
 | `prompt` | text | 任務 prompt |
 | `goal` | text | 任務目標 |
-| `status` | string | `denied`、`escalated`、`queued`、`completed` 等 |
+| `status` | string | `denied`、`escalated`、`queued`、`running`、`awaiting_approval`、`completed`、`failed` 等 |
 | `decision_reason` | text | policy decision reason |
 | `risk_score` | float | policy risk score |
 | `policy_flags` | JSON | 命中的 policy flags |
@@ -51,6 +51,8 @@ Table：`incidents`
 
 - `status=denied`：建立 `policy_denied` incident。
 - `status=escalated`：建立 `policy_escalated` incident。
+- `status=awaiting_approval`：建立 `approval_required` incident。
+- `status=failed`：建立 `worker_failed` incident。
 - evaluator verdict 為 `review`：建立 `eval_review_required` incident。
 
 ## Event Schemas
@@ -77,7 +79,7 @@ Table：`incidents`
 
 ### Hot Data
 
-近期 run state、approval state、circuit breaker 可放 Redis，TTL 依用途設定 5 分鐘到 24 小時。這部分尚未在本段實作。
+近期 run state、idempotency key、tool circuit breaker 目前已放 Redis，TTL 依用途設定 5 分鐘到 24 小時。Approval 的長期決策仍寫入 Postgres audit trail；後續版本會補完整 approval token TTL。
 
 ### Audit Data
 
@@ -85,7 +87,7 @@ policy decision、execution summary、evaluation summary、incident 已進 Postg
 
 ### Artifacts
 
-程式碼 diff、test report、tool transcript、模型輸出全文可能太大，不建議全部塞進 `agent_runs.result`。正式環境可加入 object storage，Postgres 只存 artifact URI 與 hash。
+程式碼 diff、test report、完整 tool output、模型輸出全文可能太大，不建議全部塞進 `agent_runs.result`。`v0.3.0` 只保存 bounded tool transcript 與 artifact refs；正式環境可加入 object storage，Postgres 只存 artifact URI 與 hash。
 
 ## 隱私與資料保護
 

@@ -30,10 +30,46 @@
     <pre>{{ run.request_payload|json_pretty }}</pre>
   </div>
   <div class="panel">
-    <h2>Evaluation</h2>
+    <h2>Evaluation / State</h2>
     <pre>{{ run.evaluation_summary|json_pretty }}</pre>
   </div>
 </section>
+
+<section class="detail-grid">
+  <div class="panel">
+    <h2>Event Timeline</h2>
+    <table>
+      <thead><tr><th>Event</th><th>Status</th><th>Time</th></tr></thead>
+      <tbody>
+      {% for event in run.evaluation_summary.get("event_timeline", []) %}
+        <tr><td>{{ event.get("event_type") }}</td><td>{{ event.get("status") }}</td><td>{{ event.get("ts", "") }}</td></tr>
+      {% else %}
+        <tr><td colspan="3" class="muted">No timeline events.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="panel">
+    <h2>Tool Transcript</h2>
+    <table>
+      <thead><tr><th>Tool</th><th>Status</th><th>Detail</th></tr></thead>
+      <tbody>
+      {% for entry in run.evaluation_summary.get("execution_event", {}).get("payload", {}).get("tool_transcript", []) %}
+        <tr><td>{{ entry.get("tool_name") }}</td><td>{{ entry.get("status") }}</td><td>{{ entry.get("detail") }}</td></tr>
+      {% else %}
+        <tr><td colspan="3" class="muted">No tool transcript.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% if run.evaluation_summary.get("approval") %}
+<section class="panel">
+  <h2>Approval</h2>
+  <pre>{{ run.evaluation_summary.get("approval")|json_pretty }}</pre>
+</section>
+{% endif %}
 
 <section class="panel">
   <h2>Execution Output</h2>

@@ -1,8 +1,8 @@
-# Observability v0.2
+# Observability v0.3
 
 本專案目前提供 Prometheus metrics 與 structured logging 的基礎。Dashboard 會從 Postgres audit trail 讀取 runs/incidents；Prometheus metrics 仍由 `/v1/metrics` 提供。
 
-目前 observability 基線：`v0.2.0`
+目前 observability 基線：`v0.3.0`
 
 ## Metrics Endpoint
 
@@ -31,7 +31,8 @@ GET /v1/metrics
 
 - `/dashboard`：summary、recent runs、recent incidents。
 - `/dashboard/runs`：run list 與 filters。
-- `/dashboard/runs/{run_id}`：request、policy、execution output、evaluation summary、incidents。
+- `/dashboard/runs/{run_id}`：request、policy、execution output、evaluation summary、event timeline、tool transcript、approval state、incidents。
+- `/dashboard/approvals`：awaiting approval queue 與審核操作。
 - `/dashboard/playground`：送出測試 request。
 
 ## Logs
@@ -78,7 +79,7 @@ Database：
 - audit persistence duration。
 - audit persistence failures。
 
-Worker（Phase 3 後）：
+Worker：
 
 - `agent_worker_jobs_total{status}`
 - `agent_worker_duration_seconds`
@@ -101,11 +102,12 @@ Safety：
 - prompt sanitation。
 - risk scoring。
 - policy evaluation。
-- dummy/tool execution。
+- bounded tool execution。
 - evaluation。
 - audit persistence。
 - dashboard query。
-- future：Kafka publish、worker consume。
+- Kafka publish。
+- worker consume。
 
 `trace_id` 應進入 response header、event envelope、logs 與 database。
 
@@ -119,14 +121,14 @@ Safety：
 | High escalation rate | escalation rate > 30% | false positive、使用者行為改變、攻擊 |
 | Incident spike | medium+ incidents 突增 | evaluator 偵測大量異常 |
 | Risk score drift | 平均風險快速上升 | 需求型態變化或攻擊 |
-| Future Kafka lag high | lag 持續增加 10 分鐘 | worker 掛掉、執行器太慢 |
+| Kafka lag high | lag 持續增加 10 分鐘 | worker 掛掉、執行器太慢 |
 
 ## Dashboard 建議
 
 目前 Dashboard 已涵蓋：
 
 - total runs。
-- completed / escalated / denied / queued。
+- completed / escalated / denied / queued / running / awaiting approval / failed。
 - average risk score。
 - recent runs。
 - recent incidents。
@@ -139,5 +141,5 @@ Safety：
 - top policy flags。
 - incident severity trend。
 - evaluator final score distribution。
-- review queue。
+- approval queue。
 - tenant/user filters。
