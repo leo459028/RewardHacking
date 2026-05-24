@@ -9,8 +9,12 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import get_settings
 from app.models.agent_run import AgentRun  # noqa: F401
+from app.models.approval_event import ApprovalEvent  # noqa: F401
 from app.models.base import Base
+from app.models.evaluation_result import EvaluationResultRecord  # noqa: F401
 from app.models.incident import Incident  # noqa: F401
+from app.models.tool_execution import ToolExecution  # noqa: F401
+from app.models.worker_attempt import WorkerAttempt  # noqa: F401
 
 config = context.config
 

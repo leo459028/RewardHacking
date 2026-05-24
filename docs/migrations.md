@@ -1,18 +1,19 @@
-# Migration 指南 v0.3
+# Migration 指南 v0.5
 
 本專案已導入 Alembic，初始 migration 會建立：
 
-目前 migration baseline：`v0.3.0`
+目前 migration baseline：`v0.5.0`
 
 - `agent_runs`
 - `incidents`
 
-`v0.3.0` 沒有新增資料表；queued state、approval state、event timeline、tool transcript 目前存於既有 `agent_runs.evaluation_summary` / `result` JSON 欄位，短期 run state 與 breaker 存 Redis。
+`v0.5.0` 在原本 `agent_runs`、`incidents` 之外，新增 worker、tool、approval 與 evaluation audit tables。
 
 Migration 檔案位於：
 
 ```text
 migrations/versions/202605190001_create_audit_tables.py
+migrations/versions/202605240001_add_v04_v05_audit_tables.py
 ```
 
 ## 常用指令
@@ -78,9 +79,6 @@ alembic upgrade head
 正式環境除了現有 models，可考慮新增：
 
 - `policy_decisions`
-- `evaluation_results`
-- `approval_requests`
-- `tool_executions`
 - `artifacts`
 - `tenants`
 - `users`

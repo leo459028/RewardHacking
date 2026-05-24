@@ -10,3 +10,5 @@ class EvaluationResult(BaseModel):
     final_score: float = Field(ge=0.0, le=1.0)
     verdict: str
     explanation: str
+    rubric: dict = Field(default_factory=dict)
+    judge_signal: dict = Field(default_factory=dict)

@@ -2,7 +2,7 @@
 
 本專案提供 Dockerfile 與 Docker Compose，適合本機開發、demo、CI smoke test。`v0.3.0` 已包含 API 與 worker 兩個服務。正式環境部署前仍需補上 auth、secrets、observability、完整 worker lifecycle 與安全控制。
 
-目前部署版本：`v0.3.0`
+目前部署版本：`v0.5.0`
 
 ## 本機 Docker Compose
 

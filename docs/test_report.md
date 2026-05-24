@@ -4,6 +4,40 @@
 
 請不要只填預期結果；如果某項驗證沒有執行，要清楚寫明原因。例如：純文件修改未啟動 Docker、Docker Desktop 尚未開啟、或本次沒有影響 Dashboard。
 
+## 2026-05-24 - v0.5 Execution Hardening 與 Observability
+
+- 版本：v0.5.0
+- 變更範圍：實作 worker retry/DLQ audit、approval TTL/event、tool execution audit、task-specific evaluator result、observability summary、Dashboard worker/observability 頁面，並同步 Roadmap、README 與相關文件。
+- 測試環境：本機 PowerShell、Python 3.11、Docker Desktop；worktree 分支 `codex/v0.4-v0.5-hardening-observability`。
+
+### 測試命令
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `python -m pytest -q` | 通過，20 passed。 |
+| `python -m ruff check app tests` | 通過，All checks passed。 |
+| `alembic upgrade head` | 第一次使用預設 `localhost:5432` 失敗，原因是該 Postgres 未提供本 worktree migration 連線；改用 `POSTGRES_DSN=postgresql+asyncpg://app:app@localhost:15432/app` 後通過。 |
+| `docker compose up -d --build` | 第一次因既有 `rewardhacking-*` 容器占用 `8000/5432/6379/9092` 失敗；改用 compose override ports `18080/15432/16379/19092` 後通過。 |
+
+### Dashboard 驗證
+
+- 驗證網址：`http://localhost:18080/dashboard/worker`、`http://localhost:18080/dashboard/observability`、`http://localhost:18080/dashboard/runs/{run_id}`、`http://localhost:18080/dashboard/approvals`
+- 實際結果：`/dashboard/worker` HTTP 200 且顯示 `Worker Operations`；`/dashboard/observability` HTTP 200 且顯示 `Observability Trends`；低風險 code_fix run 從 `queued` 變成 `completed`，`worker-attempts=1`、`tool-executions=2`、`evaluations=1`；destructive workflow run 進入 `awaiting_approval`，`expired=true` 可查，`request_changes` 會記錄 reviewer 與 reason。
+- 未執行原因：不適用，本次已執行 Dashboard 驗證。
+
+### Docker 驗證
+
+- 驗證命令：使用 compose override 啟動：API `18080`、Postgres `15432`、Redis `16379`、Kafka `19092`。
+- 實際結果：`docker compose ps` 顯示本 worktree 的 `api`、`worker`、`postgres`、`redis`、`kafka` 皆 Up；`postgres`、`redis`、`kafka` healthy；`GET /v1/healthz` 回 `{"status":"ok"}`；`GET /v1/readyz` 回 `{"status":"ready"}`；`GET /v1/observability/summary` 回傳 worker completed、approval、incident、evaluator 與 SLO summary。
+- 未執行原因：不適用，本次已執行 Docker 驗證。
+
+### 限制與已知問題
+
+- 因本機已有原專案 Docker stack 占用預設 ports，本次使用替代 host ports 驗證，容器內部服務名稱與 ports 維持原設計。
+- `BoundedToolExecutor` 目前仍不呼叫真實外部工具；sandbox、timeout、resource/cost limit 是可審計 policy contract，不是完整 OS sandbox。
+- LLM-as-judge 目前是 deterministic fake judge signal，預設 `used_for_hard_deny=false`。
+- Worker process 的 Prometheus metrics 位於 worker process 內；API `/v1/metrics` 可查 API-side metrics，Dashboard observability 使用 Postgres audit tables。
+
 ## 2026-05-24 - docs 文件總覽檔名調整
 
 - 版本：v0.3.0

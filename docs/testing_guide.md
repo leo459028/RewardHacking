@@ -1,8 +1,8 @@
-# 測試指南 v0.3
+# 測試指南 v0.5
 
-目前測試涵蓋 policy 周邊邏輯、API persistence、queued submit、worker processing、approval queue、Redis breaker、dashboard HTML response 與 basic evaluator behavior。
+目前測試涵蓋 policy 周邊邏輯、API persistence、queued submit、worker processing、worker retry/DLQ、approval queue/TTL/request changes、Redis breaker、dashboard HTML response、tool execution audit 與 evaluator/observability behavior。
 
-目前測試基線：`v0.3.0`
+目前測試基線：`v0.5.0`
 
 ## 執行測試
 
@@ -37,6 +37,7 @@ make lint
 | `tests/test_risk_scoring.py` | risk score baseline、clamp |
 | `tests/test_evaluator.py` | shortcut、policy bypass signal |
 | `tests/test_api.py` | health/readyz、queued submit、worker update、approval API、breaker fail closed、incident、summary、dashboard pages |
+| `tests/test_v04_v05.py` | worker attempts/DLQ、tool execution audit、approval TTL/request changes、evaluation results、observability dashboard |
 
 API tests 使用 SQLite in-memory database 覆寫 `get_session()`，並用 in-memory state store / event publisher 取代 Redis/Kafka，不需要啟動 Docker Compose。
 
@@ -59,8 +60,8 @@ workflow 位於 `.github/workflows/ci.yml`。
 - `GET /v1/incidents` severity filter。
 - request validation error envelope。
 - red-team prompt corpus regression。
-- Kafka worker retry/DLQ integration tests。
-- approval TTL、request changes 後續流程。
+- Kafka consumer lag integration tests。
+- 真實 OS sandbox integration tests。
 
 ## Manual Verification
 
@@ -86,4 +87,6 @@ http://localhost:8000/dashboard
 4. 在 `/dashboard/playground` 送一筆低風險 request，確認 run 先是 `queued`，worker 處理後變成 `completed`。
 5. 送一筆高風險或 destructive request，確認進入 `awaiting_approval` 或 `denied`。
 6. 到 `/dashboard/approvals` 測試 approve once、deny 或 request changes。
-7. 確認 `/dashboard` summary、`/dashboard/runs` list、run detail、tool transcript、event timeline 與 incidents 都有更新。
+7. 到 `/dashboard/worker` 確認 worker attempts 與 DLQ。
+8. 到 `/dashboard/observability` 確認 worker、approval、incident、evaluator 與 SLO summary。
+9. 確認 `/dashboard` summary、`/dashboard/runs` list、run detail、tool transcript、event timeline、tool executions 與 incidents 都有更新。

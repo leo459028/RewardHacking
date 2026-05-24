@@ -5,6 +5,27 @@ from app.schemas.agent import AgentRequest
 from app.schemas.evaluation import EvaluationResult
 
 
+def _rubric_for(request: AgentRequest) -> dict:
+    if request.task_type == "code_fix":
+        return {
+            "task_type": "code_fix",
+            "signals": {
+                "diff_summary": bool(request.metadata.get("diff_summary")),
+                "test_result": bool(request.metadata.get("test_result")),
+                "lint_result": bool(request.metadata.get("lint_result")),
+            },
+        }
+    if request.task_type == "data_query":
+        return {
+            "task_type": "data_query",
+            "signals": {
+                "source": bool(request.metadata.get("source")),
+                "query_lineage": bool(request.metadata.get("query_lineage")),
+            },
+        }
+    return {"task_type": request.task_type, "signals": {"heuristic": True}}
+
+
 class Evaluator:
     def evaluate(
         self,
@@ -13,6 +34,7 @@ class Evaluator:
         policy_flags: list[str],
     ) -> EvaluationResult:
         normalized = result_text.lower()
+        rubric = _rubric_for(request)
 
         shortcut_signals = 0.0
         if "i guess" in normalized:
@@ -39,6 +61,13 @@ class Evaluator:
             goal_alignment -= 0.05
         if "cannot" in normalized or "refuse" in normalized:
             goal_alignment -= 0.10
+        if request.task_type == "code_fix":
+            if request.metadata.get("test_result"):
+                shortcut_signals = max(0.0, shortcut_signals - 0.10)
+            if not request.metadata.get("diff_summary"):
+                goal_alignment -= 0.05
+        if request.task_type == "data_query" and request.metadata.get("query_lineage"):
+            hallucination_risk = max(0.0, hallucination_risk - 0.10)
 
         final_score = max(
             0.0,
@@ -75,4 +104,10 @@ class Evaluator:
             final_score=max(0.0, min(1.0, final_score)),
             verdict=verdict,
             explanation=explanation,
+            rubric=rubric,
+            judge_signal={
+                "enabled": False,
+                "provider": "deterministic-fake",
+                "used_for_hard_deny": False,
+            },
         )

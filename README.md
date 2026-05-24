@@ -6,9 +6,9 @@
 
 ## 專案版號
 
-目前版本：`v0.3.0`
+目前版本：`v0.5.0`
 
-`v0.3.0` 是 Guarded Async Execution MVP。這代表目前已經有 queue、worker、Redis run state、approval queue、bounded executor transcript 與 Dashboard 查詢入口，但還不是完整的 production sandbox 或 production safety platform。
+`v0.5.0` 是 V0.4 Execution Hardening 與 V0.5 Evaluator + Observability 的整合版。這代表目前已經有 queue、worker retry/DLQ、Redis run state、approval TTL/event、bounded executor transcript、tool execution audit、evaluation result 與 Dashboard 查詢入口，但還不是完整的 production sandbox、auth 或多租戶 production safety platform。
 
 ## 這個專案想解決什麼問題
 
@@ -36,7 +36,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 
 ## Roadmap 完成後的適用情境
 
-以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v0.3.0` 已全部完成。
+以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v0.5.0` 已全部完成。
 
 1. AI coding agent 在修改程式碼前，檢查是否跳過測試、繞過規則或做破壞性操作。
 2. 內部營運 agent 執行批次任務前，確認工具權限、任務風險與是否需要人工核准。
@@ -75,9 +75,9 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - audit trail 可以幫助追蹤問題，但不能替代資料治理與資安制度。
 - 如果 prompt、工具權限或資料權限設計不良，guardrail 也可能被繞過或誤判。
 
-## 目前 v0.3 做到哪裡
+## 目前 v0.5 做到哪裡
 
-`v0.3.0` 目前是可展示、可查詢、可審計的 guarded async execution MVP。
+`v0.5.0` 目前是可展示、可查詢、可審計的 guarded async execution hardening 版本。
 
 已完成：
 
@@ -90,6 +90,11 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - Destructive 或需要審核的任務會進入 `awaiting_approval`，不會執行工具。
 - Redis 已接入 run state、idempotency key 與 tool circuit breaker 的最小閉環。
 - Approval API 支援查詢 queue 與 `approve_once`、`deny`、`request_changes`。
+- Approval 會記錄 reviewer、reason、TTL/expired 狀態與 approval event。
+- Worker 會記錄 attempt、failure reason、retry_scheduled 與 DLQ。
+- Tool transcript 會落到 `tool_executions` audit table，包含 sandbox policy、resource/cost limit 與 artifact refs。
+- Evaluator 會保存 task-specific rubric、deterministic fake judge signal、final score 與 verdict。
+- Dashboard 新增 `/dashboard/worker` 與 `/dashboard/observability`，可查看 DLQ、worker attempts、incident/approval/evaluator/SLO summary。
 - 結果會寫進 Postgres audit trail。
 - Dashboard 可以查看 runs、incidents、risk score、policy flags、evaluation summary、event timeline、tool transcript 與 approval queue。
 - 已導入 Alembic migration。
@@ -99,12 +104,12 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 
 - 還沒有完整 OS sandbox、network/filesystem/process/secret 邊界。
 - 還沒有完整 human approval workflow，例如 reviewer 報表、TTL 與 request changes 後續流程。
-- 還沒有 worker retry/backoff、DLQ 與 consumer lag alert。
+- 還沒有 Kafka consumer lag alert 與完整 OpenTelemetry tracing。
 - 還沒有完整 rate limit、tenant quota 與 auth。
-- 還沒有 LLM-as-judge evaluator。
-- 還沒有完整 production observability、auth、tenant isolation。
+- LLM-as-judge 目前是可插拔 signal，預設使用 deterministic fake judge 且不作為唯一 hard deny。
+- 還沒有完整 production auth、tenant isolation、quota 與 retention governance。
 
-所以目前 `v0.3.0` 適合用來 demo guarded async execution、驗證 queue/worker/approval/safety state 的產品閉環，以及建立下一階段 hardening 基線；不建議直接當成完整 production 安全平台。
+所以目前 `v0.5.0` 適合用來 demo guarded async execution hardening、驗證 queue/worker retry/DLQ/approval/evaluator/observability 的產品閉環；不建議直接當成完整 production 安全平台。
 
 ## 快速啟動
 
@@ -171,8 +176,7 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
 
 如果你要繼續開發，建議先看 [Roadmap](docs/roadmap.md)。下一階段通常會優先補：
 
-- Worker retry/backoff 與 DLQ。
-- 完整 approval workflow，包括 TTL、reviewer、request changes 後續處理。
-- Tool ACL 外部化、resource/cost limit 與 sandbox 強化。
-- Evaluator task-specific rubrics 與 LLM-as-judge signal。
-- worker/incident observability、auth、tenant isolation 與 production governance。
+- Auth、tenant isolation、tenant/user quota 與 rate limit。
+- Data retention、backup/restore drill、secret rotation 與 rollback/release gate。
+- OpenTelemetry tracing、Kafka consumer lag alert 與跨 component trace id。
+- 真實 tool sandbox 與外部 artifact/object storage。
