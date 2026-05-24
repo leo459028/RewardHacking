@@ -2,6 +2,8 @@
 
 設定由 `app/core/config.py` 的 `Settings` 管理，使用 `pydantic-settings` 從 `.env` 讀取。範例檔案在 `.env.example`。
 
+`.env.example` 預設給「主機端開發」使用，也就是從 PowerShell 直接跑 `alembic`、`pytest` 或 `uvicorn` 時連到 `localhost`。Docker Compose 會在 `docker-compose.yml` 的 `api` 與 `worker` service 內明確覆蓋成 container network hostnames，避免主機端與容器端共用同一組 hostname 造成 migration 失敗。
+
 ## 環境變數
 
 | 變數 | 預設值 | 說明 |
@@ -24,20 +26,20 @@
 
 ## Docker Compose 設定
 
-`.env.example` 使用 container network 內的 hostnames：
-
-```env
-POSTGRES_DSN=postgresql+asyncpg://app:app@postgres:5432/app
-REDIS_URL=redis://redis:6379/0
-KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-```
-
-如果在 host 上直接執行 `uvicorn app.main:app --reload`，通常要改成：
+`.env.example` 使用 host 端可連線的 hostnames：
 
 ```env
 POSTGRES_DSN=postgresql+asyncpg://app:app@localhost:5432/app
 REDIS_URL=redis://localhost:6379/0
 KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+```
+
+Docker Compose 內的 `api` 與 `worker` 會覆蓋為 container network：
+
+```env
+POSTGRES_DSN=postgresql+asyncpg://app:app@postgres:5432/app
+REDIS_URL=redis://redis:6379/0
+KAFKA_BOOTSTRAP_SERVERS=kafka:9092
 ```
 
 注意：目前 `docker-compose.yml` 的 Kafka advertised listener 是 `PLAINTEXT://kafka:9092`，適合 container 之間互連。若要從 host 直接連 Kafka，需要額外調整 advertised listeners。

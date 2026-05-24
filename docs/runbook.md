@@ -59,7 +59,7 @@ docker compose logs -f worker
 docker compose logs api
 ```
 
-2. 確認 `.env` 存在且 `POSTGRES_DSN` 指向可連線的 Postgres。
+2. 確認 `.env` 存在且 `POSTGRES_DSN` 指向可連線的 Postgres；主機端使用 `localhost:5432`，Docker container 內由 `docker-compose.yml` 覆蓋成 `postgres:5432`。
 3. 確認 dependencies 已安裝：
 
 ```bash
@@ -101,13 +101,19 @@ docker compose ps postgres
 docker compose logs postgres
 ```
 
-2. 套用 migration：
+2. 套用 migration。若正在驗證 Docker stack，優先從 API container 執行：
+
+```bash
+docker compose exec -T api alembic upgrade head
+```
+
+主機端直接驗證 migration 時可執行：
 
 ```bash
 alembic upgrade head
 ```
 
-3. 確認 `.env` 在 Docker Compose 中使用 `postgres` hostname，在 host 直接跑時使用 `localhost`。
+3. 確認 `.env` 在 host 直接跑時使用 `localhost`；Docker Compose 內的 `api` / `worker` 會由 `docker-compose.yml` 覆蓋為 `postgres` hostname。
 
 ## 3. Submit 後 Dashboard 沒更新
 

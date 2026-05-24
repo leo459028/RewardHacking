@@ -24,6 +24,12 @@ migrations/versions/202605240001_add_v04_v05_audit_tables.py
 alembic upgrade head
 ```
 
+如果是在 Docker stack 內驗證，建議從 API container 執行，確保使用 container network hostnames：
+
+```bash
+docker compose exec -T api alembic upgrade head
+```
+
 查看目前版本：
 
 ```bash
@@ -45,6 +51,11 @@ alembic downgrade -1
 ## 設定來源
 
 `migrations/env.py` 會讀取 `app.core.config.get_settings()`，使用 `POSTGRES_DSN` 作為 migration 連線字串。
+
+目前設定分工：
+
+- 主機端 `.env` / `.env.example` 使用 `localhost:5432`，讓 `alembic upgrade head` 可以直接從 PowerShell 執行。
+- Docker Compose 的 `api` 與 `worker` service 會覆蓋成 `postgres:5432`，讓容器內服務透過 Docker network 連線。
 
 Dockerfile 會在啟動 API 前執行：
 

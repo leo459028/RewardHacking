@@ -28,6 +28,12 @@ http://localhost:8000/dashboard
 alembic upgrade head
 ```
 
+如果使用完整 Docker Compose stack，也可以在 API container 內確認 migration：
+
+```bash
+docker compose exec -T api alembic upgrade head
+```
+
 2. 啟動 API：
 
 ```bash
