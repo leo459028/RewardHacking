@@ -4,9 +4,9 @@
 
 ## 版本
 
-目前版本：`v0.3.0`
+目前版本：`v0.5.0`
 
-`v0.3.0` 對應 Guarded Async Execution MVP。此版本已完成 queued submit、Kafka request event、worker consumer、Redis run state / idempotency / circuit breaker、approval API、bounded executor transcript、內建 Dashboard approval queue、測試與 GitHub CI 基線。
+`v0.5.0` 對應 Guarded Async Execution Hardening + Evaluator Observability。此版本已完成 queued submit、Kafka request event、worker consumer、Redis run state / idempotency / circuit breaker、approval API、bounded executor transcript、worker retry/DLQ、approval TTL/event、tool execution audit、evaluation result、內建 Dashboard worker/observability 頁、測試與 GitHub CI 基線。
 
 ## 專案定位
 
@@ -84,8 +84,8 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
 - Prompt injection pattern detection。
 - Risk scoring。
 - Deterministic policy engine。
-- Bounded executor interface 與 tool transcript。
-- Heuristic evaluator。
+- Bounded executor interface、tool transcript 與 sandbox boundary policy。
+- Heuristic evaluator、task-specific rubric 與 deterministic fake judge signal。
 - Prometheus metrics。
 - Alembic migration。
 - Postgres audit trail。
@@ -100,9 +100,8 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
 
 預留但尚未完成：
 
-- Worker retry/backoff 與 DLQ。
-- 完整 human approval workflow，例如 TTL、reviewer 報表與 request changes 後續流程。
-- 真實 tool sandbox、resource/cost limit、artifact store。
+- 真實 tool sandbox 與 artifact store。
+- Kafka consumer lag alert。
 - Auth、tenant isolation 與 production observability。
 
 ## 閱讀順序建議

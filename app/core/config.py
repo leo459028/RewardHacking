@@ -23,6 +23,12 @@ class Settings(BaseSettings):
 
     default_max_tool_calls: int = 8
     default_risk_threshold: float = 0.65
+    worker_max_attempts: int = 3
+    worker_retry_backoff_seconds: int = 30
+    approval_ttl_seconds: int = 3600
+    worker_completion_latency_target_seconds: int = 300
+    incident_response_target_seconds: int = 900
+    llm_judge_enabled: bool = False
 
 
 @lru_cache(maxsize=1)

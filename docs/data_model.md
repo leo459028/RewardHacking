@@ -55,6 +55,30 @@ Table：`incidents`
 - `status=failed`：建立 `worker_failed` incident。
 - evaluator verdict 為 `review`：建立 `eval_review_required` incident。
 
+### `WorkerAttempt`
+
+Table：`worker_attempts`
+
+記錄 worker 每次處理 run 的 attempt number、status、failure reason、next retry time。`status=retry_scheduled` 表示還會重試，`status=dlq` 表示已超過重試上限。
+
+### `ToolExecution`
+
+Table：`tool_executions`
+
+記錄每個 tool action 的 tool name、status、detail、sandbox policy 與 artifact refs。`v0.5.0` 的 sandbox policy 是可審計契約，不代表已啟動真實 OS sandbox。
+
+### `ApprovalEvent`
+
+Table：`approval_events`
+
+記錄 approval pending、approve once、deny、request changes、reviewer、reason、expires_at 與 expired 狀態。
+
+### `EvaluationResultRecord`
+
+Table：`evaluation_results`
+
+記錄 evaluator final score、verdict、task-specific rubric、judge signal 與 explanation。LLM-as-judge 目前預設為 deterministic fake signal，且 `used_for_hard_deny=false`。
+
 ## Event Schemas
 
 所有 event 繼承 `BaseEvent`：
@@ -79,7 +103,7 @@ Table：`incidents`
 
 ### Hot Data
 
-近期 run state、idempotency key、tool circuit breaker 目前已放 Redis，TTL 依用途設定 5 分鐘到 24 小時。Approval 的長期決策仍寫入 Postgres audit trail；後續版本會補完整 approval token TTL。
+近期 run state、idempotency key、tool circuit breaker 目前已放 Redis，TTL 依用途設定 5 分鐘到 24 小時。Approval 的長期決策、TTL 與 reviewer event 會寫入 Postgres audit trail。
 
 ### Audit Data
 
@@ -87,7 +111,7 @@ policy decision、execution summary、evaluation summary、incident 已進 Postg
 
 ### Artifacts
 
-程式碼 diff、test report、完整 tool output、模型輸出全文可能太大，不建議全部塞進 `agent_runs.result`。`v0.3.0` 只保存 bounded tool transcript 與 artifact refs；正式環境可加入 object storage，Postgres 只存 artifact URI 與 hash。
+程式碼 diff、test report、完整 tool output、模型輸出全文可能太大，不建議全部塞進 `agent_runs.result`。`v0.5.0` 保存 bounded tool transcript、tool execution audit 與 artifact refs；正式環境可加入 object storage，Postgres 只存 artifact URI 與 hash。
 
 ## 隱私與資料保護
 

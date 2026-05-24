@@ -1,8 +1,8 @@
-# Observability v0.3
+# Observability v0.5
 
 本專案目前提供 Prometheus metrics 與 structured logging 的基礎。Dashboard 會從 Postgres audit trail 讀取 runs/incidents；Prometheus metrics 仍由 `/v1/metrics` 提供。
 
-目前 observability 基線：`v0.3.0`
+目前 observability 基線：`v0.5.0`
 
 ## Metrics Endpoint
 
@@ -17,6 +17,12 @@ GET /v1/metrics
 | `agent_requests_total` | Counter | `status` | 依 response status 統計 `/v1/agent/submit` 與 `/v1/agent/submit-with-details` |
 | `agent_policy_risk_score` | Histogram | 無 | policy risk score 分布 |
 | `agent_evaluation_final_score` | Histogram | 無 | detailed submit 的 evaluation final score 分布 |
+| `agent_policy_decisions_total` | Counter | `status` | policy decision 對應的 run status |
+| `agent_worker_jobs_total` | Counter | `status` | worker job 結果 |
+| `agent_worker_duration_seconds` | Histogram | 無 | worker job duration |
+| `agent_worker_retries_total` | Counter | 無 | worker retry count |
+| `agent_worker_dlq_total` | Counter | 無 | worker DLQ count |
+| `agent_evaluator_verdicts_total` | Counter | `verdict` | evaluator pass/review count |
 
 注意：`agent_evaluation_final_score` 目前只在 `/v1/agent/submit-with-details` 中更新；兩個 submit endpoint 都會更新 request count 與 policy risk score。
 
@@ -33,6 +39,8 @@ GET /v1/metrics
 - `/dashboard/runs`：run list 與 filters。
 - `/dashboard/runs/{run_id}`：request、policy、execution output、evaluation summary、event timeline、tool transcript、approval state、incidents。
 - `/dashboard/approvals`：awaiting approval queue 與審核操作。
+- `/dashboard/worker`：worker attempts、retry failure reason 與 DLQ。
+- `/dashboard/observability`：worker、incident、approval、evaluator 與 SLO summary。
 - `/dashboard/playground`：送出測試 request。
 
 ## Logs
@@ -81,10 +89,10 @@ Database：
 
 Worker：
 
-- `agent_worker_jobs_total{status}`
-- `agent_worker_duration_seconds`
-- `agent_worker_retries_total`
-- `agent_worker_dlq_total`
+- `agent_worker_jobs_total{status}`：已加入。
+- `agent_worker_duration_seconds`：已加入。
+- `agent_worker_retries_total`：已加入。
+- `agent_worker_dlq_total`：已加入。
 - Kafka consumer lag。
 
 Safety：
@@ -135,11 +143,16 @@ Safety：
 - run detail。
 - playground。
 
+目前已補：
+
+- worker/DLQ summary。
+- approval summary。
+- evaluator pass/review summary。
+- SLO target summary。
+
 後續可補：
 
-- time-series trend。
+- 真正 time-series trend。
 - top policy flags。
 - incident severity trend。
-- evaluator final score distribution。
-- approval queue。
 - tenant/user filters。

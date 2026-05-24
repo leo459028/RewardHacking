@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Observability Trends{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Observability Trends</h1>
+    <div class="muted">Worker, approval, incident, evaluator, and SLO summary.</div>
+  </div>
+</div>
+
+<section class="grid stats">
+  <div class="stat"><div class="stat-label">Worker Completed</div><div class="stat-value">{{ summary.worker.completed }}</div></div>
+  <div class="stat"><div class="stat-label">Worker DLQ</div><div class="stat-value">{{ summary.worker.dlq }}</div></div>
+  <div class="stat"><div class="stat-label">Incidents</div><div class="stat-value">{{ summary.incidents.total }}</div></div>
+  <div class="stat"><div class="stat-label">Approval Pending</div><div class="stat-value">{{ summary.approvals.pending }}</div></div>
+  <div class="stat"><div class="stat-label">Eval Pass</div><div class="stat-value">{{ summary.evaluator.pass }}</div></div>
+  <div class="stat"><div class="stat-label">Eval Review</div><div class="stat-value">{{ summary.evaluator.review }}</div></div>
+</section>
+
+<section class="panel">
+  <h2>SLO</h2>
+  <table>
+    <thead><tr><th>Signal</th><th>Target</th></tr></thead>
+    <tbody>
+      <tr><td>Worker completion latency</td><td>{{ summary.slo.worker_completion_latency_target_seconds }} seconds</td></tr>
+      <tr><td>Incident response</td><td>{{ summary.slo.incident_response_target_seconds }} seconds</td></tr>
+    </tbody>
+  </table>
+</section>
+{% endblock %}
