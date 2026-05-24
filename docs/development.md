@@ -58,6 +58,17 @@ Dashboard route 若使用 `request.form()` 解析 HTML form，runtime dependenci
 
 若新增或移除 runtime dependency，請同步更新 `requirements.txt` 與 `pyproject.toml`；Docker runtime 只會從 image 內的 dependencies 判斷，不會因本機環境已安裝而自動可用。
 
+## Tenant Governance 開發注意
+
+v0.6 的租戶治理路徑橫跨 schema、auth、quota、audit、API 與 Dashboard。新增或修改相關功能時，請同步檢查：
+
+1. `AgentRequest`、`AgentResponse`、`RunRecord` 與 SQLAlchemy model 是否仍包含必要的 `tenant_id`。
+2. `app/services/auth.py` 的 API key tenant mapping 與 `/v1` route dependency 是否符合預期。
+3. `app/services/quota.py` 與 `app/services/run_state.py` 的 Redis / in-memory quota 行為是否一致。
+4. `governance_events` 寫入、查詢 API 與 `/dashboard/governance` 是否能查到同一批資料。
+5. migration 是否包含 backfill 或 downgrade 策略。
+6. `tests/test_v06_governance.py`、API 文件、Dashboard 文件、設定文件與 `docs/test_report.md` 是否同步更新。
+
 ## 新增 Policy Rule
 
 建議流程：

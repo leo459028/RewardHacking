@@ -1,6 +1,6 @@
 # Redis Keys
 
-Redis 用於短期 state、cache、approval token、rate limit、circuit breaker 與 worker coordination。`v0.3.0` 起已接入最小 API/worker flow：run state、idempotency key 與 tool circuit breaker。rate limit、tenant quota 與完整 approval token TTL 仍在後續版本。
+Redis 用於短期 state、cache、approval token、rate limit、circuit breaker 與 worker coordination。`v0.3.0` 起已接入最小 API/worker flow：run state、idempotency key 與 tool circuit breaker。`v0.6.0` 已加入 tenant request quota 與 high-risk quota。
 
 ## Key 命名原則
 
@@ -17,7 +17,9 @@ Redis 用於短期 state、cache、approval token、rate limit、circuit breaker
 | `run:{run_id}:policy` | policy decision 快取 | 1 到 24 小時 |
 | `run:{run_id}:evaluation` | evaluation summary 快取 | 1 到 24 小時 |
 | `run:{run_id}:approval` | 人工審核 token 或狀態 | 15 分鐘到 2 小時 |
-| `tenant:{tenant_id}:quota` | 租戶 quota/rate limit | 依 quota window |
+| `tenant:{tenant_id}:quota:requests:{YYYYMMDDHHMM}` | 租戶每分鐘 request quota | 約 60 秒 |
+| `tenant:{tenant_id}:quota:high_risk:{YYYYMMDDHH}` | 租戶每小時 high-risk quota | 約 3600 秒 |
+| `tenant:{tenant_id}:quota` | 舊版或延伸設計用的租戶 quota/rate limit | 依 quota window |
 | `tenant:{tenant_id}:risk_window` | 近期風險統計 | 5 分鐘到 1 小時 |
 | `breaker:{tool_name}` | tool circuit breaker | 5 到 30 分鐘 |
 | `risk:{run_id}` | risk score 快取 | 1 到 24 小時 |
@@ -69,7 +71,7 @@ Policy engine 在評估時可查 Redis breaker，若 tool 被停用，直接 `es
 
 超過限制時，API 應回傳明確錯誤或 `escalate`，而不是靜默丟棄。
 
-目前 `v0.5.0` 尚未實作 rate limit；此段保留為 `v0.6+` 設計方向。
+目前 `v0.6.0` 已實作 submit path 的 tenant request quota 與 high-risk quota。request quota 超過時回 `429 tenant_request_quota_exceeded`；high-risk quota 超過時會 fail closed 進入 `awaiting_approval`，並寫入 `governance_events`。
 
 ## 運維注意事項
 

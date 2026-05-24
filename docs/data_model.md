@@ -12,6 +12,7 @@ Table：`agent_runs`
 | --- | --- | --- |
 | `id` | integer | primary key |
 | `run_id` | string | 對外追蹤用 UUID，唯一 |
+| `tenant_id` | string | run 所屬租戶，既有資料 migration 後預設為 `default` |
 | `user_id` | string | 使用者或租戶內使用者 |
 | `task_type` | string | 任務類型 |
 | `prompt` | text | 任務 prompt |
@@ -31,6 +32,7 @@ Table：`agent_runs`
 索引：
 
 - `run_id` unique index。
+- `tenant_id` index。
 - `user_id` index。
 - `status` index。
 
@@ -65,7 +67,7 @@ Table：`worker_attempts`
 
 Table：`tool_executions`
 
-記錄每個 tool action 的 tool name、status、detail、sandbox policy 與 artifact refs。`v0.5.0` 的 sandbox policy 是可審計契約，不代表已啟動真實 OS sandbox。
+記錄每個 tool action 的 tool name、status、detail、sandbox policy 與 artifact refs。目前 sandbox policy 是可審計契約，不代表已啟動真實 OS sandbox。
 
 ### `ApprovalEvent`
 
@@ -79,6 +81,27 @@ Table：`evaluation_results`
 
 記錄 evaluator final score、verdict、task-specific rubric、judge signal 與 explanation。LLM-as-judge 目前預設為 deterministic fake signal，且 `used_for_hard_deny=false`。
 
+### `GovernanceEvent`
+
+Table：`governance_events`
+
+記錄 v0.6 tenant governance 事件，例如 request quota exceeded 與 high-risk quota fail-closed。
+
+| 欄位 | 型別 | 說明 |
+| --- | --- | --- |
+| `id` | integer | primary key |
+| `tenant_id` | string | 事件所屬租戶 |
+| `user_id` | string | 觸發事件的租戶內使用者 |
+| `run_id` | string | 若事件已建立 run，保存對應 run id；request quota 直接阻擋時可為空字串 |
+| `event_type` | string | 例如 `request_quota_exceeded`、`high_risk_quota_exceeded` |
+| `decision` | string | 例如 `blocked`、`approval_required` |
+| `reason` | text | 人可讀原因 |
+| `limit_value` | integer | quota limit |
+| `used` | integer | 事件發生時已使用數量 |
+| `remaining` | integer | 剩餘 quota |
+| `details` | JSON | quota bucket 等補充資訊 |
+| `created_at` | timestamp | 建立時間 |
+
 ## Event Schemas
 
 所有 event 繼承 `BaseEvent`：
@@ -91,6 +114,8 @@ Table：`evaluation_results`
 | `event_type` | event 類型 |
 | `ts` | ISO timestamp |
 | `payload` | event-specific JSON |
+
+注意：目前 Kafka event envelope 本身未放 `tenant_id` 欄位；v0.6 的 tenant 資訊會放在 `payload.request.tenant_id`，並在 Postgres audit tables 中保存。
 
 目前 event types：
 
@@ -111,7 +136,7 @@ policy decision、execution summary、evaluation summary、incident 已進 Postg
 
 ### Artifacts
 
-程式碼 diff、test report、完整 tool output、模型輸出全文可能太大，不建議全部塞進 `agent_runs.result`。`v0.5.0` 保存 bounded tool transcript、tool execution audit 與 artifact refs；正式環境可加入 object storage，Postgres 只存 artifact URI 與 hash。
+程式碼 diff、test report、完整 tool output、模型輸出全文可能太大，不建議全部塞進 `agent_runs.result`。目前保存 bounded tool transcript、tool execution audit 與 artifact refs；正式環境可加入 object storage，Postgres 只存 artifact URI 與 hash。
 
 ## 隱私與資料保護
 

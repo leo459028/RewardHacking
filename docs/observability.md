@@ -1,8 +1,8 @@
-# Observability v0.5
+# Observability v0.6
 
-本專案目前提供 Prometheus metrics 與 structured logging 的基礎。Dashboard 會從 Postgres audit trail 讀取 runs/incidents；Prometheus metrics 仍由 `/v1/metrics` 提供。
+本專案目前提供 Prometheus metrics 與 structured logging 的基礎。Dashboard 會從 Postgres audit trail 讀取 runs/incidents/governance events；Prometheus metrics 仍由 `/v1/metrics` 提供。
 
-目前 observability 基線：`v0.5.0`
+目前 observability 基線：`v0.6.0`
 
 ## Metrics Endpoint
 
@@ -32,6 +32,11 @@ GET /v1/metrics
 
 - `agent_runs`
 - `incidents`
+- `worker_attempts`
+- `tool_executions`
+- `approval_events`
+- `evaluation_results`
+- `governance_events`
 
 主要畫面：
 
@@ -41,6 +46,7 @@ GET /v1/metrics
 - `/dashboard/approvals`：awaiting approval queue 與審核操作。
 - `/dashboard/worker`：worker attempts、retry failure reason 與 DLQ。
 - `/dashboard/observability`：worker、incident、approval、evaluator 與 SLO summary。
+- `/dashboard/governance`：tenant runs、average risk、quota limited count 與 governance events。
 - `/dashboard/playground`：送出測試 request。
 
 ## Logs
@@ -101,6 +107,8 @@ Safety：
 - deny rate。
 - evaluator review rate。
 - average risk score。
+- tenant quota limited count。
+- governance event count。
 
 ## Tracing
 
@@ -149,10 +157,11 @@ Safety：
 - approval summary。
 - evaluator pass/review summary。
 - SLO target summary。
+- tenant governance summary。
 
 後續可補：
 
 - 真正 time-series trend。
 - top policy flags。
 - incident severity trend。
-- tenant/user filters。
+- 更細的 tenant/user time-series filters。
