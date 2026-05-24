@@ -1,10 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Playground{% endblock %}
+{% block title %}Playground | 測試沙盒{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
     <h1>Playground</h1>
-    <div class="muted">送出測試任務，立即查看 policy decision 與 evaluation。</div>
+    <div class="title-note">測試沙盒</div>
+    <div class="muted">用表單送出測試 AgentRequest，觀察 policy decision、risk score 與 evaluation。</div>
   </div>
 </div>
 
@@ -51,7 +52,7 @@
 
 {% if submitted and result %}
 <section class="panel">
-  <h2>Result</h2>
+  <h2>Result <span class="heading-note">執行結果</span></h2>
   <p>
     <span class="status {{ result.response.status }}">{{ result.response.status }}</span>
     Risk {{ "%.3f"|format(result.response.risk_score) }}
