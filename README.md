@@ -6,11 +6,13 @@
 
 ## 專案版號
 
-目前版本：`v0.6.0`
+目前版本：`v0.7.0`
 
 `v0.5.0` 是 V0.4 Execution Hardening 與 V0.5 Evaluator + Observability 的整合版。該版本已經有 queue、worker retry/DLQ、Redis run state、approval TTL/event、bounded executor transcript、tool execution audit、evaluation result 與 Dashboard 查詢入口，但還不是完整的 production sandbox、auth 或多租戶 production safety platform。
 
 `v0.6.0` 在 v0.5 基礎上加入 Tenant Governance MVP：每筆 run 會保存 `tenant_id`，API 可用 `X-API-Key` 對應 tenant，Redis 會做 tenant request quota 與 high-risk quota 檢查，並新增 governance audit 與 `/dashboard/governance` 查詢入口。
+
+`v0.7.0` 將 Tenant Governance MVP 推進成 Tenant Governance Center：新增 DB-backed tenant 設定、API key hash 儲存、RBAC-lite role、tenant-level quota override 與 Governance Dashboard 的 tenant/API key 查詢區塊。`.env` 的 `API_KEYS` 仍保留為開發與 bootstrap fallback；正式治理資料以 `tenants` 與 `tenant_api_keys` 資料表為準。
 
 ## 這個專案想解決什麼問題
 
@@ -77,9 +79,9 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - audit trail 可以幫助追蹤問題，但不能替代資料治理與資安制度。
 - 如果 prompt、工具權限或資料權限設計不良，guardrail 也可能被繞過或誤判。
 
-## 目前 v0.6 做到哪裡
+## 目前 v0.7 做到哪裡
 
-`v0.6.0` 目前是可展示、可查詢、可審計的 guarded async execution + tenant governance MVP。
+`v0.7.0` 目前是可展示、可查詢、可審計的 guarded async execution + Tenant Governance Center。
 
 已完成：
 
@@ -102,6 +104,11 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - 已導入 Alembic migration。
 - 已有 API tests、service unit tests、dashboard HTML tests 與 GitHub CI。
 - 已有最小 API key auth、Dashboard Basic Auth、tenant quota 與 governance audit。
+- 可以透過 `/v1/tenants` 建立與查詢 tenant。
+- 可以透過 `/v1/tenants/{tenant_id}/api-keys` 建立 DB-managed API key；明文 key 只在建立時回傳一次，資料庫只保存 hash 與 prefix。
+- API key 支援 `viewer`、`operator`、`admin` 三種 RBAC-lite role；`viewer` 只能讀取，`operator` 可送出任務與處理操作，`admin` 可管理 tenant 與 API key。
+- Tenant 可設定 request quota 與 high-risk quota，會覆蓋全域 `.env` quota 預設。
+- Governance Dashboard 會顯示 tenant 設定與 API key 清單。
 
 尚未完成：
 
@@ -110,8 +117,9 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - 還沒有 Kafka consumer lag alert 與完整 OpenTelemetry tracing。
 - LLM-as-judge 目前是可插拔 signal，預設使用 deterministic fake judge 且不作為唯一 hard deny。
 - 還沒有完整 OAuth、RBAC、tenant 管理 UI、retention governance、backup/restore、secret rotation 或真實 OS sandbox。
+- 還沒有完整 OAuth/SSO、user/per-tool quota、retention governance、backup/restore、secret rotation 或真實 OS sandbox。
 
-所以目前 `v0.6.0` 適合用來 demo guarded async execution hardening 與 tenant governance MVP，驗證 queue/worker retry/DLQ/approval/evaluator/observability/governance 的產品閉環；不建議直接當成完整 production 安全平台。
+所以目前 `v0.7.0` 適合用來 demo guarded async execution hardening 與 tenant governance center，驗證 queue/worker retry/DLQ/approval/evaluator/observability/governance 的產品閉環；不建議直接當成完整 production 安全平台。
 
 ## 快速啟動
 
