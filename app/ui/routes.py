@@ -26,6 +26,8 @@ from app.services.audit_log import (
     list_governance_events,
     list_incidents,
     list_runs,
+    list_tenant_api_keys,
+    list_tenants,
     list_tool_executions,
     list_worker_attempts,
     observability_summary,
@@ -195,10 +197,14 @@ async def dashboard_governance(
     session: AsyncSession = Depends(get_session),
 ):
     runs = await list_runs(session, tenant_id=tenant_id or None, limit=100)
-    tenant_ids = sorted({run.tenant_id for run in await list_runs(session, limit=200)})
+    tenants = await list_tenants(session)
+    tenant_ids = [tenant.tenant_id for tenant in tenants]
+    if not tenant_ids:
+        tenant_ids = sorted({run.tenant_id for run in await list_runs(session, limit=200)})
     selected_tenant = tenant_id or (tenant_ids[0] if tenant_ids else "default")
     summary = await governance_summary(session, tenant_id=selected_tenant)
     events = await list_governance_events(session, tenant_id=tenant_id or None, limit=25)
+    api_keys = await list_tenant_api_keys(session, tenant_id=selected_tenant)
     return templates.TemplateResponse(
         request,
         "governance.html",
@@ -206,6 +212,8 @@ async def dashboard_governance(
             "summary": summary,
             "events": events,
             "runs": runs,
+            "tenants": tenants,
+            "api_keys": api_keys,
             "tenant_ids": tenant_ids,
             "tenant_id": tenant_id or "",
             "active": "governance",

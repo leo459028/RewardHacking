@@ -1,4 +1,4 @@
-# Roadmap v0.6
+# Roadmap v0.7
 
 本 roadmap 將專案從 prototype 推進到可逐步承擔 guardrail 職責的服務。`v0.3.0` 起不再把 Kafka、Redis、Tool Executor、Approval 視為互不相干的線性 phase，而是先建立一條可展示、可查詢、可審計的產品閉環，再把完整 hardening 與 production governance 放到後續版本。
 
@@ -10,8 +10,9 @@
 | `v0.3.0` | 已完成 | Guarded Async Execution MVP | 合併 Kafka、Redis、Approval、Executor Interface 的最小閉環。 |
 | `v0.4.0` | 已完成 | Execution Hardening | 補 worker retry/DLQ、approval TTL/event、tool execution audit、resource/cost limit 與 sandbox policy。 |
 | `v0.5.0` | 已完成 | Evaluator + Observability | 補 task-specific evaluator、deterministic judge signal、worker metrics、SLO 與 Dashboard 趨勢。 |
-| `v0.6.0` | 目前版本 | Tenant Governance MVP | 補 API key auth、Dashboard Basic Auth、tenant-aware audit、Redis quota 與 Governance Dashboard。 |
-| `v0.7+` | 規劃中 | Production Governance | 補完整 RBAC、tenant 管理 UI、backup/restore、retention、secret rotation。 |
+| `v0.6.0` | 已完成 | Tenant Governance MVP | 補 API key auth、Dashboard Basic Auth、tenant-aware audit、Redis quota 與 Governance Dashboard。 |
+| `v0.7.0` | 目前版本 | Tenant Governance Center | 補 DB-backed tenant 設定、API key hash 儲存、RBAC-lite、tenant quota override 與 Governance Dashboard 查詢區塊。 |
+| `v0.8+` | 規劃中 | Production Operations | 補 backup/restore、retention、secret rotation、release gate、OpenTelemetry 與 Kafka lag alert。 |
 
 ## Milestone：v0.2.0 / Phase 0-2 + Dashboard
 
@@ -135,6 +136,28 @@
 
 - production 變更有可靠 release gate。
 - 長期保存、權限、配額與事故回顧有明確治理方式。
+
+## Milestone：v0.7.0 / Tenant Governance Center
+
+目標：把 v0.6 的 tenant governance MVP 變成可以操作與審計的治理中心，先做 DB-backed tenant/API key 管理與 tenant-level quota，不在本版導入 OAuth/SSO 或 billing ledger。
+
+已完成項目：
+
+- 新增 `tenants` 與 `tenant_api_keys` 資料表。
+- API key 只保存 hash 與 prefix，明文 key 只在建立 API key 時回傳一次。
+- API key 支援 `viewer`、`operator`、`admin` 三種 RBAC-lite role。
+- 新增 tenant 管理 API：`GET/POST /v1/tenants`、`PATCH /v1/tenants/{tenant_id}`。
+- 新增 API key 管理 API：`GET/POST /v1/tenants/{tenant_id}/api-keys`、`POST /v1/tenants/{tenant_id}/api-keys/{key_id}/revoke`。
+- Tenant request quota 與 high-risk quota 可由 tenant 設定覆蓋全域 `.env` 預設。
+- Governance Dashboard 顯示 tenant 設定與 API key 清單。
+- tenant/key/quota 變更寫入 `governance_events`。
+
+本段不包含：
+
+- OAuth/SSO。
+- user quota、per-tool quota 或 billing/cost ledger。
+- retention purge、backup/restore drill、secret rotation 自動化。
+- 真實 OS sandbox。
 
 ## 優先順序
 

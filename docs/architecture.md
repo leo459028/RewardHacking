@@ -1,8 +1,8 @@
-# 架構文件 v0.6
+# 架構文件 v0.7
 
 本專案目前是 Agent Reward-Hacking Guardrail 的 guarded async execution hardening 版本。核心流程是 FastAPI API 接收 agent request、進行 prompt sanitation、risk scoring 與 policy decision；低風險任務寫入 Postgres audit trail、標記為 `queued`，並 publish Kafka request event；worker 重新讀取 run、重跑 policy、執行 bounded executor、evaluate 結果並寫回 audit trail。高風險或 destructive 任務會進入 `awaiting_approval`，由 Dashboard 或 API 進行審核。
 
-目前架構版本：`v0.6.0`
+目前架構版本：`v0.7.0`
 
 ## 目前架構
 
@@ -46,11 +46,13 @@ flowchart LR
 - Structured logging。
 - API key auth 與 Dashboard Basic Auth MVP。
 - Tenant-aware audit trail、Redis tenant quota 與 governance event 查詢。
+- DB-backed tenant 設定、API key hash 儲存、RBAC-lite 與 tenant quota override。
 
 目前尚未完整接入：
 
 - 真實 OS sandbox 執行器；目前是 sandbox boundary audit contract。
 - 完整 OAuth/RBAC、tenant 管理 UI、Kafka lag alert、OpenTelemetry 與 production SLO enforcement。
+- 完整 OAuth/SSO、Kafka lag alert、OpenTelemetry、retention/backup/secret rotation 與 production SLO enforcement。
 
 ## Request Flow
 
@@ -124,7 +126,7 @@ sequenceDiagram
 - `executor.py`：bounded executor interface，記錄 tool transcript 與 artifact refs。
 - `run_state.py`：Redis 與 in-memory state store，管理 run state、idempotency、breaker。
 - `auth.py`：解析 `X-API-Key` 與 tenant 對應，提供最小 auth context。
-- `quota.py`：使用 state store 做 tenant request quota 與 high-risk quota 檢查。
+- `quota.py`：使用 state store 做 tenant request quota 與 high-risk quota 檢查；v0.7 可由 tenant DB 設定覆蓋全域預設。
 - `events.py`：Kafka 與 in-memory event publisher。
 - `evaluator.py`：以 heuristic 評估 shortcut、hallucination、policy violation。
 - `audit_log.py`：封裝 run/incident persistence、approval decision 與 dashboard summary 查詢。
@@ -140,6 +142,8 @@ sequenceDiagram
 - `AgentRun`：保存 request、status、risk score、policy flags、execution output、evaluation summary。
 - `Incident`：保存 policy/evaluation/approval/worker 產生的事件。
 - `GovernanceEvent`：保存 quota hit 與 high-risk quota fail-closed 等治理事件。
+- `Tenant`：保存 tenant 名稱、狀態與 tenant-level quota。
+- `TenantApiKey`：保存 API key hash、prefix、role、status 與撤銷狀態。
 
 ### `app/workers`
 
@@ -169,6 +173,12 @@ sequenceDiagram
 - `GET /v1/governance/events`
 - `GET /v1/governance/summary`
 - `GET /v1/dashboard/summary`
+- `GET /v1/tenants`
+- `POST /v1/tenants`
+- `PATCH /v1/tenants/{tenant_id}`
+- `GET /v1/tenants/{tenant_id}/api-keys`
+- `POST /v1/tenants/{tenant_id}/api-keys`
+- `POST /v1/tenants/{tenant_id}/api-keys/{key_id}/revoke`
 
 ## Production Extension Points
 

@@ -114,3 +114,52 @@ class GovernanceSummaryResponse(BaseModel):
     quota_limited: int
     average_risk_score: float
     recent_events: list[GovernanceEventRecord] = Field(default_factory=list)
+
+
+class TenantCreateRequest(BaseModel):
+    tenant_id: str = Field(min_length=1, max_length=128)
+    display_name: str = Field(min_length=1, max_length=128)
+    request_limit_per_minute: int | None = Field(default=None, ge=0)
+    high_risk_limit_per_hour: int | None = Field(default=None, ge=0)
+
+
+class TenantUpdateRequest(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=128)
+    status: str | None = None
+    request_limit_per_minute: int | None = Field(default=None, ge=0)
+    high_risk_limit_per_hour: int | None = Field(default=None, ge=0)
+
+
+class TenantRecord(BaseModel):
+    tenant_id: str
+    display_name: str
+    status: str
+    request_limit_per_minute: int
+    high_risk_limit_per_hour: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ApiKeyCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    role: str
+
+
+class ApiKeyRecord(BaseModel):
+    key_id: str
+    tenant_id: str
+    name: str
+    key_prefix: str
+    role: str
+    status: str
+    revoked: bool
+    created_at: datetime
+    revoked_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class ApiKeyCreateResponse(ApiKeyRecord):
+    plaintext_key: str
