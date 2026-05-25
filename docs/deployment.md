@@ -1,8 +1,8 @@
-# 部署文件 v0.6
+# 部署文件 v0.7
 
-本專案提供 Dockerfile 與 Docker Compose，適合本機開發、demo、CI smoke test。`v0.6.0` 已包含 API、worker、tenant-aware audit、最小 API key auth、Dashboard Basic Auth、Redis tenant quota 與 Governance Dashboard。正式環境部署前仍需補上完整 OAuth/RBAC、secret 管理、production observability、完整 worker lifecycle 與安全控制。
+本專案提供 Dockerfile 與 Docker Compose，適合本機開發、demo、CI smoke test。`v0.7.0` 已包含 API、worker、tenant-aware audit、DB-backed API key、RBAC-lite、Dashboard Basic Auth、Redis tenant quota 與 Governance Dashboard。正式環境部署前仍需補上完整 OAuth/SSO、secret 管理、production observability、完整 worker lifecycle 與安全控制。
 
-目前部署版本：`v0.6.0`
+目前部署版本：`v0.7.0`
 
 ## 本機 Docker Compose
 
@@ -24,7 +24,7 @@ Dockerfile 會在 API 啟動前執行：
 alembic upgrade head
 ```
 
-Compose 會在 `api` 與 `worker` service 內覆蓋 Postgres、Redis、Kafka 的 container network hostnames；因此 `.env.example` 可以保留 host 端 `localhost` 設定，方便直接執行本機 migration 或 API。v0.6 新增的 `AUTH_ENABLED`、`API_KEYS`、`DASHBOARD_AUTH_ENABLED`、`QUOTA_ENABLED`、`TENANT_REQUEST_LIMIT_PER_MINUTE` 與 `TENANT_HIGH_RISK_LIMIT_PER_HOUR` 也由同一份環境設定管理。
+Compose 會在 `api` 與 `worker` service 內覆蓋 Postgres、Redis、Kafka 的 container network hostnames；因此 `.env.example` 可以保留 host 端 `localhost` 設定，方便直接執行本機 migration 或 API。`AUTH_ENABLED`、`API_KEYS`、`DASHBOARD_AUTH_ENABLED`、`QUOTA_ENABLED`、`TENANT_REQUEST_LIMIT_PER_MINUTE` 與 `TENANT_HIGH_RISK_LIMIT_PER_HOUR` 也由同一份環境設定管理。v0.7 的 tenant 與 DB-managed API key 會保存在 Postgres。
 
 3. 檢查服務：
 
@@ -101,8 +101,8 @@ Dockerfile 使用 `python:3.12-slim`：
 
 - 使用 managed Postgres，並設定 backup/restore drill。
 - 將 Redis/Kafka 改成 managed service 或高可用叢集，並納入 readiness。
-- 設定 TLS、完整 OAuth/RBAC 或反向代理 auth、network policy。
-- Dashboard Basic Auth 可作為 MVP 防護；正式環境建議接入 SSO/RBAC 與更細的權限控管。
+- 設定 TLS、完整 OAuth/SSO 或反向代理 auth、network policy。
+- Dashboard Basic Auth 與 RBAC-lite 可作為 MVP 防護；正式環境建議接入 SSO/RBAC 與更細的權限控管。
 - 在正式環境拆分 API 與 worker deployment，分開設定 replica、資源限制與 autoscaling。
 - 建立 Prometheus scrape config 與 alert rules。
 - 建立 log aggregation。

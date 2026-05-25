@@ -13,6 +13,7 @@ from app.models.agent_run import AgentRun
 from app.models.evaluation_result import EvaluationResultRecord
 from app.models.governance_event import GovernanceEvent
 from app.models.incident import Incident
+from app.models.tenant import Tenant, TenantApiKey
 from app.models.tool_execution import ToolExecution
 from app.models.worker_attempt import WorkerAttempt
 from app.schemas.agent import AgentRequest
@@ -376,6 +377,128 @@ async def governance_summary(
         average_risk_score=round(float(average_risk_score), 3),
         recent_events=await list_governance_events(session, tenant_id=tenant_id, limit=10),
     )
+
+
+async def create_tenant(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    display_name: str,
+    request_limit_per_minute: int,
+    high_risk_limit_per_hour: int,
+) -> Tenant:
+    existing = await get_tenant(session, tenant_id)
+    if existing is not None:
+        return existing
+    tenant = Tenant(
+        tenant_id=tenant_id,
+        display_name=display_name,
+        status="active",
+        request_limit_per_minute=request_limit_per_minute,
+        high_risk_limit_per_hour=high_risk_limit_per_hour,
+    )
+    session.add(tenant)
+    await session.commit()
+    await session.refresh(tenant)
+    return tenant
+
+
+async def update_tenant(
+    session: AsyncSession,
+    tenant: Tenant,
+    *,
+    display_name: str | None = None,
+    status: str | None = None,
+    request_limit_per_minute: int | None = None,
+    high_risk_limit_per_hour: int | None = None,
+) -> Tenant:
+    if display_name is not None:
+        tenant.display_name = display_name
+    if status is not None:
+        tenant.status = status
+    if request_limit_per_minute is not None:
+        tenant.request_limit_per_minute = request_limit_per_minute
+    if high_risk_limit_per_hour is not None:
+        tenant.high_risk_limit_per_hour = high_risk_limit_per_hour
+    await session.commit()
+    await session.refresh(tenant)
+    return tenant
+
+
+async def get_tenant(session: AsyncSession, tenant_id: str) -> Tenant | None:
+    return await session.scalar(select(Tenant).where(Tenant.tenant_id == tenant_id))
+
+
+async def list_tenants(session: AsyncSession, *, limit: int = 100) -> list[Tenant]:
+    stmt = select(Tenant).order_by(Tenant.created_at.asc()).limit(limit)
+    return list((await session.scalars(stmt)).all())
+
+
+async def create_tenant_api_key(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    key_id: str,
+    name: str,
+    key_prefix: str,
+    key_hash: str,
+    role: str,
+) -> TenantApiKey:
+    api_key = TenantApiKey(
+        tenant_id=tenant_id,
+        key_id=key_id,
+        name=name,
+        key_prefix=key_prefix,
+        key_hash=key_hash,
+        role=role,
+        status="active",
+        revoked=False,
+    )
+    session.add(api_key)
+    await session.commit()
+    await session.refresh(api_key)
+    return api_key
+
+
+async def list_tenant_api_keys(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    limit: int = 100,
+) -> list[TenantApiKey]:
+    stmt = (
+        select(TenantApiKey)
+        .where(TenantApiKey.tenant_id == tenant_id)
+        .order_by(TenantApiKey.created_at.desc())
+        .limit(limit)
+    )
+    return list((await session.scalars(stmt)).all())
+
+
+async def get_tenant_api_key(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    key_id: str,
+) -> TenantApiKey | None:
+    return await session.scalar(
+        select(TenantApiKey).where(
+            TenantApiKey.tenant_id == tenant_id,
+            TenantApiKey.key_id == key_id,
+        )
+    )
+
+
+async def revoke_tenant_api_key(
+    session: AsyncSession,
+    api_key: TenantApiKey,
+) -> TenantApiKey:
+    api_key.status = "revoked"
+    api_key.revoked = True
+    api_key.revoked_at = datetime.now(timezone.utc)
+    await session.commit()
+    await session.refresh(api_key)
+    return api_key
 
 
 async def persist_orchestration_result(
