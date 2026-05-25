@@ -1,8 +1,8 @@
-# API 文件 v0.6
+# API 文件 v0.7
 
 API 由 FastAPI 提供，所有 JSON API route 都掛在 `/v1` prefix 下。啟動後可透過 OpenAPI UI 查看互動式文件：
 
-目前 API 版本：`v0.6.0`
+目前 API 版本：`v0.7.0`
 
 - `http://localhost:8000/docs`
 - `http://localhost:8000/redoc`
@@ -30,6 +30,12 @@ API 由 FastAPI 提供，所有 JSON API route 都掛在 `/v1` prefix 下。啟�
 | `GET` | `/v1/governance/events` | 查詢 tenant governance events，支援 `tenant_id` 與 `event_type` |
 | `GET` | `/v1/governance/summary` | 查詢單一 tenant 的 run、risk 與 quota limited 摘要 |
 | `GET` | `/v1/dashboard/summary` | Dashboard summary API |
+| `GET` | `/v1/tenants` | 查詢 tenant 設定 |
+| `POST` | `/v1/tenants` | 建立 tenant，需 `admin` role |
+| `PATCH` | `/v1/tenants/{tenant_id}` | 更新 tenant 狀態與 quota，需 `admin` role |
+| `GET` | `/v1/tenants/{tenant_id}/api-keys` | 查詢 tenant API keys，需 `admin` role |
+| `POST` | `/v1/tenants/{tenant_id}/api-keys` | 建立 DB-managed API key，需 `admin` role |
+| `POST` | `/v1/tenants/{tenant_id}/api-keys/{key_id}/revoke` | 撤銷 DB-managed API key，需 `admin` role |
 
 Dashboard UI 另提供：
 
@@ -44,7 +50,7 @@ Dashboard UI 另提供：
 
 ## Auth 與 Tenant
 
-`v0.6.0` 新增最小 API key auth。當 `AUTH_ENABLED=false` 時，API 保持本機 demo 行為；若 request 沒有帶 `tenant_id`，會使用 `default`。當 `AUTH_ENABLED=true` 時，下列 API 需要 `X-API-Key`：
+`v0.7.0` 延續 v0.6 的 API key auth，並新增 DB-backed API key 與 RBAC-lite。當 `AUTH_ENABLED=false` 時，API 保持本機 demo 行為；若 request 沒有帶 `tenant_id`，會使用 `default`。當 `AUTH_ENABLED=true` 時，tenant、run、incident、approval、evaluation、governance 等 JSON API 需要 `X-API-Key`。
 
 - `POST /v1/agent/submit`
 - `POST /v1/agent/submit-with-details`
@@ -59,14 +65,22 @@ Dashboard UI 另提供：
 
 目前 `healthz`、`readyz`、`metrics`、run subresource 查詢、`/v1/worker/dlq`、`/v1/observability/summary` 與 `/v1/dashboard/summary` 維持 demo 可直接讀取；正式環境需要在反向代理或後續版本補齊完整 auth coverage。
 
-`API_KEYS` 格式為逗號分隔的 `key:tenant_id`，例如：
+`API_KEYS` 保留為開發與 bootstrap fallback，格式為逗號分隔的 `key:tenant_id` 或 `key:tenant_id:role`，例如：
 
 ```env
 AUTH_ENABLED=true
-API_KEYS=demo-key:default,tenant-a-key:tenant-a
+API_KEYS=admin-key:default:admin,tenant-a-key:tenant-a:operator
 ```
 
-若 body 內的 `tenant_id` 與 API key 對應 tenant 不一致，API 會回 `403 tenant_mismatch`。缺少或錯誤 key 會回 `401 auth_required` 或 `401 invalid_api_key`。
+正式治理建議改用 DB-managed API key：透過 `POST /v1/tenants/{tenant_id}/api-keys` 建立 key，回應會提供一次性的 `plaintext_key`；資料庫只保存 hash、prefix、role 與狀態。
+
+若 body 或 query 內的 `tenant_id` 與 API key 對應 tenant 不一致，API 會回 `403 tenant_mismatch`。缺少或錯誤 key 會回 `401 auth_required` 或 `401 invalid_api_key`。`viewer` role 送出任務會回 `403 insufficient_role`；tenant 停用或不存在會回 `403 tenant_inactive`。
+
+RBAC-lite role：
+
+- `viewer`：可讀取本 tenant 的查詢 API。
+- `operator`：可送出 agent request 與執行一般操作。
+- `admin`：可管理 tenant、API key 與 quota。
 
 ## Health / Readiness
 

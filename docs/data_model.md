@@ -102,6 +102,43 @@ Table：`governance_events`
 | `details` | JSON | quota bucket 等補充資訊 |
 | `created_at` | timestamp | 建立時間 |
 
+### `Tenant`
+
+Table：`tenants`
+
+記錄 v0.7 Tenant Governance Center 的 tenant 設定。`tenant_id` 仍是各 audit table 的邏輯關聯鍵；本版不新增 foreign key，避免和既有 demo/backfill 資料產生部署耦合。
+
+| 欄位 | 型別 | 說明 |
+| --- | --- | --- |
+| `id` | integer | primary key |
+| `tenant_id` | string | tenant 識別，唯一 |
+| `display_name` | string | Dashboard 顯示名稱 |
+| `status` | string | `active` 或後續管理狀態；停用 tenant 的 DB-managed key 會被拒絕 |
+| `request_limit_per_minute` | integer | tenant-level request quota |
+| `high_risk_limit_per_hour` | integer | tenant-level high-risk quota |
+| `created_at` | timestamp | 建立時間 |
+| `updated_at` | timestamp | 更新時間 |
+
+### `TenantApiKey`
+
+Table：`tenant_api_keys`
+
+記錄 DB-managed API key。明文 key 只在建立時回傳一次；資料庫只保存 hash 與 prefix。
+
+| 欄位 | 型別 | 說明 |
+| --- | --- | --- |
+| `id` | integer | primary key |
+| `key_id` | string | 對外管理用 key id |
+| `tenant_id` | string | key 所屬 tenant |
+| `name` | string | key 顯示名稱 |
+| `key_prefix` | string | Dashboard 顯示用 prefix |
+| `key_hash` | string | SHA-256 hash，唯一 |
+| `role` | string | `viewer`、`operator` 或 `admin` |
+| `status` | string | `active` 或 `revoked` |
+| `revoked` | boolean | 是否已撤銷 |
+| `created_at` | timestamp | 建立時間 |
+| `revoked_at` | timestamp | 撤銷時間 |
+
 ## Event Schemas
 
 所有 event 繼承 `BaseEvent`：
@@ -115,7 +152,7 @@ Table：`governance_events`
 | `ts` | ISO timestamp |
 | `payload` | event-specific JSON |
 
-注意：目前 Kafka event envelope 本身未放 `tenant_id` 欄位；v0.6 的 tenant 資訊會放在 `payload.request.tenant_id`，並在 Postgres audit tables 中保存。
+注意：目前 Kafka event envelope 本身未放 `tenant_id` 欄位；tenant 資訊會放在 `payload.request.tenant_id`，並在 Postgres audit tables 中保存。
 
 目前 event types：
 

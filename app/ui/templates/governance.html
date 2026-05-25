@@ -35,6 +35,48 @@
 </section>
 
 <section class="panel">
+  <h2>Tenants <span class="heading-note">租戶設定</span></h2>
+  <table>
+    <thead><tr><th>Tenant</th><th>Name</th><th>Status</th><th>Request / Min</th><th>High Risk / Hour</th><th>Created</th></tr></thead>
+    <tbody>
+    {% for tenant in tenants %}
+      <tr>
+        <td>{{ tenant.tenant_id }}</td>
+        <td>{{ tenant.display_name }}</td>
+        <td><span class="status {{ tenant.status }}">{{ tenant.status }}</span></td>
+        <td>{{ tenant.request_limit_per_minute }}</td>
+        <td>{{ tenant.high_risk_limit_per_hour }}</td>
+        <td>{{ tenant.created_at }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">No tenants found.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>API Keys <span class="heading-note">API 金鑰</span></h2>
+  <table>
+    <thead><tr><th>Key</th><th>Name</th><th>Role</th><th>Status</th><th>Created</th><th>Revoked</th></tr></thead>
+    <tbody>
+    {% for api_key in api_keys %}
+      <tr>
+        <td>{{ api_key.key_prefix }}...</td>
+        <td>{{ api_key.name }}</td>
+        <td>{{ api_key.role }}</td>
+        <td><span class="status {{ api_key.status }}">{{ api_key.status }}</span></td>
+        <td>{{ api_key.created_at }}</td>
+        <td>{{ api_key.revoked_at or "" }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">No API keys found for selected tenant.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
   <h2>Recent Governance Events <span class="heading-note">近期治理事件</span></h2>
   <table>
     <thead><tr><th>Tenant</th><th>User</th><th>Event</th><th>Decision</th><th>Used</th><th>Reason</th><th>Created</th></tr></thead>
