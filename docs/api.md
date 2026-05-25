@@ -1,8 +1,8 @@
-# API 文件 v0.7
+# API 文件 v0.8
 
 API 由 FastAPI 提供，所有 JSON API route 都掛在 `/v1` prefix 下。啟動後可透過 OpenAPI UI 查看互動式文件：
 
-目前 API 版本：`v0.7.0`
+目前 API 版本：`v0.8.0`
 
 - `http://localhost:8000/docs`
 - `http://localhost:8000/redoc`
@@ -36,6 +36,12 @@ API 由 FastAPI 提供，所有 JSON API route 都掛在 `/v1` prefix 下。啟�
 | `GET` | `/v1/tenants/{tenant_id}/api-keys` | 查詢 tenant API keys，需 `admin` role |
 | `POST` | `/v1/tenants/{tenant_id}/api-keys` | 建立 DB-managed API key，需 `admin` role |
 | `POST` | `/v1/tenants/{tenant_id}/api-keys/{key_id}/revoke` | 撤銷 DB-managed API key，需 `admin` role |
+| `GET` | `/v1/operations/readiness` | 查詢 release readiness 檢查結果 |
+| `POST` | `/v1/operations/evidence` | 建立營運證據，需 `admin` role |
+| `GET` | `/v1/operations/evidence` | 查詢營運證據 |
+| `POST` | `/v1/operations/release-gates` | 建立 release gate snapshot，需 `admin` role |
+| `GET` | `/v1/operations/release-gates` | 查詢 release gate snapshot |
+| `GET` | `/v1/operations/release-gates/{gate_id}` | 查詢單一 release gate 與檢查項 |
 
 Dashboard UI 另提供：
 
@@ -46,11 +52,12 @@ Dashboard UI 另提供：
 - `/dashboard/worker`
 - `/dashboard/observability`
 - `/dashboard/governance`
+- `/dashboard/operations`
 - `/dashboard/playground`
 
 ## Auth 與 Tenant
 
-`v0.7.0` 延續 v0.6 的 API key auth，並新增 DB-backed API key 與 RBAC-lite。當 `AUTH_ENABLED=false` 時，API 保持本機 demo 行為；若 request 沒有帶 `tenant_id`，會使用 `default`。當 `AUTH_ENABLED=true` 時，tenant、run、incident、approval、evaluation、governance 等 JSON API 需要 `X-API-Key`。
+`v0.8.0` 延續 v0.7 的 API key auth、DB-backed API key 與 RBAC-lite。當 `AUTH_ENABLED=false` 時，API 保持本機 demo 行為；若 request 沒有帶 `tenant_id`，會使用 `default`。當 `AUTH_ENABLED=true` 時，tenant、run、incident、approval、evaluation、governance 與 operations 等主要 JSON API 需要 `X-API-Key`。
 
 - `POST /v1/agent/submit`
 - `POST /v1/agent/submit-with-details`
@@ -62,6 +69,18 @@ Dashboard UI 另提供：
 - `GET /v1/evaluations`
 - `GET /v1/governance/events`
 - `GET /v1/governance/summary`
+- `GET /v1/tenants`
+- `POST /v1/tenants`
+- `PATCH /v1/tenants/{tenant_id}`
+- `GET /v1/tenants/{tenant_id}/api-keys`
+- `POST /v1/tenants/{tenant_id}/api-keys`
+- `POST /v1/tenants/{tenant_id}/api-keys/{key_id}/revoke`
+- `GET /v1/operations/readiness`
+- `GET /v1/operations/evidence`
+- `POST /v1/operations/evidence`
+- `POST /v1/operations/release-gates`
+- `GET /v1/operations/release-gates`
+- `GET /v1/operations/release-gates/{gate_id}`
 
 目前 `healthz`、`readyz`、`metrics`、run subresource 查詢、`/v1/worker/dlq`、`/v1/observability/summary` 與 `/v1/dashboard/summary` 維持 demo 可直接讀取；正式環境需要在反向代理或後續版本補齊完整 auth coverage。
 
@@ -78,9 +97,9 @@ API_KEYS=admin-key:default:admin,tenant-a-key:tenant-a:operator
 
 RBAC-lite role：
 
-- `viewer`：可讀取本 tenant 的查詢 API。
-- `operator`：可送出 agent request 與執行一般操作。
-- `admin`：可管理 tenant、API key 與 quota。
+- `viewer`：可讀取本 tenant 的查詢 API，也可讀取 Operations readiness/evidence/release gate。
+- `operator`：可送出 agent request，並可讀取治理與 Operations 查詢資料。
+- `admin`：可管理 tenant、API key、quota，並可建立 Operations evidence 與 release gate snapshot。
 
 ## Health / Readiness
 
@@ -91,6 +110,10 @@ RBAC-lite role：
   "status": "ok"
 }
 ```
+
+## Trace ID
+
+`v0.8.0` 會接受 `X-Trace-Id` request header；若未提供，API 會產生一個 `trace_...` 值。所有 response 都會回傳 `X-Trace-Id`。Agent submit 時，trace id 會寫入 `request_payload.metadata.trace_id`，並跟著 Kafka request payload 傳給 worker。
 
 `GET /v1/readyz` 會執行 Postgres `SELECT 1`。
 
@@ -166,6 +189,8 @@ RBAC-lite role：
 | `risk_score` | `0.0` 到 `1.0` |
 | `policy_flags` | 命中的 policy flags |
 
+目前 request path 中，低風險 `allow` 會先回 `queued`，由 worker 後續更新為 `completed` 或 `awaiting_approval`。Policy `escalate` 目前對外會呈現為 `awaiting_approval`；`accepted` 與 `escalated` 保留在 schema 中作為歷史/相容狀態值。
+
 ## Audit 查詢 API
 
 `GET /v1/runs` 支援 query params：
@@ -226,6 +251,41 @@ RBAC-lite role：
 `GET /v1/evaluations?task_type=code_fix&verdict=pass&tenant_id=default` 回傳 evaluator final score、task rubric、judge signal 與 explanation。LLM-as-judge 目前預設為 deterministic fake signal，`used_for_hard_deny=false`。
 
 `GET /v1/observability/summary` 回傳 worker completed/retry/DLQ、incident count、approval count、evaluator verdict count 與 SLO target。
+
+## Operations / Release Gate API
+
+`GET /v1/operations/readiness` 回傳整體 `status`、summary 與 checks。主要 checks 包含 audit retention 設定、stale queued runs、worker DLQ、high/critical incidents、expired approvals、tenant API keys、backup/restore evidence、secret rotation evidence，以及 `APP_ENV=prod` 時是否仍使用 `API_KEYS` bootstrap fallback。
+
+`GET /v1/operations/evidence` 可用 `evidence_type` query param 篩選，例如：
+
+```text
+GET /v1/operations/evidence?evidence_type=backup_restore_drill
+```
+
+建立營運證據：
+
+```json
+{
+  "evidence_type": "backup_restore_drill",
+  "status": "pass",
+  "summary": "Docker restore drill completed.",
+  "reference_url": "docs/test_report.md#v08",
+  "metadata": {
+    "database": "postgres"
+  }
+}
+```
+
+建立 release gate snapshot：
+
+```json
+{
+  "release_version": "v0.8.0",
+  "created_by": "release-manager"
+}
+```
+
+注意：Operations API 保存的是 readiness 與人工營運證據，不會自動執行真實 backup/restore、secret rotation、retention purge 或 OpenTelemetry tracing。
 
 ## 範例：低風險請求
 
@@ -302,4 +362,4 @@ GET /v1/governance/events?tenant_id=default&event_type=request_quota_exceeded
 GET /v1/governance/summary?tenant_id=default
 ```
 
-正式環境建議後續補上 request id / trace id response header、Kafka consumer lag alert 與 OpenTelemetry tracing。
+正式環境建議後續補上 Kafka consumer lag alert、完整 OpenTelemetry tracing 與自動化 backup/restore drill。

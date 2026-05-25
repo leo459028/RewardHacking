@@ -1,4 +1,4 @@
-# Roadmap v0.7
+# Roadmap v0.8
 
 本 roadmap 將專案從 prototype 推進到可逐步承擔 guardrail 職責的服務。`v0.3.0` 起不再把 Kafka、Redis、Tool Executor、Approval 視為互不相干的線性 phase，而是先建立一條可展示、可查詢、可審計的產品閉環，再把完整 hardening 與 production governance 放到後續版本。
 
@@ -11,8 +11,9 @@
 | `v0.4.0` | 已完成 | Execution Hardening | 補 worker retry/DLQ、approval TTL/event、tool execution audit、resource/cost limit 與 sandbox policy。 |
 | `v0.5.0` | 已完成 | Evaluator + Observability | 補 task-specific evaluator、deterministic judge signal、worker metrics、SLO 與 Dashboard 趨勢。 |
 | `v0.6.0` | 已完成 | Tenant Governance MVP | 補 API key auth、Dashboard Basic Auth、tenant-aware audit、Redis quota 與 Governance Dashboard。 |
-| `v0.7.0` | 目前版本 | Tenant Governance Center | 補 DB-backed tenant 設定、API key hash 儲存、RBAC-lite、tenant quota override 與 Governance Dashboard 查詢區塊。 |
-| `v0.8+` | 規劃中 | Production Operations | 補 backup/restore、retention、secret rotation、release gate、OpenTelemetry 與 Kafka lag alert。 |
+| `v0.7.0` | 已完成 | Tenant Governance Center | 補 DB-backed tenant 設定、API key hash 儲存、RBAC-lite、tenant quota override 與 Governance Dashboard 查詢區塊。 |
+| `v0.8.0` | 目前版本 | Production Operations Gate | 補 Operations Dashboard、operations evidence、release readiness、release gate snapshot 與 `X-Trace-Id` 基線。 |
+| `v0.9+` | 規劃中 | Production Operations Automation | 補真實 backup/restore automation、retention purge、secret rotation automation、完整 OpenTelemetry 與 Kafka lag alert。 |
 
 ## Milestone：v0.2.0 / Phase 0-2 + Dashboard
 
@@ -158,6 +159,26 @@
 - user quota、per-tool quota 或 billing/cost ledger。
 - retention purge、backup/restore drill、secret rotation 自動化。
 - 真實 OS sandbox。
+
+## Milestone：v0.8.0 / Production Operations Gate
+
+目標：把 v0.7 的可審計治理中心往 production readiness 推進，但先做可查詢、可保存、可驗證的營運閘門，不在本版宣稱已自動完成真實備份還原或完整 OpenTelemetry。
+
+已完成項目：
+
+- 新增 `/dashboard/operations`，可查看 release readiness、operations evidence 與 release gate snapshot。
+- 新增 Operations API：`/v1/operations/readiness`、`/v1/operations/evidence`、`/v1/operations/release-gates`。
+- 新增 `operations_evidence`、`release_gate_runs`、`release_gate_items` audit tables。
+- Release gate checks 涵蓋 audit retention 設定、stale queued runs、worker DLQ、high/critical incidents、expired approvals、tenant API keys、backup/restore evidence、secret rotation evidence 與 production bootstrap key 檢查。
+- `X-Trace-Id` 會進 response header；submit flow 會把 trace id 保存到 request metadata 與 Kafka request payload。
+
+本段不包含：
+
+- 自動執行 `pg_dump` / restore drill。
+- 自動 secret rotation。
+- 自動 retention purge。
+- 完整 OpenTelemetry SDK。
+- 真實 Kafka broker consumer lag alert。
 
 ## 優先順序
 

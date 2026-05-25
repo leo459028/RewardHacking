@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Operations | 營運中心{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Operations</h1>
+    <div class="title-note">營運中心</div>
+    <div class="muted">檢視 release readiness、營運證據與 release gate snapshot。</div>
+  </div>
+</div>
+
+<section class="grid stats">
+  <div class="stat">
+    <div class="stat-label">Readiness</div>
+    <div class="stat-value">{{ readiness.status }}</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Checks</div>
+    <div class="stat-value">{{ readiness.checks|length }}</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Evidence</div>
+    <div class="stat-value">{{ evidence|length }}</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Release Gate</div>
+    <div class="stat-value">{{ gates|length }}</div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Readiness Checks <span class="heading-note">上線前檢查</span></h2>
+  <p class="muted">{{ readiness.summary }}</p>
+  <table>
+    <thead><tr><th>Status</th><th>Check</th><th>Detail</th></tr></thead>
+    <tbody>
+      {% for check in readiness.checks %}
+      <tr>
+        <td><span class="status {{ check.status }}">{{ check.status }}</span></td>
+        <td>{{ check.title }}<br><span class="muted">{{ check.check_key }}</span></td>
+        <td>{{ check.detail }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Add Operations Evidence <span class="heading-note">新增營運證據</span></h2>
+  <form method="post" action="/dashboard/operations/evidence" class="form-grid">
+    <label>Type
+      <select name="evidence_type">
+        <option value="backup_restore_drill">backup_restore_drill</option>
+        <option value="secret_rotation">secret_rotation</option>
+        <option value="retention_review">retention_review</option>
+      </select>
+    </label>
+    <label>Status
+      <select name="status">
+        <option value="pass">pass</option>
+        <option value="warn">warn</option>
+        <option value="fail">fail</option>
+      </select>
+    </label>
+    <label>Reference
+      <input name="reference_url" placeholder="docs/test_report.md">
+    </label>
+    <label>&nbsp;
+      <button class="button" type="submit">Save Evidence</button>
+    </label>
+    <label style="grid-column: 1 / -1;">Summary
+      <textarea name="summary" required></textarea>
+    </label>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Evidence <span class="heading-note">營運證據</span></h2>
+  <table>
+    <thead><tr><th>Type</th><th>Status</th><th>Summary</th><th>Created</th></tr></thead>
+    <tbody>
+      {% for item in evidence %}
+      <tr>
+        <td>{{ item.evidence_type }}</td>
+        <td><span class="status {{ item.status }}">{{ item.status }}</span></td>
+        <td>{{ item.summary }}<br><span class="muted">{{ item.reference_url }}</span></td>
+        <td>{{ item.created_at }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="muted">No operations evidence yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Create Release Gate <span class="heading-note">建立上線閘門快照</span></h2>
+  <form method="post" action="/dashboard/operations/release-gates" class="form-grid">
+    <label>Release Version
+      <input name="release_version" value="v0.8.0">
+    </label>
+    <label>Created By
+      <input name="created_by" value="dashboard">
+    </label>
+    <label>&nbsp;
+      <button class="button" type="submit">Create Release Gate Snapshot</button>
+    </label>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Release Gates <span class="heading-note">上線閘門紀錄</span></h2>
+  <table>
+    <thead><tr><th>Gate</th><th>Status</th><th>Summary</th><th>Checks</th></tr></thead>
+    <tbody>
+      {% for gate in gates %}
+      <tr>
+        <td>{{ gate.gate_id }}<br><span class="muted">{{ gate.release_version }}</span></td>
+        <td><span class="status {{ gate.status }}">{{ gate.status }}</span></td>
+        <td>{{ gate.summary }}<br><span class="muted">{{ gate.created_at }}</span></td>
+        <td>
+          {% for item in gate_items.get(gate.gate_id, []) %}
+          <span class="flag">{{ item.check_key }}: {{ item.status }}</span>
+          {% endfor %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="muted">No release gate snapshots yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

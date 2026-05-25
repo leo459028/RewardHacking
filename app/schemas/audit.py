@@ -163,3 +163,65 @@ class ApiKeyRecord(BaseModel):
 
 class ApiKeyCreateResponse(ApiKeyRecord):
     plaintext_key: str
+
+
+class OperationsEvidenceCreateRequest(BaseModel):
+    evidence_type: str = Field(min_length=1, max_length=64)
+    status: str
+    summary: str = Field(min_length=1)
+    reference_url: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class OperationsEvidenceRecord(BaseModel):
+    evidence_type: str
+    status: str
+    summary: str
+    reference_url: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_by: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class OperationsCheckRecord(BaseModel):
+    check_key: str
+    status: str
+    title: str
+    detail: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class OperationsReadinessResponse(BaseModel):
+    status: str
+    summary: str
+    checks: list[OperationsCheckRecord] = Field(default_factory=list)
+
+
+class ReleaseGateCreateRequest(BaseModel):
+    release_version: str = Field(min_length=1, max_length=64)
+    created_by: str = Field(default="operator", min_length=1, max_length=128)
+
+
+class ReleaseGateItemRecord(BaseModel):
+    check_key: str
+    status: str
+    title: str
+    detail: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {"from_attributes": True}
+
+
+class ReleaseGateRecord(BaseModel):
+    gate_id: str
+    release_version: str
+    status: str
+    summary: str
+    created_by: str
+    trace_id: str
+    created_at: datetime
+    items: list[ReleaseGateItemRecord] = Field(default_factory=list)
+
+    model_config = {"from_attributes": True}

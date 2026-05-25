@@ -69,6 +69,17 @@ v0.6 的租戶治理路徑橫跨 schema、auth、quota、audit、API 與 Dashboa
 5. migration 是否包含 backfill 或 downgrade 策略。
 6. `tests/test_v06_governance.py`、API 文件、Dashboard 文件、設定文件與 `docs/test_report.md` 是否同步更新。
 
+## Operations Gate 開發注意
+
+v0.8 的 Operations Gate 橫跨 API、Dashboard、schema、model、migration 與營運文件。新增或修改 release readiness、evidence 或 gate 行為時，請同步檢查：
+
+1. `app/services/operations.py` 的 readiness check 是否有明確 `check_key`、`status`、`detail` 與 metadata。
+2. `app/schemas/audit.py`、`app/models/operations.py` 與 migration 是否維持欄位同步。
+3. `/v1/operations/readiness`、`/v1/operations/evidence`、`/v1/operations/release-gates` 與 `/dashboard/operations` 是否看到同一批資料。
+4. Auth 行為是否符合 RBAC-lite：viewer/operator/admin 可讀，只有 admin 可建立 evidence 與 release gate。
+5. `X-Trace-Id` 是否仍會回到 response header，submit flow 是否保存到 `request_payload.metadata.trace_id`。
+6. `tests/test_v08_operations_gate.py`、API 文件、Dashboard 文件、Runbook、Migration 文件與 `docs/test_report.md` 是否同步更新。
+
 ## 新增 Policy Rule
 
 建議流程：

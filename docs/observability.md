@@ -1,8 +1,8 @@
-# Observability v0.6
+# Observability v0.8
 
 本專案目前提供 Prometheus metrics 與 structured logging 的基礎。Dashboard 會從 Postgres audit trail 讀取 runs/incidents/governance events；Prometheus metrics 仍由 `/v1/metrics` 提供。
 
-目前 observability 基線：`v0.6.0`
+目前 observability 基線：`v0.8.0`
 
 ## Metrics Endpoint
 
@@ -37,6 +37,9 @@ GET /v1/metrics
 - `approval_events`
 - `evaluation_results`
 - `governance_events`
+- `operations_evidence`
+- `release_gate_runs`
+- `release_gate_items`
 
 主要畫面：
 
@@ -47,6 +50,7 @@ GET /v1/metrics
 - `/dashboard/worker`：worker attempts、retry failure reason 與 DLQ。
 - `/dashboard/observability`：worker、incident、approval、evaluator 與 SLO summary。
 - `/dashboard/governance`：tenant runs、average risk、quota limited count 與 governance events。
+- `/dashboard/operations`：release readiness、operations evidence 與 release gate snapshot。
 - `/dashboard/playground`：送出測試 request。
 
 ## Logs
@@ -112,7 +116,7 @@ Safety：
 
 ## Tracing
 
-建議導入 OpenTelemetry，trace span 可切成：
+`v0.8.0` 已加入 `X-Trace-Id` 基線：API 會沿用 request header 或產生 trace id，並回傳 response header；submit flow 會把 trace id 放入 request metadata 與 Kafka event payload。後續仍建議導入 OpenTelemetry，trace span 可切成：
 
 - API request。
 - prompt sanitation。
@@ -158,6 +162,7 @@ Safety：
 - evaluator pass/review summary。
 - SLO target summary。
 - tenant governance summary。
+- operations readiness 與 release gate snapshot。
 
 後續可補：
 
@@ -165,3 +170,6 @@ Safety：
 - top policy flags。
 - incident severity trend。
 - 更細的 tenant/user time-series filters。
+- 真正的 OpenTelemetry span 與 Kafka consumer lag alert。
+
+補充：`app/observability/metrics.py` 目前已定義 `agent_incidents_total{severity,code}`，但 request path 尚未 increment 這個 counter；incident 趨勢仍以 Postgres audit tables 與 Dashboard summary 為準。
