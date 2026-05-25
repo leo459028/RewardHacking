@@ -72,14 +72,16 @@ Score 會 clamp 在 `0.0` 到 `1.0`。
 - large tool budget。
 - prompt injection signals。
 
-### Tenant Governance MVP
+### Tenant Governance Center
 
-`v0.6.0` 已加入最小租戶治理防護：
+`v0.7.0` 已加入可操作的租戶治理防護：
 
-- API key auth：`AUTH_ENABLED=true` 時，`X-API-Key` 會對應到 `API_KEYS` 中設定的 tenant。
+- API key auth：`AUTH_ENABLED=true` 時，`X-API-Key` 可來自 `.env` bootstrap fallback 或 DB-managed `tenant_api_keys`。
+- API key storage：DB-managed key 只保存 SHA-256 hash 與 prefix，明文 key 只在建立時回傳一次。
+- RBAC-lite：`viewer` 可讀、`operator` 可 submit/操作、`admin` 可管理 tenant 與 key。
 - Tenant isolation：submit body 或 query 的 `tenant_id` 與 API key tenant 不一致時回 `403 tenant_mismatch`。
 - Dashboard Basic Auth：`DASHBOARD_AUTH_ENABLED=true` 時保護 Dashboard。
-- Tenant quota：request quota 超過時回 `429 tenant_request_quota_exceeded`；high-risk quota 超過時 fail closed 進入 `awaiting_approval`。
+- Tenant quota：可用 DB tenant 設定覆蓋 `.env` 全域預設；request quota 超過時回 `429 tenant_request_quota_exceeded`，high-risk quota 超過時 fail closed 進入 `awaiting_approval`。
 - Governance audit：quota 事件會寫入 `governance_events`，可從 `/v1/governance/events` 與 `/dashboard/governance` 查詢。
 
 ### Evaluator
@@ -128,7 +130,7 @@ agent 不能只靠自己的輸出宣稱安全。結果必須經 evaluator 或人
 正式環境必做：
 
 - 完整 AuthN/AuthZ，例如 OAuth、SSO、RBAC 或反向代理 auth。
-- 完整 Tenant isolation 與 tenant 管理 UI；v0.6 僅提供 API key tenant mapping MVP。
+- 完整 OAuth/SSO 與更細 RBAC；v0.7 已有 DB-backed tenant/API key 與 RBAC-lite，但仍不是企業 IAM。
 - Tool ACL。
 - Sandboxed executor。
 - Secret redaction。

@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from prometheus_client import generate_latest
 from sqlalchemy import text
@@ -16,6 +18,9 @@ from app.observability.metrics import (
 )
 from app.schemas.agent import AgentRequest, AgentResponse
 from app.schemas.audit import (
+    ApiKeyCreateRequest,
+    ApiKeyCreateResponse,
+    ApiKeyRecord,
     ApprovalDecisionRequest,
     DashboardSummaryResponse,
     EvaluationRecord,
@@ -23,14 +28,28 @@ from app.schemas.audit import (
     GovernanceSummaryResponse,
     IncidentRecord,
     RunRecord,
+    TenantCreateRequest,
+    TenantRecord,
+    TenantUpdateRequest,
     ToolExecutionRecord,
     WorkerAttemptRecord,
 )
 from app.services.events import EventPublisher
-from app.services.auth import AuthContext, auth_error, get_auth_context
+from app.services.auth import (
+    AuthContext,
+    auth_error,
+    generate_api_key,
+    get_auth_context,
+    hash_api_key,
+    require_role,
+)
 from app.services.audit_log import (
     apply_approval_decision,
+    create_tenant,
+    create_tenant_api_key,
     dashboard_summary,
+    get_tenant,
+    get_tenant_api_key,
     get_run,
     governance_summary,
     incidents_for_run,
@@ -39,11 +58,15 @@ from app.services.audit_log import (
     list_governance_events,
     list_incidents,
     list_runs,
+    list_tenant_api_keys,
+    list_tenants,
     list_tool_executions,
     list_worker_attempts,
     observability_summary,
     persist_governance_event,
     persist_orchestration_result,
+    revoke_tenant_api_key,
+    update_tenant,
 )
 from app.services.orchestrator import AgentOrchestrator
 from app.services.quota import check_high_risk_quota, check_request_quota
@@ -78,6 +101,16 @@ def _quota_response(code: str, message: str) -> JSONResponse:
     )
 
 
+async def _tenant_quota_limits(
+    session: AsyncSession,
+    tenant_id: str,
+) -> tuple[int | None, int | None]:
+    tenant = await get_tenant(session, tenant_id)
+    if tenant is None:
+        return None, None
+    return tenant.request_limit_per_minute, tenant.high_risk_limit_per_hour
+
+
 @router.get("/healthz")
 async def healthz():
     return {"status": "ok"}
@@ -94,6 +127,152 @@ async def metrics():
     return Response(generate_latest(), media_type="text/plain; version=0.0.4")
 
 
+@router.get("/tenants", response_model=list[TenantRecord])
+async def get_tenants(
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    if auth_context.enabled and auth_context.role != "admin":
+        tenant = await get_tenant(session, auth_context.tenant_id or "default")
+        return [tenant] if tenant is not None else []
+    return await list_tenants(session)
+
+
+@router.post("/tenants", response_model=TenantRecord)
+async def post_tenant(
+    payload: TenantCreateRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin")
+    settings = get_settings()
+    tenant = await create_tenant(
+        session,
+        tenant_id=payload.tenant_id,
+        display_name=payload.display_name,
+        request_limit_per_minute=(
+            payload.request_limit_per_minute
+            if payload.request_limit_per_minute is not None
+            else settings.tenant_request_limit_per_minute
+        ),
+        high_risk_limit_per_hour=(
+            payload.high_risk_limit_per_hour
+            if payload.high_risk_limit_per_hour is not None
+            else settings.tenant_high_risk_limit_per_hour
+        ),
+    )
+    await persist_governance_event(
+        session,
+        tenant_id=tenant.tenant_id,
+        event_type="tenant.created",
+        decision="created",
+        reason=f"Tenant {tenant.tenant_id} created.",
+        limit_value=tenant.request_limit_per_minute,
+        details={"display_name": tenant.display_name, "actor_key_id": auth_context.key_id},
+    )
+    return tenant
+
+
+@router.patch("/tenants/{tenant_id}", response_model=TenantRecord)
+async def patch_tenant(
+    tenant_id: str,
+    payload: TenantUpdateRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin")
+    tenant = await get_tenant(session, tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    tenant = await update_tenant(
+        session,
+        tenant,
+        display_name=payload.display_name,
+        status=payload.status,
+        request_limit_per_minute=payload.request_limit_per_minute,
+        high_risk_limit_per_hour=payload.high_risk_limit_per_hour,
+    )
+    await persist_governance_event(
+        session,
+        tenant_id=tenant.tenant_id,
+        event_type="tenant.updated",
+        decision="updated",
+        reason=f"Tenant {tenant.tenant_id} updated.",
+        limit_value=tenant.request_limit_per_minute,
+        details={"status": tenant.status, "actor_key_id": auth_context.key_id},
+    )
+    return tenant
+
+
+@router.get("/tenants/{tenant_id}/api-keys", response_model=list[ApiKeyRecord])
+async def get_tenant_api_keys(
+    tenant_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin")
+    return await list_tenant_api_keys(session, tenant_id=tenant_id)
+
+
+@router.post("/tenants/{tenant_id}/api-keys", response_model=ApiKeyCreateResponse)
+async def post_tenant_api_key(
+    tenant_id: str,
+    payload: ApiKeyCreateRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin")
+    if payload.role not in {"viewer", "operator", "admin"}:
+        raise auth_error(422, "invalid_role", "Role must be viewer, operator, or admin.")
+    tenant = await get_tenant(session, tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    plaintext_key = generate_api_key()
+    api_key = await create_tenant_api_key(
+        session,
+        tenant_id=tenant.tenant_id,
+        key_id=f"key_{uuid.uuid4().hex[:12]}",
+        name=payload.name,
+        key_prefix=plaintext_key[:8],
+        key_hash=hash_api_key(plaintext_key),
+        role=payload.role,
+    )
+    await persist_governance_event(
+        session,
+        tenant_id=tenant.tenant_id,
+        event_type="api_key.created",
+        decision="created",
+        reason=f"API key {api_key.key_id} created.",
+        details={"role": api_key.role, "actor_key_id": auth_context.key_id},
+    )
+    key_payload = ApiKeyRecord.model_validate(api_key).model_dump()
+    return ApiKeyCreateResponse(**key_payload, plaintext_key=plaintext_key)
+
+
+@router.post("/tenants/{tenant_id}/api-keys/{key_id}/revoke", response_model=ApiKeyRecord)
+async def post_revoke_tenant_api_key(
+    tenant_id: str,
+    key_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin")
+    api_key = await get_tenant_api_key(session, tenant_id=tenant_id, key_id=key_id)
+    if api_key is None:
+        raise HTTPException(status_code=404, detail="API key not found.")
+    api_key = await revoke_tenant_api_key(session, api_key)
+    await persist_governance_event(
+        session,
+        tenant_id=tenant_id,
+        event_type="api_key.revoked",
+        decision="revoked",
+        reason=f"API key {key_id} revoked.",
+        details={"actor_key_id": auth_context.key_id},
+    )
+    return api_key
+
+
 @router.post("/agent/submit", response_model=AgentResponse)
 async def submit_agent_request(
     agent_request: AgentRequest,
@@ -103,13 +282,19 @@ async def submit_agent_request(
     state_store: RunStateStore = Depends(get_state_store),
     event_publisher: EventPublisher = Depends(get_event_publisher),
 ):
+    require_role(auth_context, "operator", "admin")
     agent_request = _request_with_tenant(agent_request, auth_context)
     settings = get_settings()
+    request_limit, high_risk_limit = await _tenant_quota_limits(
+        session,
+        agent_request.tenant_id or "default",
+    )
     if settings.quota_enabled:
         quota = await check_request_quota(
             state_store,
             settings=settings,
             tenant_id=agent_request.tenant_id or "default",
+            limit=request_limit,
         )
         if not quota.allowed:
             await persist_governance_event(
@@ -136,6 +321,7 @@ async def submit_agent_request(
             settings=settings,
             request=agent_request,
             risk_score=result.response.risk_score,
+            limit=high_risk_limit,
         )
         if high_risk_quota is not None and not high_risk_quota.allowed:
             result.response.status = "awaiting_approval"
@@ -192,13 +378,19 @@ async def submit_agent_request_with_details(
     state_store: RunStateStore = Depends(get_state_store),
     event_publisher: EventPublisher = Depends(get_event_publisher),
 ):
+    require_role(auth_context, "operator", "admin")
     agent_request = _request_with_tenant(agent_request, auth_context)
     settings = get_settings()
+    request_limit, high_risk_limit = await _tenant_quota_limits(
+        session,
+        agent_request.tenant_id or "default",
+    )
     if settings.quota_enabled:
         quota = await check_request_quota(
             state_store,
             settings=settings,
             tenant_id=agent_request.tenant_id or "default",
+            limit=request_limit,
         )
         if not quota.allowed:
             await persist_governance_event(
@@ -225,6 +417,7 @@ async def submit_agent_request_with_details(
             settings=settings,
             request=agent_request,
             risk_score=result.response.risk_score,
+            limit=high_risk_limit,
         )
         if high_risk_quota is not None and not high_risk_quota.allowed:
             result.response.status = "awaiting_approval"

@@ -20,11 +20,12 @@ async def check_request_quota(
     *,
     settings: Settings,
     tenant_id: str,
+    limit: int | None = None,
 ) -> QuotaResult:
     return await state_store.increment_quota(
         tenant_id,
         _minute_bucket(),
-        limit=settings.tenant_request_limit_per_minute,
+        limit=limit if limit is not None else settings.tenant_request_limit_per_minute,
         ttl_seconds=60,
     )
 
@@ -35,12 +36,13 @@ async def check_high_risk_quota(
     settings: Settings,
     request: AgentRequest,
     risk_score: float,
+    limit: int | None = None,
 ) -> QuotaResult | None:
     if risk_score < settings.default_risk_threshold:
         return None
     return await state_store.increment_quota(
         request.tenant_id or "default",
         _hour_bucket(),
-        limit=settings.tenant_high_risk_limit_per_hour,
+        limit=limit if limit is not None else settings.tenant_high_risk_limit_per_hour,
         ttl_seconds=3600,
     )
