@@ -1,4 +1,4 @@
-# Dashboard 使用說明 v0.7
+# Dashboard 使用說明 v0.8
 
 本專案提供 FastAPI 內建的 server-rendered Dashboard，不需要額外啟動 React/Vite 前端。啟動 API 後可直接開啟：
 
@@ -6,7 +6,7 @@
 http://localhost:8000/dashboard
 ```
 
-目前 Dashboard 版本：`v0.7.0`
+目前 Dashboard 版本：`v0.8.0`
 
 ## 雙語標題規則
 
@@ -25,6 +25,7 @@ Dashboard 的頁面大標題以英文為主，並在標題下方提供繁體中�
 | `/dashboard/worker` | `Worker Operations` / Worker 作業狀態 | 查詢 worker attempts、retry failure reason 與 DLQ entries。 |
 | `/dashboard/observability` | `Observability Trends` / 可觀測性趨勢 | 查詢 worker、incident、approval、evaluator 與 SLO summary。 |
 | `/dashboard/governance` | `Governance` / 治理中心 | 查詢 tenant runs、average risk、quota limited count、tenant 設定、API key 清單與 governance events。 |
+| `/dashboard/operations` | `Operations` / 營運中心 | 查詢 release readiness、營運證據與 release gate snapshot，並可新增 evidence 或建立 gate。 |
 | `/dashboard/playground` | `Playground` / 測試沙盒 | 用表單送出測試 AgentRequest，立即產生 `queued`、`awaiting_approval` 或 `denied` run。 |
 
 ## 使用流程
@@ -62,6 +63,7 @@ docker compose up -d --build
 9. 到 `/dashboard/worker` 確認 retry 與 DLQ 狀態。
 10. 到 `/dashboard/observability` 確認 incident、approval、worker、evaluator 與 SLO summary。
 11. 到 `/dashboard/governance` 確認 tenant `default` 或指定 tenant 的 quota、API key 清單與治理事件。
+12. 到 `/dashboard/operations` 新增 backup/restore 或 secret rotation evidence，建立 release gate snapshot，確認每個檢查項目的 `pass`、`warn` 或 `fail`。
 
 ## 資料來源
 
@@ -75,6 +77,9 @@ Dashboard 不使用假資料；所有資料來自 Postgres audit tables：
 - `governance_events`
 - `tenants`
 - `tenant_api_keys`
+- `operations_evidence`
+- `release_gate_runs`
+- `release_gate_items`
 
 `POST /v1/agent/submit`、`POST /v1/agent/submit-with-details`、worker update、approval decision 與 quota governance event 都會寫入同一份 audit trail，因此 API 與 UI 看到的是同一批資料。
 
@@ -82,4 +87,4 @@ Dashboard 不使用假資料；所有資料來自 Postgres audit tables：
 
 - Dashboard Basic Auth 可用 `DASHBOARD_AUTH_ENABLED=true` 啟用；預設關閉以維持本機 demo 便利性。
 - 目前 execution 使用 `BoundedToolExecutor`，會記錄 tool transcript 與 sandbox boundary policy，但不是完整 OS sandbox。
-- Kafka worker、Redis state、retry/DLQ、approval TTL/event、evaluator result 與 tenant governance 已納入；v0.7 新增 DB-backed tenant/API key 與 RBAC-lite。OAuth/SSO、多 reviewer queue、consumer lag alert 與 OpenTelemetry 仍在後續版本。
+- Kafka worker、Redis state、retry/DLQ、approval TTL/event、evaluator result 與 tenant governance 已納入；v0.8 新增 Operations Dashboard 與 release gate audit。OAuth/SSO、多 reviewer queue、consumer lag alert、完整 OpenTelemetry、真實 backup/restore 自動化與 secret rotation 自動化仍在後續版本。

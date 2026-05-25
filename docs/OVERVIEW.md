@@ -1,14 +1,16 @@
-# 專案文件總覽 v0.7
+# 專案文件總覽 v0.8
 
 本目錄收錄 Agent Reward-Hacking Guardrail 的繁體中文文件。專有名詞保留英文，方便與程式碼、API schema、infra component 對照。
 
 ## 版本
 
-目前版本：`v0.7.0`
+目前版本：`v0.8.0`
 
 `v0.6.0` 對應 Tenant Governance MVP。此版本保留 v0.5 的 queued submit、Kafka request event、worker consumer、Redis run state / idempotency / circuit breaker、approval API、bounded executor transcript、worker retry/DLQ、approval TTL/event、tool execution audit、evaluation result、內建 Dashboard worker/observability 頁，並新增 `tenant_id` audit、API key auth、Dashboard Basic Auth、tenant quota、governance events、governance summary API 與 Governance Dashboard。
 
 `v0.7.0` 對應 Tenant Governance Center。此版本在 v0.6 基礎上新增 DB-backed tenant 設定、API key hash 儲存、RBAC-lite role、tenant-level quota override、tenant/API key 管理 API，以及 Governance Dashboard 的 tenant/API key 查詢區塊。
+
+`v0.8.0` 對應 Production Operations Gate。此版本新增 Operations Dashboard、Operations API、operations evidence、release gate snapshot 與 `X-Trace-Id` 基線，用來保存 release readiness 與營運證據；真實自動備份還原、secret rotation 與完整 OpenTelemetry 仍是後續項目。
 
 ## 專案定位
 
@@ -20,7 +22,7 @@
 - 對 destructive 或需審核任務建立 approval queue，不直接執行工具。
 - 用 evaluator 檢查輸出是否有 reward hacking、shortcut、未驗證或 policy violation 訊號。
 - 將 run、policy decision、evaluation summary 與 incident 保存到 Postgres audit trail。
-- 用內建 dashboard 查看 runs、incidents、risk score、event timeline、tool transcript、approval queue、tenant governance 與 playground 測試結果。
+- 用內建 dashboard 查看 runs、incidents、risk score、event timeline、tool transcript、approval queue、tenant governance、operations gate 與 playground 測試結果。
 - 以 API key auth 對應 tenant，支援 `.env` bootstrap fallback 與 DB-managed API key，並以 Redis quota 對 tenant request 與 high-risk request 做 fail-closed 控制。
 
 ## 文件清單
@@ -104,6 +106,8 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
 - `/v1/governance/events`、`/v1/governance/summary` 與 `/dashboard/governance`。
 - DB-backed tenant 設定、API key hash 儲存、RBAC-lite 與 tenant quota override。
 - `/v1/tenants` 與 `/v1/tenants/{tenant_id}/api-keys` 管理 API。
+- `/v1/operations/readiness`、operations evidence、release gate snapshot 與 `/dashboard/operations`。
+- `X-Trace-Id` response header 與 submit metadata / Kafka payload trace id。
 - Docker Compose for Postgres、Redis、Kafka、API、worker。
 - API 與 service unit tests。
 
@@ -111,7 +115,7 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
 
 - 真實 tool sandbox 與 artifact store。
 - Kafka consumer lag alert。
-- 完整 OAuth/SSO、user/per-tool quota、retention governance、backup/restore、secret rotation 與 production observability。
+- 完整 OAuth/SSO、user/per-tool quota、retention purge、backup/restore 自動化、secret rotation 自動化與完整 production observability。
 
 ## 閱讀順序建議
 

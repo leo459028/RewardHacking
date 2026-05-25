@@ -1,6 +1,6 @@
 # Kafka Topics
 
-Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execution、evaluation 與 incident processing。`v0.6.0` 目前 API 會在低風險 request 建立 `queued` run 後 publish `agent.requests`，worker 會消費該 topic 並寫回 Postgres audit trail；retry/backoff、DLQ audit 與 tenant_id request payload 已納入，Kafka consumer lag alert 尚未納入本版。
+Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execution、evaluation 與 incident processing。`v0.8.0` 目前 API 會在低風險 request 建立 `queued` run 後 publish `agent.requests`，worker 會消費該 topic 並寫回 Postgres audit trail；retry/backoff、DLQ audit、tenant_id request payload 與 HTTP `X-Trace-Id` metadata 已納入。Kafka consumer lag alert 與完整 OpenTelemetry trace propagation 尚未納入本版。
 
 ## Topic 清單
 
@@ -14,7 +14,7 @@ Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execut
 
 ## Event Envelope
 
-建議所有 topic 使用一致 envelope：
+目前 `app/workers/producer.py` 會用 `BaseEvent` 建立一致 envelope：
 
 ```json
 {
@@ -27,13 +27,17 @@ Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execut
 }
 ```
 
+注意：`v0.8.0` 的 HTTP `X-Trace-Id` 會保存到 `payload.request.metadata.trace_id`。Event envelope 的 `trace_id` 目前仍由 `make_event()` 另外產生 UUID，尚未和 HTTP trace id 完全對齊；後續導入 OpenTelemetry 時應讓 API response header、Kafka envelope、logs 與 database 使用同一條 trace。
+
 ## `agent.requests`
 
 用途：policy engine 已允許任務後，或 operator approve once 後，送給 worker 執行。
 
 建議 key：`run_id`
 
-Payload 範例：
+目前 API publish 的 payload 會放在 `BaseEvent.payload.request`，worker 讀取時會接受 top-level `run_id` 或 `payload.run_id`。`request.metadata.trace_id` 來自 HTTP `X-Trace-Id` header 或 API 自動產生的 trace id。
+
+Request payload 範例：
 
 ```json
 {
@@ -131,8 +135,8 @@ Payload 範例：
 
 正式 worker 應加入：
 
-- retry with exponential backoff。`v0.6.0` 已在 worker attempt audit 中記錄 retry_scheduled。
-- dead-letter topic，例如 `agent.requests.dlq`。`v0.6.0` 先提供 `/v1/worker/dlq` 與 `/dashboard/worker` 的 DLQ audit 查詢。
-- idempotency by `event_id` 或 `run_id`。`v0.3.0` 已用 Redis idempotency key 避免同一 run 重複執行。
+- retry with exponential backoff。`v0.8.0` 已在 worker attempt audit 中記錄 `retry_scheduled`。
+- dead-letter topic，例如 `agent.requests.dlq`。目前先提供 `/v1/worker/dlq` 與 `/dashboard/worker` 的 DLQ audit 查詢，尚未建立獨立 Kafka DLQ topic。
+- idempotency by `event_id` 或 `run_id`。目前 worker 使用 Redis `idempotency:run:{run_id}:worker:{attempt_number}` 避免同一 attempt 重複執行。
 - schema version，例如 payload 加上 `schema_version`。
 - consumer lag alert。

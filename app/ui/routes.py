@@ -34,6 +34,14 @@ from app.services.audit_log import (
     persist_orchestration_result,
 )
 from app.services.orchestrator import AgentOrchestrator
+from app.services.operations import (
+    compute_operations_readiness,
+    list_operations_evidence,
+    list_release_gate_items,
+    list_release_gates,
+    persist_operations_evidence,
+    persist_release_gate,
+)
 from app.services.run_state import RunStateStore
 from app.workers.producer import make_event
 
@@ -77,6 +85,11 @@ async def root():
         '<meta http-equiv="refresh" content="0; url=/dashboard">'
         '<a href="/dashboard">Dashboard</a>'
     )
+
+
+@router.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return HTMLResponse("", status_code=204)
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
@@ -218,6 +231,68 @@ async def dashboard_governance(
             "tenant_id": tenant_id or "",
             "active": "governance",
         },
+    )
+
+
+@router.get("/dashboard/operations", response_class=HTMLResponse)
+async def dashboard_operations(request: Request, session: AsyncSession = Depends(get_session)):
+    readiness = await compute_operations_readiness(session, settings=get_settings())
+    evidence = await list_operations_evidence(session, limit=25)
+    gates = await list_release_gates(session, limit=10)
+    gate_items = {}
+    for gate in gates:
+        gate_items[gate.gate_id] = await list_release_gate_items(session, gate.gate_id)
+    return templates.TemplateResponse(
+        request,
+        "operations.html",
+        {
+            "readiness": readiness,
+            "evidence": evidence,
+            "gates": gates,
+            "gate_items": gate_items,
+            "active": "operations",
+        },
+    )
+
+
+@router.post("/dashboard/operations/evidence", response_class=HTMLResponse)
+async def dashboard_operations_evidence(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    form = await request.form()
+    await persist_operations_evidence(
+        session,
+        evidence_type=str(form.get("evidence_type", "")),
+        status=str(form.get("status", "pass")),
+        summary=str(form.get("summary", "")),
+        reference_url=str(form.get("reference_url", "")),
+        metadata={"source": "dashboard"},
+        created_by="dashboard",
+    )
+    return HTMLResponse(
+        '<meta http-equiv="refresh" content="0; url=/dashboard/operations">'
+        '<a href="/dashboard/operations">Back to operations</a>'
+    )
+
+
+@router.post("/dashboard/operations/release-gates", response_class=HTMLResponse)
+async def dashboard_operations_release_gate(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    form = await request.form()
+    readiness = await compute_operations_readiness(session, settings=get_settings())
+    await persist_release_gate(
+        session,
+        release_version=str(form.get("release_version", "v0.8.0")),
+        created_by=str(form.get("created_by", "dashboard")),
+        trace_id=str(getattr(request.state, "trace_id", "")),
+        readiness=readiness,
+    )
+    return HTMLResponse(
+        '<meta http-equiv="refresh" content="0; url=/dashboard/operations">'
+        '<a href="/dashboard/operations">Back to operations</a>'
     )
 
 
