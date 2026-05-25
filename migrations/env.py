@@ -13,6 +13,7 @@ from app.models.approval_event import ApprovalEvent  # noqa: F401
 from app.models.base import Base
 from app.models.evaluation_result import EvaluationResultRecord  # noqa: F401
 from app.models.incident import Incident  # noqa: F401
+from app.models.operations import OperationsEvidence, ReleaseGateItem, ReleaseGateRun  # noqa: F401
 from app.models.tenant import Tenant, TenantApiKey  # noqa: F401
 from app.models.tool_execution import ToolExecution  # noqa: F401
 from app.models.worker_attempt import WorkerAttempt  # noqa: F401

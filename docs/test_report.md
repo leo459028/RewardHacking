@@ -4,6 +4,132 @@
 
 請不要只填預期結果；如果某項驗證沒有執行，要清楚寫明原因。例如：純文件修改未啟動 Docker、Docker Desktop 尚未開啟、或本次沒有影響 Dashboard。
 
+## 2026-05-25 - 文件與程式碼同步檢查
+
+- 版本：`v0.8.0`
+- 變更範圍：依使用者要求比對 README 與 docs 是否跟目前程式碼同步，修正測試指南、Migration 指南、API auth coverage、設定中的 submit 狀態流、Kafka trace 現況、Redis idempotency key、資料模型 event types、Observability 資料來源、Security RBAC 說明與開發指南。未修改 runtime code、migration、Dockerfile 或 Dashboard template。
+- 測試環境：Windows PowerShell、Python 3.11。
+
+### 自動化測試結果
+
+| 項目 | 實際結果 |
+| --- | --- |
+| `ruff check app tests` | 通過，All checks passed。 |
+| `pytest -q` | 通過，37 passed in 5.02s。 |
+| `git diff --check` | 通過，沒有 whitespace error。 |
+| API route list vs `docs/api.md` endpoint table | 通過，`missing_api_doc=[]`。 |
+| `Settings` env 欄位 vs `docs/configuration.md` / `.env.example` | 通過，`missing_docs=[]`、`missing_env=[]`。 |
+| 目前版號與舊狀態描述掃描 | 通過，`stale_current_doc_patterns=[]`；第一次用 `rg` 掃描時因 PowerShell 反引號 quoting 失敗，已改用等效 Python 掃描重跑通過。 |
+
+### Dashboard 驗證結果
+
+- 本次未啟動瀏覽器做手動點擊；原因是變更範圍為文件同步，未修改 Dashboard route、template、CSS、API handler 或資料流。
+- 相關 Dashboard 行為仍由 `pytest -q` 覆蓋，包含 `/dashboard/operations` render、Operations evidence form、favicon 204、既有 dashboard pages render、Playground submit、Governance Dashboard 與 Basic Auth。
+
+### Docker 驗證結果
+
+- 本次未重新啟動 Docker stack；原因是本次只修改文件，沒有變更 runtime code、dependency、migration、Docker Compose 或 Dockerfile。
+- 最新 v0.8 Docker stack、container migration、API health/ready、Operations API 與 Dashboard 點擊驗證結果保留於下方「v0.8 完整重測與 Dashboard 輸入點擊驗證」與「v0.8 Production Operations Gate」紀錄。
+
+### 限制與已知問題
+
+- Kafka event envelope 的 `trace_id` 目前仍由 `make_event()` 另行產生；HTTP `X-Trace-Id` 已保存於 `payload.request.metadata.trace_id`。文件已同步描述此限制。
+- `agent_incidents_total{severity,code}` 目前已在 metrics module 定義，但 request path 尚未 increment；文件已改以 Postgres audit tables / Dashboard summary 作為目前 incident 趨勢來源。
+
+## 2026-05-25 - v0.8 完整重測與 Dashboard 輸入點擊驗證
+
+- 版本：`v0.8.0`
+- 變更範圍：依使用者要求重新執行完整測試，包含 lint、pytest、diff check、Docker stack、container migration、API health/ready/operations smoke，以及 Dashboard 實際輸入與點擊流程。本次測試後只更新本報告，未修改產品程式碼。
+- 測試環境：Windows PowerShell、Python 3.11、Docker Desktop、Docker Compose stack `rewardhacking-*`、Playwright CLI。
+
+### 自動化測試結果
+
+| 項目 | 實際結果 |
+| --- | --- |
+| `ruff check app tests` | 通過，All checks passed。 |
+| `pytest -q` | 通過，37 passed。 |
+| `git diff --check` | 通過，沒有 whitespace error。 |
+
+### Docker / API 驗證結果
+
+| 項目 | 實際結果 |
+| --- | --- |
+| `docker compose ps` | 初次 sandbox 內執行因 Docker config / daemon 權限被拒；升權後通過，api、worker、postgres、redis、kafka 皆 Up；postgres、redis、kafka 為 healthy。 |
+| `docker compose exec -T api alembic current` | 初次 sandbox 內執行因 Docker daemon 權限被拒；升權後通過，顯示 `202605250002 (head)`。 |
+| `Invoke-WebRequest http://localhost:8000/v1/healthz` | 通過，HTTP 200，回 `{"status":"ok"}`，response header 含 `x-trace-id`。 |
+| `Invoke-WebRequest http://localhost:8000/v1/readyz` | 通過，HTTP 200，回 `{"status":"ready"}`，response header 含 `x-trace-id`。 |
+| `GET /v1/operations/readiness` | 通過，HTTP 200；目前本機既有 audit history 下整體 status 為 `fail`，阻擋項包含 high severity incidents，符合 release gate 設計。 |
+| `POST /v1/operations/evidence` | 通過，建立 `retention_review` evidence，response header 回 `x-trace-id: trace-v08-full-qa-evidence`。 |
+| `POST /v1/operations/release-gates` | 通過，建立 `v0.8.0-full-qa` release gate snapshot，response header 回 `x-trace-id: trace-v08-full-qa-gate`。 |
+
+### Dashboard Browser 輸入/點擊驗證
+
+- Browser：Playwright CLI。
+- 入口：`http://localhost:8000/dashboard/operations`、`/dashboard/playground`、`/dashboard/runs/{run_id}`、`/dashboard/approvals`。
+
+| 流程 | 實際結果 |
+| --- | --- |
+| Operations page load | 通過，title 為 `Operations | 營運中心`，DOM 包含 `Operations`、`營運中心`、`Readiness Checks`、`Release Gate`。 |
+| Operations evidence input/click | 通過，選擇 `retention_review`，填入 reference `docs/test_report.md` 與 summary `Full Dashboard QA retention click evidence`，點 `Save Evidence` 後頁面顯示該 evidence，Evidence count 變為 4。 |
+| Operations release gate click | 通過，填入 release version `v0.8.0-dashboard-full-qa`、created by `dashboard-full-qa`，點 `Create Release Gate Snapshot` 後頁面顯示新 gate `gate_5c496d6377a6`，Release Gate count 變為 4。 |
+| Playground low-risk submit | 通過，填入 tenant `qa-dashboard-full`、user `qa-low-risk-user`、tools `read_data, summarize`、max calls `4`、goal 與 prompt，點 `Submit Run` 後顯示 `queued` 與 `Open run detail`。 |
+| Run detail click | 通過，點 `Open run detail` 進入 `/dashboard/runs/859653dd-6505-4df3-9c3b-520ed2eeb488`；worker 已更新狀態為 `completed`，頁面顯示 `Policy`、`Event Timeline`、`Tool Transcript`、`Worker Attempts`、`Tool Executions`，console error/warn 為 0。 |
+| Playground destructive submit | 通過，填入 tenant `qa-dashboard-approval`、user `qa-approval-user`、task type `workflow`、tools `deploy_service, delete_data`、勾選 `Destructive actions` 與 `PII access`，點 `Submit Run` 後顯示 `awaiting_approval`。 |
+| Approval reason + Deny click | 通過，開啟 `/dashboard/approvals`，對 run `10cf14f9-0d47-4944-852a-98be2e793333` 填入 reason `Full Dashboard QA deny click` 並點 `Deny`；重新載入 queue 後該 run 已移除，console error/warn 為 0。 |
+
+### 限制與已知問題
+
+- Docker 驗證需要升權，原因是 sandbox 內無法讀取 Docker config 且無法連線 Docker daemon。
+- Playwright CLI 會產生 `.playwright-cli/` 暫存目錄；本次驗證後已清除，不作為 repo artifact。
+- Operations readiness 目前顯示 `fail` 是因為本機既有資料含 high severity incidents / expired approvals，這是 release gate 正確阻擋，不代表 API 或 Dashboard 故障。
+
+## 2026-05-25 - v0.8 Production Operations Gate
+
+- 版本：`v0.8.0`
+- 變更範圍：新增 Operations Dashboard、Operations API、operations evidence、release gate snapshot、release readiness checks、`X-Trace-Id` response header 與 submit metadata/Kafka payload trace id；同步 README、Roadmap、API、Dashboard、架構、資料模型、設定、安全、部署、Runbook、Observability、Migration 與測試紀錄。
+- 測試環境：Windows PowerShell、Python 3.11、Docker Desktop、Docker Compose stack `rewardhacking-*`、Playwright CLI。
+
+### 自動化測試結果
+
+| 項目 | 實際結果 |
+| --- | --- |
+| `pytest tests/test_v08_operations_gate.py -q` | 先紅燈，5 failed：operations API 與 Dashboard route 尚未存在、submit 尚未回 `X-Trace-Id`；實作後通過。 |
+| `pytest tests/test_v08_operations_gate.py::test_dashboard_favicon_does_not_create_console_noise -q` | 先紅燈，`/favicon.ico` 回 404；補 route 後通過，1 passed。 |
+| `ruff check app tests` | 通過，All checks passed。 |
+| `pytest -q` | 通過，37 passed。 |
+| `alembic upgrade head` | 通過，從 `202605250001` 升級到 `202605250002`。 |
+
+### Docker 驗證結果
+
+| 項目 | 實際結果 |
+| --- | --- |
+| `docker compose up -d --build` | sandbox 內第一次失敗，原因是無法讀取 Docker config 與連線 Docker daemon；升權後通過，api/worker image 重建並啟動。 |
+| `docker compose ps` | 通過，api、worker、postgres、redis、kafka 皆 Up；postgres、redis、kafka 為 healthy。 |
+| `docker compose exec -T api alembic current` | 通過，顯示 `202605250002 (head)`。 |
+| `Invoke-WebRequest http://localhost:8000/v1/healthz` | 通過，回 `{"status":"ok"}`，response header 含 `x-trace-id`。 |
+| `Invoke-WebRequest http://localhost:8000/v1/readyz` | 通過，回 `{"status":"ready"}`，response header 含 `x-trace-id`。 |
+| `GET /v1/operations/readiness` | 通過，回 200；本機既有資料下整體 status 為 `fail`，原因包含既有 high severity incidents，符合 release gate 阻擋設計。 |
+| `POST /v1/operations/evidence` | 通過，建立 `backup_restore_drill` evidence，回傳 `x-trace-id: trace-v08-docker-smoke`。 |
+| `POST /v1/operations/release-gates` | 通過，建立 `v0.8.0` release gate snapshot，回傳 `x-trace-id: trace-v08-docker-gate`。 |
+
+### Dashboard / Browser 驗證結果
+
+- 驗證網址：`http://localhost:8000/dashboard/operations`。
+- 工具：Playwright CLI。
+
+| 流程 | 實際結果 |
+| --- | --- |
+| Operations page load | 通過，title 為 `Operations | 營運中心`，DOM 包含 `Operations`、`營運中心`、`Readiness Checks`、`Release Gate`。 |
+| Console 檢查 | 初次發現 `favicon.ico` 404；補 `/favicon.ico` 204 route 後重新 build，console error/warn 為 0。 |
+| Evidence form | 通過，選擇 `secret_rotation`、填入 `docs/test_report.md` 與 `Playwright v0.8 secret rotation evidence`，點 `Save Evidence` 後頁面顯示新 evidence，Evidence 數量變 2。 |
+| Release gate form | 通過，點 `Create Release Gate Snapshot` 後頁面顯示新 gate `gate_b3b231cb9aab`，Release Gate 數量變 2，且 item 顯示 `backup_restore_evidence: pass`、`secret_rotation_evidence: pass`。 |
+
+### 限制與已知問題
+
+- v0.8 Operations Gate 保存 readiness 與人工 evidence，不會自動執行真實 `pg_dump` / restore drill、secret rotation、retention purge、完整 OpenTelemetry 或 Kafka broker lag alert。
+- Docker stack 使用目前本機既有資料，因此 release readiness 顯示 `fail`；原因是 audit history 中已有 high severity incidents 與 expired approvals，這是符合設計的阻擋狀態，不代表 API 或 Dashboard 失敗。
+- Playwright CLI 需要透過 `npx` 取得套件；sandbox 內 npm 網路/權限受限，已使用升權執行 browser 驗證。
+
 ## 2026-05-25 - v0.7 完整重測與 Dashboard 輸入點擊驗證
 
 - 版本：`v0.7.0`

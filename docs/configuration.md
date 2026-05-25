@@ -37,6 +37,11 @@
 | `QUOTA_ENABLED` | `true` | 是否啟用 tenant quota 檢查 |
 | `TENANT_REQUEST_LIMIT_PER_MINUTE` | `60` | 每個 tenant 每分鐘 request 上限 |
 | `TENANT_HIGH_RISK_LIMIT_PER_HOUR` | `10` | 每個 tenant 每小時 high-risk request 上限 |
+| `AUDIT_RETENTION_DAYS` | `90` | Operations readiness 顯示的 audit retention 設定天數，本版只檢查設定值，不自動 purge |
+| `OPERATIONS_EVIDENCE_MAX_AGE_DAYS` | `30` | backup/restore 等營運證據被視為新鮮的最大天數 |
+| `SECRET_ROTATION_MAX_AGE_DAYS` | `90` | secret rotation evidence 被視為新鮮的最大天數 |
+| `RELEASE_GATE_MAX_QUEUED_AGE_MINUTES` | `15` | release gate 判定 stale queued run 的時間門檻 |
+| `RELEASE_GATE_FAIL_ON_BOOTSTRAP_KEYS_IN_PROD` | `true` | `APP_ENV=prod` 時若仍設定 `API_KEYS` bootstrap fallback，release gate 是否 fail |
 
 ## Docker Compose 設定
 
@@ -75,12 +80,15 @@ Redis 與 Kafka 已在 `v0.3.0` request path 中使用，但 `/v1/readyz` 目前
 - `risk_score >= threshold` 且 `< 0.85`：`escalate`
 - `risk_score >= 0.85`：`deny`
 
-API response status 會使用：
+目前 submit path 的 status mapping：
 
-- `allow` 且 evaluator pass：`completed`
-- `allow` 但 evaluator review：`queued`
-- policy `escalate`：`escalated`
-- policy `deny`：`denied`
+- API submit 階段若 policy `allow`，會先建立 `queued` run，並 publish `agent.requests`。
+- worker 執行階段若 evaluator pass，run 會更新為 `completed`。
+- worker 執行階段若 evaluator review，run 會更新為 `awaiting_approval`。
+- policy `escalate` 目前會對外呈現為 `awaiting_approval`，並建立 approval event / incident。
+- policy `deny` 會呈現為 `denied`。
+
+`AgentResponse` schema 仍保留歷史狀態值 `accepted` 與 `escalated`，但目前主要 request path 使用 `queued`、`awaiting_approval`、`denied`、`running`、`completed` 與 `failed`。
 
 ## Auth / Dashboard Auth
 
@@ -105,6 +113,14 @@ Dashboard 可用 `DASHBOARD_AUTH_ENABLED=true` 開啟 Basic Auth。這是 v0.6 M
 - high-risk quota 超過 `TENANT_HIGH_RISK_LIMIT_PER_HOUR` 時，run 會 fail closed 進入 `awaiting_approval`，並加上 `tenant_high_risk_quota_exceeded` policy flag。
 
 若 `tenants` 資料表中有該 tenant，會優先使用 tenant 的 `request_limit_per_minute` 與 `high_risk_limit_per_hour`；找不到 tenant 時才使用 `.env` 全域預設。
+
+## Operations Gate
+
+`v0.8.0` 新增 release readiness 設定，用來驅動 `/v1/operations/readiness` 與 `/dashboard/operations`。這些設定目前是 release gate 的檢查依據，不代表系統已自動執行備份、還原、secret rotation 或 retention purge。
+
+- backup/restore drill 與 secret rotation 需要由 admin 透過 Operations API 或 Dashboard 寫入 evidence。
+- release gate 會保存當下檢查項目，方便事後審計。
+- `APP_ENV=prod` 且仍使用 `API_KEYS` bootstrap fallback 時，預設會被 release gate 視為阻擋項。
 
 ## Secret 管理
 
