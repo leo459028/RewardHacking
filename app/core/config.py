@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     quota_enabled: bool = True
     tenant_request_limit_per_minute: int = 60
     tenant_high_risk_limit_per_hour: int = 10
+    audit_retention_days: int = 90
+    operations_evidence_max_age_days: int = 30
+    secret_rotation_max_age_days: int = 90
+    release_gate_max_queued_age_minutes: int = 15
+    release_gate_fail_on_bootstrap_keys_in_prod: bool = True
 
 
 @lru_cache(maxsize=1)

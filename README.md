@@ -6,13 +6,15 @@
 
 ## 專案版號
 
-目前版本：`v0.7.0`
+目前版本：`v0.8.0`
 
 `v0.5.0` 是 V0.4 Execution Hardening 與 V0.5 Evaluator + Observability 的整合版。該版本已經有 queue、worker retry/DLQ、Redis run state、approval TTL/event、bounded executor transcript、tool execution audit、evaluation result 與 Dashboard 查詢入口，但還不是完整的 production sandbox、auth 或多租戶 production safety platform。
 
 `v0.6.0` 在 v0.5 基礎上加入 Tenant Governance MVP：每筆 run 會保存 `tenant_id`，API 可用 `X-API-Key` 對應 tenant，Redis 會做 tenant request quota 與 high-risk quota 檢查，並新增 governance audit 與 `/dashboard/governance` 查詢入口。
 
 `v0.7.0` 將 Tenant Governance MVP 推進成 Tenant Governance Center：新增 DB-backed tenant 設定、API key hash 儲存、RBAC-lite role、tenant-level quota override 與 Governance Dashboard 的 tenant/API key 查詢區塊。`.env` 的 `API_KEYS` 仍保留為開發與 bootstrap fallback；正式治理資料以 `tenants` 與 `tenant_api_keys` 資料表為準。
+
+`v0.8.0` 新增 Production Operations Gate：提供 `/dashboard/operations`、Operations API、release readiness checks、operations evidence 與 release gate snapshot。這版會把 backup/restore drill、secret rotation 等營運證據保存到 audit trail，並加入 `X-Trace-Id` response header 與 submit metadata，但不自動執行真實備份還原、secret rotation、完整 OpenTelemetry 或 Kafka lag alert。
 
 ## 這個專案想解決什麼問題
 
@@ -40,7 +42,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 
 ## Roadmap 完成後的適用情境
 
-以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v0.6.0` 已全部完成。
+以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v0.8.0` 已全部完成。
 
 1. AI coding agent 在修改程式碼前，檢查是否跳過測試、繞過規則或做破壞性操作。
 2. 內部營運 agent 執行批次任務前，確認工具權限、任務風險與是否需要人工核准。
@@ -79,9 +81,9 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - audit trail 可以幫助追蹤問題，但不能替代資料治理與資安制度。
 - 如果 prompt、工具權限或資料權限設計不良，guardrail 也可能被繞過或誤判。
 
-## 目前 v0.7 做到哪裡
+## 目前 v0.8 做到哪裡
 
-`v0.7.0` 目前是可展示、可查詢、可審計的 guarded async execution + Tenant Governance Center。
+`v0.8.0` 目前是可展示、可查詢、可審計的 guarded async execution + Tenant Governance Center + Production Operations Gate。
 
 已完成：
 
@@ -106,20 +108,23 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - 已有最小 API key auth、Dashboard Basic Auth、tenant quota 與 governance audit。
 - 可以透過 `/v1/tenants` 建立與查詢 tenant。
 - 可以透過 `/v1/tenants/{tenant_id}/api-keys` 建立 DB-managed API key；明文 key 只在建立時回傳一次，資料庫只保存 hash 與 prefix。
-- API key 支援 `viewer`、`operator`、`admin` 三種 RBAC-lite role；`viewer` 只能讀取，`operator` 可送出任務與處理操作，`admin` 可管理 tenant 與 API key。
+- API key 支援 `viewer`、`operator`、`admin` 三種 RBAC-lite role；`viewer` 可讀取查詢與 Operations readiness/evidence/gate，`operator` 可送出任務並讀取治理與 Operations 查詢資料，`admin` 可管理 tenant/API key/quota，並可建立 Operations evidence 與 release gate snapshot。
 - Tenant 可設定 request quota 與 high-risk quota，會覆蓋全域 `.env` quota 預設。
 - Governance Dashboard 會顯示 tenant 設定與 API key 清單。
+- Operations Dashboard 會顯示 release readiness、operations evidence 與 release gate snapshot。
+- Operations API 可建立 backup/restore drill、secret rotation 等人工營運證據，並保存 release gate 檢查項。
+- API 會回傳 `X-Trace-Id`；submit flow 會把 trace id 保存到 request metadata 與 Kafka event payload。
 
 尚未完成：
 
 - 還沒有完整 OS sandbox、network/filesystem/process/secret 邊界。
-- 還沒有完整 human approval workflow，例如 reviewer 報表、TTL 與 request changes 後續流程。
+- 還沒有完整 human approval workflow，例如多 reviewer queue、reviewer 報表、turnaround time-series 與 request changes 後續流程；目前已具備 approval TTL、reviewer/reason 與 event audit 的基線。
 - 還沒有 Kafka consumer lag alert 與完整 OpenTelemetry tracing。
 - LLM-as-judge 目前是可插拔 signal，預設使用 deterministic fake judge 且不作為唯一 hard deny。
-- 還沒有完整 OAuth、RBAC、tenant 管理 UI、retention governance、backup/restore、secret rotation 或真實 OS sandbox。
-- 還沒有完整 OAuth/SSO、user/per-tool quota、retention governance、backup/restore、secret rotation 或真實 OS sandbox。
+- 還沒有完整 OAuth、RBAC、tenant 管理 UI、retention purge、真實 backup/restore 自動化、secret rotation 自動化或真實 OS sandbox。
+- 還沒有完整 OAuth/SSO、user/per-tool quota、Kafka consumer lag alert 或完整 OpenTelemetry。
 
-所以目前 `v0.7.0` 適合用來 demo guarded async execution hardening 與 tenant governance center，驗證 queue/worker retry/DLQ/approval/evaluator/observability/governance 的產品閉環；不建議直接當成完整 production 安全平台。
+所以目前 `v0.8.0` 適合用來 demo guarded async execution hardening、tenant governance center 與 production operations gate，驗證 queue/worker retry/DLQ/approval/evaluator/observability/governance/operations 的產品閉環；不建議直接當成完整 production 安全平台。
 
 ## 快速啟動
 
@@ -190,6 +195,6 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
 如果你要繼續開發，建議先看 [Roadmap](docs/roadmap.md)。下一階段通常會優先補：
 
 - 完整 OAuth/RBAC、tenant 管理 UI 與更細的 user quota。
-- Data retention、backup/restore drill、secret rotation 與 rollback/release gate。
-- OpenTelemetry tracing、Kafka consumer lag alert 與跨 component trace id。
+- 真實 data retention purge、backup/restore 自動化、secret rotation 自動化與 rollback runbook。
+- OpenTelemetry tracing、Kafka consumer lag alert 與跨 component trace propagation。
 - 真實 tool sandbox 與外部 artifact/object storage。

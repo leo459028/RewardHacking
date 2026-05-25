@@ -1,8 +1,8 @@
-# Runbook v0.6
+# Runbook v0.8
 
 此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail、Kafka worker、Redis run state、approval queue、worker retry/DLQ、tool execution audit、evaluator/observability summary 與 tenant governance 已接入 request path。
 
-目前營運基線：`v0.6.0`
+目前營運基線：`v0.8.0`
 
 ## 快速檢查
 
@@ -29,6 +29,7 @@ curl http://localhost:8000/v1/metrics
 - `http://localhost:8000/dashboard/worker`
 - `http://localhost:8000/dashboard/observability`
 - `http://localhost:8000/dashboard/governance`
+- `http://localhost:8000/dashboard/operations`
 
 Dashboard：
 
@@ -313,7 +314,23 @@ docker compose up kafka-init
 - queued run 若沒有被 worker 更新，先確認 worker container 是否健康。
 - 重複 event 會被 Redis idempotency key 擋下，不應重複執行。
 
-## 11. Redis 問題
+## 11. Release Gate 失敗
+
+症狀：
+
+- `/dashboard/operations` 顯示 readiness 為 `fail`。
+- `POST /v1/operations/release-gates` 建立的 snapshot 狀態為 `fail`。
+
+處理步驟：
+
+1. 查看 `/dashboard/operations` 的 Readiness Checks，確認是哪個 `check_key` 阻擋。
+2. 若是 `worker_dlq`、`stale_queued_runs` 或 `blocking_incidents`，先處理 worker、approval 或 incident，不要直接 release。
+3. 若是 `backup_restore_evidence` 或 `secret_rotation_evidence` 為 `warn`，補做人工 drill 後透過 Dashboard 或 API 建立 evidence。
+4. 若是 `bootstrap_keys_in_prod`，確認正式環境不要依賴 `.env` 的 `API_KEYS` fallback，改用 DB-managed API key 或正式 IAM。
+
+注意：v0.8 的 Operations Gate 是審計與 readiness 層，不會自動執行 backup/restore、secret rotation 或 retention purge。
+
+## 12. Redis 問題
 
 目前 API 與 worker flow 依賴 Redis 管理短期 run state、idempotency key、tool circuit breaker 與 tenant quota。Redis 不保存唯一 audit trail，重要資料仍以 Postgres 為準。
 

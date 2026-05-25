@@ -139,6 +139,41 @@ Table：`tenant_api_keys`
 | `created_at` | timestamp | 建立時間 |
 | `revoked_at` | timestamp | 撤銷時間 |
 
+### `OperationsEvidence`
+
+Table：`operations_evidence`
+
+記錄 v0.8 Operations Gate 使用的人工營運證據，例如 backup/restore drill、secret rotation 或 retention review。這是審計證據，不會自動執行實際備份、還原或輪替。
+
+| 欄位 | 型別 | 說明 |
+| --- | --- | --- |
+| `id` | integer | primary key |
+| `evidence_type` | string | 例如 `backup_restore_drill`、`secret_rotation` |
+| `status` | string | `pass`、`warn` 或 `fail` |
+| `summary` | text | 人可讀證據摘要 |
+| `reference_url` | string | 文件、測試報告或外部紀錄位置 |
+| `metadata_payload` | JSON | 補充資訊 |
+| `created_by` | string | 建立者或 key 來源 |
+| `created_at` | timestamp | 建立時間 |
+
+### `ReleaseGateRun` / `ReleaseGateItem`
+
+Tables：`release_gate_runs`、`release_gate_items`
+
+保存某次 release gate snapshot 與每個檢查項目的結果。`release_gate_runs.status` 由 items 彙總而來：只要任一 item 為 `fail`，整體為 `fail`；否則任一 item 為 `warn` 時整體為 `warn`；其餘為 `pass`。
+
+| 欄位 | 型別 | 說明 |
+| --- | --- | --- |
+| `gate_id` | string | 對外查詢 release gate 的 ID |
+| `release_version` | string | 例如 `v0.8.0` |
+| `status` | string | `pass`、`warn` 或 `fail` |
+| `summary` | text | gate 結果摘要 |
+| `created_by` | string | 建立者 |
+| `trace_id` | string | 建立 gate 時的 `X-Trace-Id` |
+| `check_key` | string | item 檢查鍵，例如 `backup_restore_evidence` |
+| `title` / `detail` | string / text | item 顯示文字 |
+| `metadata_payload` | JSON | item 補充資訊 |
+
 ## Event Schemas
 
 所有 event 繼承 `BaseEvent`：
@@ -154,12 +189,19 @@ Table：`tenant_api_keys`
 
 注意：目前 Kafka event envelope 本身未放 `tenant_id` 欄位；tenant 資訊會放在 `payload.request.tenant_id`，並在 Postgres audit tables 中保存。
 
-目前 event types：
+目前 `evaluation_summary.event_timeline` 與 Kafka payload 常見 event types：
 
+- `agent.requested`
 - `policy.decision`
 - `execution.result`
 - `evaluation.result`
 - `incident`
+- `run.state`
+- `worker.retry_scheduled`
+- `worker.failed`
+- `approval.decision`
+
+`v0.8.0` 的 HTTP `X-Trace-Id` 會寫入 submit request 的 `metadata.trace_id`，並跟著 `agent.requests` 的 `payload.request.metadata.trace_id` 傳給 worker。`BaseEvent.trace_id` 目前由 event helper 另行產生 UUID；後續若導入完整 OpenTelemetry，應把 HTTP response header、Kafka envelope、logs 與 database 的 trace id 對齊。
 
 ## 資料生命週期建議
 

@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import uuid
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -23,10 +24,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.7.0",
+    version="0.8.0",
     description="Guardrail service for preventing reward hacking in agent systems.",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def trace_id_middleware(request: Request, call_next):
+    trace_id = request.headers.get("X-Trace-Id") or f"trace_{uuid.uuid4().hex}"
+    request.state.trace_id = trace_id
+    response = await call_next(request)
+    response.headers["X-Trace-Id"] = trace_id
+    return response
 
 
 @app.exception_handler(RequestValidationError)
