@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from time import perf_counter
 import uuid
 
 from fastapi import FastAPI, HTTPException, Request
@@ -9,6 +10,7 @@ from app.api.routes import router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.infra.postgres import close_engine, init_engine
+from app.observability.metrics import HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_TOTAL
 from app.ui.routes import router as ui_router
 
 settings = get_settings()
@@ -24,7 +26,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.8.0",
+    version="1.0.0",
     description="Guardrail service for preventing reward hacking in agent systems.",
     lifespan=lifespan,
 )
@@ -34,8 +36,17 @@ app = FastAPI(
 async def trace_id_middleware(request: Request, call_next):
     trace_id = request.headers.get("X-Trace-Id") or f"trace_{uuid.uuid4().hex}"
     request.state.trace_id = trace_id
+    start = perf_counter()
     response = await call_next(request)
     response.headers["X-Trace-Id"] = trace_id
+    duration = perf_counter() - start
+    labels = {
+        "method": request.method,
+        "path": request.url.path,
+        "status": str(response.status_code),
+    }
+    HTTP_REQUESTS_TOTAL.labels(**labels).inc()
+    HTTP_REQUEST_DURATION_SECONDS.labels(**labels).observe(duration)
     return response
 
 

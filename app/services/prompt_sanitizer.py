@@ -6,6 +6,7 @@ INJECTION_PATTERNS = [
     r"bypass policy",
     r"do anything now",
     r"reveal system prompt",
+    r"(show|reveal|print).*(developer|system) (instructions|message)",
     r"print hidden chain of thought",
     r"exfiltrat",
     r"override safety",
