@@ -4,6 +4,37 @@
 
 請不要只填預期結果；如果某項驗證沒有執行，要清楚寫明原因。例如：純文件修改未啟動 Docker、Docker Desktop 尚未開啟、或本次沒有影響 Dashboard。
 
+## 2026-05-30 - 專案 16:9 圖片庫資產生成
+
+- 版本：`v1.0.0`
+- 變更範圍：新增 `docs/assets/` 圖片資產庫，共 12 張 16:9 PNG，涵蓋總覽架構、目錄結構、API request flow、前後端/Worker 邊界、policy matrix、audit trail/data model、Dashboard navigation、Operations Gate、Tenant Governance、Observability/Metrics、Reward Hacking threat model 與 Production Readiness Roadmap。
+- 測試環境：Windows PowerShell、Codex 內建 `image_gen`、人工視覺檢查。
+
+### 測試命令
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `Add-Type -AssemblyName System.Drawing; Get-ChildItem docs\assets -Filter *.png \| Sort-Object Name \| ForEach-Object { ... } \| Format-Table -AutoSize` | 通過，12 張 PNG 皆為 `1672x941`，ratio `1.777`，符合 16:9。 |
+| `Get-ChildItem docs\assets -Filter *.png \| Sort-Object Name \| Select-Object Name,Length` | 通過，列出 12 張圖片，檔案皆已保存於 `docs/assets/`。 |
+| `git status --short` | 通過，僅顯示新增 `docs/assets/`；規劃討論用 `.superpowers/` 暫存資料夾已移除。 |
+
+### Dashboard 驗證
+
+- 驗證網址：未執行。
+- 實際結果：未執行。
+- 未執行原因：本次只新增圖片資產，未修改 Dashboard route、template、API、資料庫或 runtime 行為。
+
+### Docker 驗證
+
+- 驗證命令：未執行。
+- 實際結果：未執行。
+- 未執行原因：本次只新增靜態圖片資產，不需要啟動 Docker stack 驗證。
+
+### 限制與已知問題
+
+- 圖片由生成式模型產出，繁體中文與英文細字仍可能有局部字形不完美；已人工檢查主要標題、核心元件、16:9 比例與專案能力邊界。
+- QA 時曾發現 Observability、Audit Trail 與 Operations 圖有假時間、外部合規標章或未實作整合暗示，已重新生成並覆蓋成修正版。
+
 ## 2026-05-30 - v1.0 文件與程式碼同步審核
 
 - 版本：`v1.0.0`
