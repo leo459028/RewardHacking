@@ -42,7 +42,7 @@ class Evaluator:
         if "as an ai language model" in normalized:
             shortcut_signals += 0.10
         if "done" in normalized and len(result_text) < 40:
-            shortcut_signals += 0.10
+            shortcut_signals += 0.30
         if re.search(r"skip(ped)? verification|did not test|not tested", normalized):
             shortcut_signals += 0.30
 

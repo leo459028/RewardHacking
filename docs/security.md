@@ -78,7 +78,7 @@ Score 會 clamp 在 `0.0` 到 `1.0`。
 
 - API key auth：`AUTH_ENABLED=true` 時，`X-API-Key` 可來自 `.env` bootstrap fallback 或 DB-managed `tenant_api_keys`。
 - API key storage：DB-managed key 只保存 SHA-256 hash 與 prefix，明文 key 只在建立時回傳一次。
-- RBAC-lite：`viewer` 可讀取查詢與 Operations readiness/evidence/gate，`operator` 可 submit 並讀取治理與 Operations 查詢資料，`admin` 可管理 tenant/key/quota，並可建立 Operations evidence 與 release gate snapshot。
+- RBAC-lite：`viewer` 可讀取查詢與 Operations readiness/evidence/gate，`operator` 可 submit、處理 approval decision，並讀取治理與 Operations 查詢資料，`admin` 可管理 tenant/key/quota，並可建立 Operations evidence 與 release gate snapshot。
 - Tenant isolation：submit body 或 query 的 `tenant_id` 與 API key tenant 不一致時回 `403 tenant_mismatch`。
 - Dashboard Basic Auth：`DASHBOARD_AUTH_ENABLED=true` 時保護 Dashboard。
 - Tenant quota：可用 DB tenant 設定覆蓋 `.env` 全域預設；request quota 超過時回 `429 tenant_request_quota_exceeded`，high-risk quota 超過時 fail closed 進入 `awaiting_approval`。
@@ -86,14 +86,16 @@ Score 會 clamp 在 `0.0` 到 `1.0`。
 
 ### Production Operations Gate
 
-`v0.8.0` 新增營運閘門，用來降低「沒有證據就 release」的風險：
+`v1.0.0` 將營運閘門升級為 production readiness baseline，用來降低「沒有證據就 release」的風險：
 
 - `X-Trace-Id` 會回傳給 client，submit flow 會保存到 request metadata 與 Kafka request payload。
-- Operations evidence 可保存 backup/restore drill、secret rotation、retention review 等人工證據。
+- Operations evidence 可保存 backup/restore drill、secret rotation、retention review、safety regression 等人工證據。
 - Release gate snapshot 會保存每個 readiness check 的結果，便於事後稽核。
 - `APP_ENV=prod` 時若仍依賴 `API_KEYS` bootstrap fallback，預設 release gate 會 fail。
+- `APP_ENV=prod` 時若缺少 fresh safety regression evidence，release gate 會 fail closed。
+- `AUTH_ENABLED=true` 時，metrics、worker DLQ、run subresources、observability summary 與 dashboard summary 等敏感 read API 都需要 API key。
 
-注意：這是審計與 release readiness 層，不是自動 backup、secret rotation、retention purge 或完整 IAM。
+注意：這是審計與 release readiness 層，不是自動 backup、secret rotation、retention purge、真實 OS sandbox 或完整 IAM。
 
 ### Evaluator
 
@@ -153,7 +155,7 @@ agent 不能只靠自己的輸出宣稱安全。結果必須經 evaluator 或人
 - Network egress policy。
 - Dependency vulnerability scanning。
 - Incident response process。
-- Release gate 與營運證據流程；v0.8 已有可查詢基線，但正式環境仍需接上真實自動化與審批制度。
+- Release gate 與營運證據流程；v1.0 已有可阻擋基線與 safety regression evidence，但正式環境仍需接上真實自動化與審批制度。
 
 ## 不應做的事
 

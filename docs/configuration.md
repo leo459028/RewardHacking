@@ -92,7 +92,7 @@ Redis 與 Kafka 已在 `v0.3.0` request path 中使用，但 `/v1/readyz` 目前
 
 ## Auth / Dashboard Auth
 
-`AUTH_ENABLED=false` 時，API 保持本機 demo 友善模式。`AUTH_ENABLED=true` 時，submit、runs、incidents、approvals、evaluations、tenant 與 governance API 需要 `X-API-Key`；health、ready、metrics 仍維持 demo 可讀。
+`AUTH_ENABLED=false` 時，API 保持本機 demo 友善模式。`AUTH_ENABLED=true` 時，submit、runs、incidents、approvals、evaluations、tenant、governance、operations、metrics、worker DLQ、run subresources、observability summary 與 dashboard summary API 需要 `X-API-Key`；`healthz` 與 `readyz` 維持公開。
 
 `API_KEYS` 保留為開發與 bootstrap fallback，可把 key 對應到 tenant 與 role，例如：
 
@@ -116,10 +116,11 @@ Dashboard 可用 `DASHBOARD_AUTH_ENABLED=true` 開啟 Basic Auth。這是 v0.6 M
 
 ## Operations Gate
 
-`v0.8.0` 新增 release readiness 設定，用來驅動 `/v1/operations/readiness` 與 `/dashboard/operations`。這些設定目前是 release gate 的檢查依據，不代表系統已自動執行備份、還原、secret rotation 或 retention purge。
+`v1.0.0` 的 release readiness 設定用來驅動 `/v1/operations/readiness` 與 `/dashboard/operations`。這些設定目前是 release gate 的檢查依據，不代表系統已自動執行備份、還原、secret rotation、safety regression 或 retention purge。
 
-- backup/restore drill 與 secret rotation 需要由 admin 透過 Operations API 或 Dashboard 寫入 evidence。
+- backup/restore drill、secret rotation 與 safety regression 需要由 admin 透過 Operations API 或 Dashboard 寫入 evidence。
 - release gate 會保存當下檢查項目，方便事後審計。
+- `APP_ENV=prod` 時，缺少 fresh `safety_regression` evidence 會讓 release gate fail。
 - `APP_ENV=prod` 且仍使用 `API_KEYS` bootstrap fallback 時，預設會被 release gate 視為阻擋項。
 
 ## Secret 管理

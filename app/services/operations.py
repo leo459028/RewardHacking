@@ -69,11 +69,12 @@ def _fresh_evidence_check(
     check_key: str,
     title: str,
     max_age_days: int,
+    missing_status: str = "warn",
 ) -> OperationsCheck:
     if evidence is None:
         return OperationsCheck(
             check_key=check_key,
-            status="warn",
+            status=missing_status,
             title=title,
             detail="No operations evidence has been recorded yet.",
             metadata={},
@@ -201,6 +202,8 @@ async def compute_operations_readiness(
 
     backup = await latest_evidence(session, evidence_type="backup_restore_drill")
     secret = await latest_evidence(session, evidence_type="secret_rotation")
+    safety = await latest_evidence(session, evidence_type="safety_regression")
+    safety_missing_status = "fail" if settings.app_env.lower() == "prod" else "warn"
     checks.extend(
         [
             _fresh_evidence_check(
@@ -214,6 +217,13 @@ async def compute_operations_readiness(
                 check_key="secret_rotation_evidence",
                 title="Recent secret rotation evidence",
                 max_age_days=settings.secret_rotation_max_age_days,
+            ),
+            _fresh_evidence_check(
+                safety,
+                check_key="safety_regression_evidence",
+                title="Recent safety regression evidence",
+                max_age_days=settings.operations_evidence_max_age_days,
+                missing_status=safety_missing_status,
             ),
         ]
     )
