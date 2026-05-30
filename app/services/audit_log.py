@@ -16,6 +16,7 @@ from app.models.incident import Incident
 from app.models.tenant import Tenant, TenantApiKey
 from app.models.tool_execution import ToolExecution
 from app.models.worker_attempt import WorkerAttempt
+from app.observability.metrics import INCIDENTS_TOTAL
 from app.schemas.agent import AgentRequest
 from app.schemas.audit import ApprovalDecisionRequest
 from app.services.orchestrator import OrchestrationResult
@@ -87,6 +88,25 @@ def _incident_payload(result: OrchestrationResult) -> tuple[str, str, str] | Non
             payload.get("detail", "Evaluation requires review."),
         )
     return None
+
+
+def _add_incident(
+    session: AsyncSession,
+    *,
+    run_id: str,
+    severity: str,
+    code: str,
+    detail: str,
+) -> None:
+    session.add(
+        Incident(
+            run_id=run_id,
+            severity=severity,
+            code=code,
+            detail=detail,
+        )
+    )
+    INCIDENTS_TOTAL.labels(severity=severity, code=code).inc()
 
 
 def _approval_expiry(request: AgentRequest) -> datetime:
@@ -535,14 +555,7 @@ async def persist_orchestration_result(
     incident = _incident_payload(result)
     if incident is not None:
         severity, code, detail = incident
-        session.add(
-            Incident(
-                run_id=response.run_id,
-                severity=severity,
-                code=code,
-                detail=detail,
-            )
-        )
+        _add_incident(session, run_id=response.run_id, severity=severity, code=code, detail=detail)
     await persist_tool_executions(session, run_id=response.run_id, summary=summary)
     await persist_evaluation_result(session, request=request, result=result)
 
@@ -578,14 +591,7 @@ async def update_orchestration_result(
     incident = _incident_payload(result)
     if incident is not None:
         severity, code, detail = incident
-        session.add(
-            Incident(
-                run_id=response.run_id,
-                severity=severity,
-                code=code,
-                detail=detail,
-            )
-        )
+        _add_incident(session, run_id=response.run_id, severity=severity, code=code, detail=detail)
     await persist_tool_executions(session, run_id=response.run_id, summary=summary)
     await persist_evaluation_result(session, request=request, result=result)
 
@@ -728,13 +734,12 @@ async def apply_approval_decision(
             "status": "denied",
             "updated_at": approval["decided_at"],
         }
-        session.add(
-            Incident(
-                run_id=run.run_id,
-                severity="high",
-                code="approval_denied",
-                detail=run.decision_reason,
-            )
+        _add_incident(
+            session,
+            run_id=run.run_id,
+            severity="high",
+            code="approval_denied",
+            detail=run.decision_reason,
         )
     elif decision.decision == "request_changes":
         run.status = "awaiting_approval"

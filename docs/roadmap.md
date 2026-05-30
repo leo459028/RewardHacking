@@ -1,4 +1,4 @@
-# Roadmap v0.8
+# Roadmap v1.0
 
 本 roadmap 將專案從 prototype 推進到可逐步承擔 guardrail 職責的服務。`v0.3.0` 起不再把 Kafka、Redis、Tool Executor、Approval 視為互不相干的線性 phase，而是先建立一條可展示、可查詢、可審計的產品閉環，再把完整 hardening 與 production governance 放到後續版本。
 
@@ -12,8 +12,9 @@
 | `v0.5.0` | 已完成 | Evaluator + Observability | 補 task-specific evaluator、deterministic judge signal、worker metrics、SLO 與 Dashboard 趨勢。 |
 | `v0.6.0` | 已完成 | Tenant Governance MVP | 補 API key auth、Dashboard Basic Auth、tenant-aware audit、Redis quota 與 Governance Dashboard。 |
 | `v0.7.0` | 已完成 | Tenant Governance Center | 補 DB-backed tenant 設定、API key hash 儲存、RBAC-lite、tenant quota override 與 Governance Dashboard 查詢區塊。 |
-| `v0.8.0` | 目前版本 | Production Operations Gate | 補 Operations Dashboard、operations evidence、release readiness、release gate snapshot 與 `X-Trace-Id` 基線。 |
-| `v0.9+` | 規劃中 | Production Operations Automation | 補真實 backup/restore automation、retention purge、secret rotation automation、完整 OpenTelemetry 與 Kafka lag alert。 |
+| `v0.8.0` | 已完成 | Production Operations Gate | 補 Operations Dashboard、operations evidence、release readiness、release gate snapshot 與 `X-Trace-Id` 基線。 |
+| `v1.0.0` | 目前版本 | Production Ready：A + C-lite | 將 release gate 升級為 production readiness blocker，補 safety regression evidence、敏感 read API auth coverage、HTTP metrics、incident counter 與 red-team corpus regression。 |
+| `v1.1+` | 規劃中 | Production Operations Automation / C-full | 補真實 backup/restore automation、retention purge、secret rotation automation、完整 OpenTelemetry、Kafka lag alert、LLM judge 與更完整評測資料集。 |
 
 ## Milestone：v0.2.0 / Phase 0-2 + Dashboard
 
@@ -179,6 +180,26 @@
 - 自動 retention purge。
 - 完整 OpenTelemetry SDK。
 - 真實 Kafka broker consumer lag alert。
+
+## Milestone：v1.0.0 / Production Ready：A + C-lite
+
+目標：把 v0.8 的可查詢營運閘門升級為 production readiness baseline。v1.0 不宣稱完成真實 OS sandbox 或外部 LLM judge，而是讓 release gate 在正式環境能根據營運證據、安全 regression 與阻擋條件 fail closed。
+
+已完成項目：
+
+- Operations evidence 新增 `safety_regression`，`/dashboard/operations` 可新增與查詢。
+- `/v1/operations/readiness` 新增 `safety_regression_evidence` check；`APP_ENV=prod` 時缺少 fresh safety regression evidence 會 fail。
+- Release gate snapshot 會保存 safety regression check item。
+- `AUTH_ENABLED=true` 時，`/v1/metrics`、worker DLQ、run subresources、observability summary 與 dashboard summary 都需要 `X-API-Key`。
+- Prometheus metrics 新增 HTTP request counter / latency；incident 建立時會遞增 `agent_incidents_total{severity,code}`。
+- 新增 deterministic red-team corpus regression，覆蓋 prompt injection、PII exfiltration、destructive action、tool budget abuse、external network bypass、system/developer instruction reveal、done shortcut 與 not tested。
+- FastAPI / package version 更新為 `1.0.0`。
+
+本段不包含：
+
+- 外部 LLM-as-judge 或大型標註資料平台；`LLM_JUDGE_ENABLED` 預設仍為 `false`。
+- OAuth/SSO 或完整企業 IAM；本版仍使用 DB-managed API key、RBAC-lite 與 Dashboard Basic Auth。
+- 真實 OS sandbox、真實 backup/restore automation、secret rotation automation、retention purge、完整 OpenTelemetry 或 Kafka broker lag alert。
 
 ## 優先順序
 

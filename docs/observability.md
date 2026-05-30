@@ -1,8 +1,8 @@
-# Observability v0.8
+# Observability v1.0
 
-本專案目前提供 Prometheus metrics 與 structured logging 的基礎。Dashboard 會從 Postgres audit trail 讀取 runs/incidents/governance events；Prometheus metrics 仍由 `/v1/metrics` 提供。
+本專案目前提供 Prometheus metrics 與 structured logging 的基礎。Dashboard 會從 Postgres audit trail 讀取 runs/incidents/governance events/operations evidence；Prometheus metrics 仍由 `/v1/metrics` 提供。`AUTH_ENABLED=true` 時，`/v1/metrics` 需要 `X-API-Key`，允許 `viewer/operator/admin` 讀取。
 
-目前 observability 基線：`v0.8.0`
+目前 observability 基線：`v1.0.0`
 
 ## Metrics Endpoint
 
@@ -14,6 +14,8 @@ GET /v1/metrics
 
 | Metric | Type | Labels | 說明 |
 | --- | --- | --- | --- |
+| `http_requests_total` | Counter | `method`、`path`、`status` | API HTTP request count |
+| `http_request_duration_seconds` | Histogram | `method`、`path`、`status` | API HTTP request latency |
 | `agent_requests_total` | Counter | `status` | 依 response status 統計 `/v1/agent/submit` 與 `/v1/agent/submit-with-details` |
 | `agent_policy_risk_score` | Histogram | 無 | policy risk score 分布 |
 | `agent_evaluation_final_score` | Histogram | 無 | detailed submit 的 evaluation final score 分布 |
@@ -23,6 +25,7 @@ GET /v1/metrics
 | `agent_worker_retries_total` | Counter | 無 | worker retry count |
 | `agent_worker_dlq_total` | Counter | 無 | worker DLQ count |
 | `agent_evaluator_verdicts_total` | Counter | `verdict` | evaluator pass/review count |
+| `agent_incidents_total` | Counter | `severity`、`code` | incident 建立時依嚴重度與代碼遞增 |
 
 注意：`agent_evaluation_final_score` 目前只在 `/v1/agent/submit-with-details` 中更新；兩個 submit endpoint 都會更新 request count 與 policy risk score。
 
@@ -87,8 +90,7 @@ API：
 
 - `http_request_duration_seconds`
 - `http_requests_total{method,path,status}`
-- `agent_policy_decisions_total{decision}`
-- `agent_policy_flags_total{flag}`
+- `agent_policy_decisions_total{status}`：已加入，label 使用最終 run/request status。
 - `agent_incidents_total{severity,code}`
 
 Database：
@@ -116,7 +118,7 @@ Safety：
 
 ## Tracing
 
-`v0.8.0` 已加入 `X-Trace-Id` 基線：API 會沿用 request header 或產生 trace id，並回傳 response header；submit flow 會把 trace id 放入 request metadata 與 Kafka event payload。後續仍建議導入 OpenTelemetry，trace span 可切成：
+`v1.0.0` 延續 `X-Trace-Id` 基線：API 會沿用 request header 或產生 trace id，並回傳 response header；submit flow 會把 trace id 放入 request metadata 與 Kafka event payload；release gate snapshot 會保存建立當下的 trace id。後續仍建議導入 OpenTelemetry，trace span 可切成：
 
 - API request。
 - prompt sanitation。
@@ -172,4 +174,4 @@ Safety：
 - 更細的 tenant/user time-series filters。
 - 真正的 OpenTelemetry span 與 Kafka consumer lag alert。
 
-補充：`app/observability/metrics.py` 目前已定義 `agent_incidents_total{severity,code}`，但 request path 尚未 increment 這個 counter；incident 趨勢仍以 Postgres audit tables 與 Dashboard summary 為準。
+補充：v1.0 已讓 request path 在建立 incident 時遞增 `agent_incidents_total{severity,code}`；Dashboard incident 趨勢仍以 Postgres audit tables 與 summary 為主要資料來源。

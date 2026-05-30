@@ -1,8 +1,8 @@
-# 架構文件 v0.8
+# 架構文件 v1.0
 
 本專案目前是 Agent Reward-Hacking Guardrail 的 guarded async execution hardening 版本。核心流程是 FastAPI API 接收 agent request、進行 prompt sanitation、risk scoring 與 policy decision；低風險任務寫入 Postgres audit trail、標記為 `queued`，並 publish Kafka request event；worker 重新讀取 run、重跑 policy、執行 bounded executor、evaluate 結果並寫回 audit trail。高風險或 destructive 任務會進入 `awaiting_approval`，由 Dashboard 或 API 進行審核。
 
-目前架構版本：`v0.8.0`
+目前架構版本：`v1.0.0`
 
 ## 目前架構
 
@@ -48,7 +48,8 @@ flowchart LR
 - API key auth 與 Dashboard Basic Auth MVP。
 - Tenant-aware audit trail、Redis tenant quota 與 governance event 查詢。
 - DB-backed tenant 設定、API key hash 儲存、RBAC-lite 與 tenant quota override。
-- Operations evidence、release gate snapshot、release readiness checks 與 `X-Trace-Id` response header。
+- Operations evidence、safety regression evidence、release gate snapshot、release readiness checks 與 `X-Trace-Id` response header。
+- 敏感 read API 的 API key auth coverage、HTTP request metrics 與 incident counter。
 
 目前尚未完整接入：
 
@@ -132,7 +133,7 @@ sequenceDiagram
 - `quota.py`：使用 state store 做 tenant request quota 與 high-risk quota 檢查；v0.7 可由 tenant DB 設定覆蓋全域預設。
 - `events.py`：Kafka 與 in-memory event publisher。
 - `evaluator.py`：以 heuristic 評估 shortcut、hallucination、policy violation。
-- `operations.py`：計算 release readiness、保存 operations evidence 與 release gate snapshot。
+- `operations.py`：計算 release readiness、保存 operations/safety regression evidence 與 release gate snapshot。
 - `audit_log.py`：封裝 run/incident persistence、approval decision 與 dashboard summary 查詢。
 
 ### `app/infra`
@@ -148,7 +149,7 @@ sequenceDiagram
 - `GovernanceEvent`：保存 quota hit 與 high-risk quota fail-closed 等治理事件。
 - `Tenant`：保存 tenant 名稱、狀態與 tenant-level quota。
 - `TenantApiKey`：保存 API key hash、prefix、role、status 與撤銷狀態。
-- `OperationsEvidence`：保存 backup/restore、secret rotation 等人工營運證據。
+- `OperationsEvidence`：保存 backup/restore、secret rotation、safety regression 等人工營運證據。
 - `ReleaseGateRun` / `ReleaseGateItem`：保存 release gate snapshot 與每個檢查項目。
 
 ### `app/workers`
@@ -206,4 +207,4 @@ sequenceDiagram
 - Redis 是短期 state 與 breaker，不是唯一 audit store。
 - Approval workflow 已有 TTL、reviewer、request changes 與 event audit；多 reviewer queue 與權限控管放到後續版本。
 - Dashboard 已有可選 Basic Auth MVP；正式公開前仍應接入更完整的 SSO/RBAC 或反向代理保護。
-- Operations Gate 保存 readiness 與人工 evidence，不會自動執行真實備份、還原、purge 或 secret rotation。
+- Operations Gate 保存 readiness 與人工 evidence，不會自動執行真實備份、還原、purge、safety regression 或 secret rotation。

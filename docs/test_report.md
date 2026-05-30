@@ -4,6 +4,144 @@
 
 請不要只填預期結果；如果某項驗證沒有執行，要清楚寫明原因。例如：純文件修改未啟動 Docker、Docker Desktop 尚未開啟、或本次沒有影響 Dashboard。
 
+## 2026-05-30 - v1.0 文件與程式碼同步審核
+
+- 版本：`v1.0.0`
+- 分支：`codex/v1-production-ready`
+- 範圍：依使用者要求檢查 README 與 `docs/` 是否跟程式碼同步；同步比對 API routes、Dashboard routes、Settings / `.env.example`、migration 清單、metrics 名稱、Operations readiness checks 與 RBAC 行為。
+
+### 發現與修正
+
+| 項目 | 實際處理 |
+| --- | --- |
+| Dashboard route 文件 | 補上 Dashboard 表單 POST routes：`/dashboard/playground`、`/dashboard/approvals/{run_id}/decision`、`/dashboard/operations/evidence`、`/dashboard/operations/release-gates`。 |
+| Operations readiness 文件 | `docs/api.md` 的 readiness check 清單補上 `safety_regression_evidence`。 |
+| Operations evidence 文件 | `docs/data_model.md` 的 `operations_evidence.evidence_type` 範例補上 Dashboard 目前支援的 `retention_review`。 |
+| Observability metrics 文件 | `docs/observability.md` 修正 `agent_policy_decisions_total` label 為 `{status}`，並移除目前程式碼不存在的 policy flags metric。 |
+| Approval decision RBAC | 文件原本描述 mutation endpoint 應由 `operator/admin` 操作；程式碼缺少明確 `require_role`。已在 `/v1/approvals/{run_id}/decision` 補上 `operator/admin` 檢查，並讓 `/v1/approvals` 明確允許 `viewer/operator/admin` 讀取。 |
+| RBAC 文件 | `README.md`、`docs/api.md`、`docs/security.md` 同步寫明 `operator` 可處理 approval decision，`viewer` 送出 decision 會回 `403 insufficient_role`。 |
+
+### 同步比對結果
+
+| 比對項目 | 實際結果 |
+| --- | --- |
+| API route vs `docs/api.md` | 通過，`missing_api_doc=[]`。 |
+| Dashboard route vs `docs/dashboard.md` / `docs/api.md` | 通過，`missing_dashboard_doc=[]`。 |
+| `Settings` vs `docs/configuration.md` | 通過，`missing_config_doc=[]`。 |
+| `Settings` vs `.env.example` | 通過，`missing_env_example=[]`。 |
+| Alembic migration files vs `docs/migrations.md` | 通過，`missing_migration_doc=[]`。 |
+| stale docs pattern search | 通過，未再在文件本文找到舊的 policy decision label 或不存在的 policy flags metric。 |
+
+### 測試結果
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `pytest tests/test_v10_production_ready.py -q` | 通過，`6 passed in 1.08s`。新增 viewer 不可送出 approval decision、operator 可送出的回歸測試。 |
+| `ruff check app tests` | 通過，`All checks passed!` |
+| `pytest -q` | 通過，`43 passed in 4.85s`。 |
+| `git diff --check` | 通過，無 whitespace error。 |
+
+### Dashboard / Docker 驗證狀態
+
+- 本次主要是文件與 API RBAC 同步審核，未修改 Dashboard template 或 Docker 設定；Dashboard 全流程點擊與 Docker rebuild 已在同日上一筆「v1.0 完整重測與 Dashboard 輸入點擊驗證」完成。
+- 本次有比對 Dashboard route 清單，並確認所有 Dashboard GET/POST route 已出現在文件中。
+- 未重新執行 Docker rebuild；原因是本次修改不涉及 container runtime、migration、Dockerfile 或 compose 設定。
+
+## 2026-05-30 - v1.0 完整重測與 Dashboard 輸入點擊驗證
+
+- 版本：`v1.0.0`
+- 分支：`codex/v1-production-ready`
+- 範圍：依使用者要求做完整重測，包含 CLI 測試、Docker / API smoke、Dashboard 表單模擬輸入與實際點擊。此次只新增本測試紀錄，未變更產品程式碼。
+- 測試環境：Windows PowerShell、Docker Desktop、Docker Compose stack `rewardhacking-*`、Codex in-app Browser。
+
+### 自動化測試結果
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `ruff check app tests` | 通過，輸出 `All checks passed!` |
+| `pytest -q` | 通過，`42 passed in 4.64s` |
+| `git diff --check` | 通過，無 whitespace error |
+
+### Docker / API 驗證結果
+
+| 命令或端點 | 實際結果 |
+| --- | --- |
+| `docker compose up -d --build` | 通過，`rewardhacking-api`、`rewardhacking-worker` image 完成 build，`api` / `worker` container 重新建立並啟動，`kafka-init` 正常結束。 |
+| `docker compose ps` | 第一次在 sandbox 內因 Docker config / daemon 權限被拒；提升權限後通過。`api`、`worker`、`postgres`、`redis`、`kafka` 全部 Up，`postgres`、`redis`、`kafka` 為 healthy。 |
+| `docker compose exec -T api alembic current` | 第一次在 sandbox 內因 Docker daemon 權限被拒；提升權限後通過，顯示 `202605250002 (head)`。 |
+| `GET /v1/healthz` | HTTP 200，回應 `{"status":"ok"}`。 |
+| `GET /v1/readyz` | HTTP 200，回應 `{"status":"ready"}`。 |
+
+### Dashboard Browser 輸入 / 點擊驗證
+
+| 流程 | 實際結果 |
+| --- | --- |
+| `/dashboard/operations` 載入 | 通過，頁面顯示 `Operations`、`safety_regression`、`safety_regression_evidence`、`v1.0.0`。 |
+| Operations evidence 表單 | 通過，實際選擇 `safety_regression`，輸入 reference `docs/test_report.md#v10-full-dashboard-qa`、summary `Full Dashboard QA safety regression evidence click.`，點擊 `Save Evidence` 後 evidence 出現在頁面。 |
+| Release gate snapshot 表單 | 通過，輸入 release version `v1.0.0-full-dashboard-qa`、created by `dashboard-full-qa`，點擊 `Create Release Gate Snapshot` 後 gate 出現在頁面，且 snapshot 包含 `safety_regression_evidence`。目前 gate 狀態為 `fail`，原因是既有 open high/critical incidents 與 expired approvals，符合 fail-closed 預期。 |
+| Playground 低風險請求 | 通過，輸入 tenant `qa-v10-dashboard-full`、user `qa-v10-low-risk-user`、task `analysis`、tools `read_data, summarize`、max calls `4`、goal / prompt 後點擊 `Submit Run`。產生 run `028e4883-8a12-4ab5-89c0-c42bee7944fc`，結果包含 `queued` / `Open run detail`。 |
+| Run detail 點擊檢查 | 通過，開啟 `/dashboard/runs/028e4883-8a12-4ab5-89c0-c42bee7944fc` 後 worker 完成，狀態為 `completed`，頁面顯示 `Policy`、`Event Timeline`、`Tool Transcript`、`Worker Attempts`。 |
+| Playground 高風險 denied 檢查 | 通過，輸入 prompt injection / PII / external network / large budget 案例後，run `c823e9f7-314f-41de-8ff8-fcf8bf585e6d` 被直接 `denied`，並顯示 `prompt_injection_signals`、`pii_access_requested`、`external_network_allowed`、`large_tool_budget`。 |
+| Playground approval queue 檢查 | 通過，輸入 PII access 案例後產生 run `e3431d06-a09e-420a-ab50-c3d9ead58319`，狀態為 `awaiting_approval`，並顯示 `pii_access_requested`。 |
+| Approval Queue reason + Deny 點擊 | 通過，開啟 `/dashboard/approvals`，確認 run `e3431d06-a09e-420a-ab50-c3d9ead58319` 在待審核列表，輸入 reason `Full Dashboard QA deny click` 並點擊 `Deny`，送出後該 run 從 queue 移除。 |
+| `/dashboard/observability` 載入 | 通過，頁面顯示 `Observability Trends`、worker、incident、approval pending、evaluator 與 SLO 摘要。 |
+
+### 限制與已知狀態
+
+- Docker 指令在一般 sandbox 內無法存取 Docker config / daemon，已依流程提升權限後完成驗證。
+- Operations readiness / release gate 目前維持 `fail`，不是測試失敗；原因是資料庫已有 open high/critical incidents 與 expired approvals，符合 v1.0 production gate fail-closed 設計。
+- Browser 驗證截圖已由 Codex in-app Browser 產出供本次 QA 檢視，未另存成 repo artifact。
+- 本次重測新增了 Dashboard QA evidence、release gate snapshot 與測試 run / approval 決策資料，屬於測試環境狀態資料。
+
+## 2026-05-30 - v1.0 Production Ready A + C-lite
+
+- 版本：`v1.0.0`
+- 變更範圍：新增 `safety_regression` operations evidence、`safety_regression_evidence` release readiness check、production release gate blocker、敏感 read API auth coverage、HTTP request metrics、incident counter increment、red-team corpus regression；同步 README 與 docs。
+- 測試環境：Windows PowerShell、Python 3.11、Docker Desktop、Docker Compose stack `rewardhacking-*`、Codex in-app Browser。
+
+### 自動化測試結果
+
+| 項目 | 實際結果 |
+| --- | --- |
+| `pytest tests/test_v10_production_ready.py -q` | 先紅燈，5 failed：缺少 `safety_regression_evidence` check、`/v1/metrics` 尚未要求 auth、incident counter 尚未 increment、system/developer instruction reveal 尚未被 sanitizer 偵測；調整 incident 測試資料後仍維持 5 個預期紅燈。 |
+| `pytest tests/test_v10_production_ready.py -q` | 實作後通過，5 passed。 |
+| `pytest tests/test_v08_operations_gate.py tests/test_v07_governance_center.py tests/test_v06_governance.py -q` | 通過，17 passed。 |
+| `ruff check app tests` | 通過，All checks passed。 |
+| `pytest -q` | 通過，42 passed in 4.42s。 |
+| `alembic upgrade head` | 第一次在 host 執行失敗，原因是 Postgres `localhost:5432` 拒絕連線；Docker stack 啟動後重跑通過。 |
+| `git diff --check` | 通過，沒有 whitespace error。 |
+
+### Docker / API 驗證結果
+
+| 項目 | 實際結果 |
+| --- | --- |
+| `docker compose up -d --build` | sandbox 內第一次失敗，原因是 Docker config / daemon 權限被拒；升權後通過，api/worker image 重建並啟動。 |
+| `docker compose ps` | 通過，api、worker、postgres、redis、kafka 皆 Up；postgres、redis、kafka healthy。 |
+| `docker compose exec -T api alembic current` | 通過，顯示 `202605250002 (head)`。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/healthz` | 通過，HTTP 200，回 `{"status":"ok"}`。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/readyz` | 通過，HTTP 200，回 `{"status":"ready"}`。 |
+| `POST /v1/operations/evidence` | 通過，建立 `safety_regression` evidence，summary 為 `v1.0 deterministic red-team corpus passed locally.`，response header 使用 `trace-v10-safety-evidence`。 |
+| `GET /v1/operations/readiness` | 通過，HTTP 200；目前本機既有 audit history 下整體 status 為 `fail`，阻擋項包含 high/critical incidents 與 expired approvals；`safety_regression_evidence` 為 `pass`。 |
+| `POST /v1/operations/release-gates` | 通過，建立 `gate_da9fb2db58d1`，release version `v1.0.0`，response header 回 `x-trace-id: trace-v10-release-gate`；gate 整體 `fail`，原因是既有 blocking incidents / expired approvals，且 item 包含 `safety_regression_evidence: pass`。 |
+
+### Dashboard / Browser 驗證結果
+
+- Browser：Codex in-app Browser。
+- 入口：`http://localhost:8000/dashboard/operations`、`/dashboard/observability`。
+
+| 流程 | 實際結果 |
+| --- | --- |
+| Operations page identity | 通過，URL 為 `/dashboard/operations`，title 為 `Operations | 營運中心`，DOM 包含 `Operations`、`safety_regression`、`safety_regression_evidence` 與 `v1.0.0`，console error/warn 為 0。 |
+| Operations evidence form interaction | 通過，選擇 `safety_regression`，填入 reference `docs/test_report.md#v10-dashboard-qa` 與 summary `Browser v1.0 safety regression evidence form smoke.`，點 `Save Evidence` 後頁面重新載入且 DOM 顯示該 evidence，console error/warn 為 0。 |
+| Observability page render | 通過，HTTP 200 / Browser 可載入，title 為 `Observability Trends | 可觀測性趨勢`，頁面顯示 worker、incident、approval、evaluator 與 SLO summary。 |
+
+### 限制與已知問題
+
+- v1.0 不接外部 LLM judge；`LLM_JUDGE_ENABLED` 預設仍為 `false`。
+- v1.0 production ready 指 guardrail、audit、auth coverage、metrics、release gate 與 safety regression baseline ready；`BoundedToolExecutor` 仍只記錄 `simulated` / `blocked` transcript，不是真實 OS sandbox。
+- Docker stack 沿用本機既有資料庫，因此 release readiness 顯示 `fail`；阻擋原因是既有 high severity incidents 與 expired approvals，這符合 release gate fail-closed 設計，不代表 API 或 Dashboard 故障。
+- Docker 驗證需要升權，原因是 sandbox 內無法讀取 Docker config 且無法連線 Docker daemon。
+
 ## 2026-05-25 - 文件與程式碼同步檢查
 
 - 版本：`v0.8.0`

@@ -143,12 +143,12 @@ Table：`tenant_api_keys`
 
 Table：`operations_evidence`
 
-記錄 v0.8 Operations Gate 使用的人工營運證據，例如 backup/restore drill、secret rotation 或 retention review。這是審計證據，不會自動執行實際備份、還原或輪替。
+記錄 Operations Gate 使用的人工營運證據，例如 backup/restore drill、secret rotation、safety regression 或 retention review。這是審計證據，不會自動執行實際備份、還原、輪替或 red-team 測試。
 
 | 欄位 | 型別 | 說明 |
 | --- | --- | --- |
 | `id` | integer | primary key |
-| `evidence_type` | string | 例如 `backup_restore_drill`、`secret_rotation` |
+| `evidence_type` | string | 例如 `backup_restore_drill`、`secret_rotation`、`safety_regression`、`retention_review` |
 | `status` | string | `pass`、`warn` 或 `fail` |
 | `summary` | text | 人可讀證據摘要 |
 | `reference_url` | string | 文件、測試報告或外部紀錄位置 |
@@ -165,12 +165,12 @@ Tables：`release_gate_runs`、`release_gate_items`
 | 欄位 | 型別 | 說明 |
 | --- | --- | --- |
 | `gate_id` | string | 對外查詢 release gate 的 ID |
-| `release_version` | string | 例如 `v0.8.0` |
+| `release_version` | string | 例如 `v1.0.0` |
 | `status` | string | `pass`、`warn` 或 `fail` |
 | `summary` | text | gate 結果摘要 |
 | `created_by` | string | 建立者 |
 | `trace_id` | string | 建立 gate 時的 `X-Trace-Id` |
-| `check_key` | string | item 檢查鍵，例如 `backup_restore_evidence` |
+| `check_key` | string | item 檢查鍵，例如 `backup_restore_evidence`、`safety_regression_evidence` |
 | `title` / `detail` | string / text | item 顯示文字 |
 | `metadata_payload` | JSON | item 補充資訊 |
 
@@ -201,7 +201,7 @@ Tables：`release_gate_runs`、`release_gate_items`
 - `worker.failed`
 - `approval.decision`
 
-`v0.8.0` 的 HTTP `X-Trace-Id` 會寫入 submit request 的 `metadata.trace_id`，並跟著 `agent.requests` 的 `payload.request.metadata.trace_id` 傳給 worker。`BaseEvent.trace_id` 目前由 event helper 另行產生 UUID；後續若導入完整 OpenTelemetry，應把 HTTP response header、Kafka envelope、logs 與 database 的 trace id 對齊。
+`v1.0.0` 的 HTTP `X-Trace-Id` 會寫入 submit request 的 `metadata.trace_id`，並跟著 `agent.requests` 的 `payload.request.metadata.trace_id` 傳給 worker；release gate snapshot 也會保存建立當下的 trace id。`BaseEvent.trace_id` 目前由 event helper 另行產生 UUID；後續若導入完整 OpenTelemetry，應把 HTTP response header、Kafka envelope、logs 與 database 的 trace id 對齊。
 
 ## 資料生命週期建議
 
