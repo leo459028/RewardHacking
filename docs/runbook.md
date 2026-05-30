@@ -1,8 +1,8 @@
-# Runbook v0.8
+# Runbook v1.0
 
-此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail、Kafka worker、Redis run state、approval queue、worker retry/DLQ、tool execution audit、evaluator/observability summary 與 tenant governance 已接入 request path。
+此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail、Kafka worker、Redis run state、approval queue、worker retry/DLQ、tool execution audit、evaluator/observability summary、tenant governance、production readiness gate 與 safety regression evidence 已接入 request path。
 
-目前營運基線：`v0.8.0`
+目前營運基線：`v1.0.0`
 
 ## 快速檢查
 
@@ -325,10 +325,10 @@ docker compose up kafka-init
 
 1. 查看 `/dashboard/operations` 的 Readiness Checks，確認是哪個 `check_key` 阻擋。
 2. 若是 `worker_dlq`、`stale_queued_runs` 或 `blocking_incidents`，先處理 worker、approval 或 incident，不要直接 release。
-3. 若是 `backup_restore_evidence` 或 `secret_rotation_evidence` 為 `warn`，補做人工 drill 後透過 Dashboard 或 API 建立 evidence。
+3. 若是 `backup_restore_evidence`、`secret_rotation_evidence` 或 `safety_regression_evidence` 為 `warn` / `fail`，補做人工 drill 或 red-team corpus regression 後透過 Dashboard 或 API 建立 evidence。
 4. 若是 `bootstrap_keys_in_prod`，確認正式環境不要依賴 `.env` 的 `API_KEYS` fallback，改用 DB-managed API key 或正式 IAM。
 
-注意：v0.8 的 Operations Gate 是審計與 readiness 層，不會自動執行 backup/restore、secret rotation 或 retention purge。
+注意：v1.0 的 Operations Gate 是審計與 readiness 層，不會自動執行 backup/restore、secret rotation、safety regression 或 retention purge。`APP_ENV=prod` 時缺少 fresh safety regression evidence 會讓 release gate fail closed。
 
 ## 12. Redis 問題
 

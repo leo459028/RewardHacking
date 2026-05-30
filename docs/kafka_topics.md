@@ -1,6 +1,6 @@
 # Kafka Topics
 
-Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execution、evaluation 與 incident processing。`v0.8.0` 目前 API 會在低風險 request 建立 `queued` run 後 publish `agent.requests`，worker 會消費該 topic 並寫回 Postgres audit trail；retry/backoff、DLQ audit、tenant_id request payload 與 HTTP `X-Trace-Id` metadata 已納入。Kafka consumer lag alert 與完整 OpenTelemetry trace propagation 尚未納入本版。
+Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execution、evaluation 與 incident processing。`v1.0.0` 目前 API 會在低風險 request 建立 `queued` run 後 publish `agent.requests`，worker 會消費該 topic 並寫回 Postgres audit trail；retry/backoff、DLQ audit、tenant_id request payload 與 HTTP `X-Trace-Id` metadata 已納入。Kafka consumer lag alert 與完整 OpenTelemetry trace propagation 尚未納入本版。
 
 ## Topic 清單
 
@@ -27,7 +27,7 @@ Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execut
 }
 ```
 
-注意：`v0.8.0` 的 HTTP `X-Trace-Id` 會保存到 `payload.request.metadata.trace_id`。Event envelope 的 `trace_id` 目前仍由 `make_event()` 另外產生 UUID，尚未和 HTTP trace id 完全對齊；後續導入 OpenTelemetry 時應讓 API response header、Kafka envelope、logs 與 database 使用同一條 trace。
+注意：`v1.0.0` 的 HTTP `X-Trace-Id` 會保存到 `payload.request.metadata.trace_id`。Event envelope 的 `trace_id` 目前仍由 `make_event()` 另外產生 UUID，尚未和 HTTP trace id 完全對齊；release gate snapshot 會保存建立當下的 HTTP trace id；後續導入 OpenTelemetry 時應讓 API response header、Kafka envelope、logs 與 database 使用同一條 trace。
 
 ## `agent.requests`
 

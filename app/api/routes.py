@@ -197,7 +197,8 @@ async def readyz(session: AsyncSession = Depends(get_session)):
 
 
 @router.get("/metrics")
-async def metrics():
+async def metrics(auth_context: AuthContext = Depends(get_auth_context)):
+    require_role(auth_context, "viewer", "operator", "admin")
     return Response(generate_latest(), media_type="text/plain; version=0.0.4")
 
 
@@ -653,6 +654,7 @@ async def get_approvals(
     auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
+    require_role(auth_context, "viewer", "operator", "admin")
     tenant_id = _query_tenant(tenant_id, auth_context)
     return await list_approvals(
         session,
@@ -672,6 +674,7 @@ async def decide_approval(
     state_store: RunStateStore = Depends(get_state_store),
     event_publisher: EventPublisher = Depends(get_event_publisher),
 ):
+    require_role(auth_context, "operator", "admin")
     run = await apply_approval_decision(session, run_id, decision)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
@@ -720,21 +723,35 @@ async def get_run_by_id(
 @router.get("/runs/{run_id}/worker-attempts", response_model=list[WorkerAttemptRecord])
 async def get_run_worker_attempts(
     run_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
+    require_role(auth_context, "viewer", "operator", "admin")
+    run = await get_run(session, run_id)
+    if run is not None:
+        _query_tenant(run.tenant_id, auth_context)
     return await list_worker_attempts(session, run_id=run_id)
 
 
 @router.get("/runs/{run_id}/tool-executions", response_model=list[ToolExecutionRecord])
 async def get_run_tool_executions(
     run_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
+    require_role(auth_context, "viewer", "operator", "admin")
+    run = await get_run(session, run_id)
+    if run is not None:
+        _query_tenant(run.tenant_id, auth_context)
     return await list_tool_executions(session, run_id=run_id)
 
 
 @router.get("/worker/dlq", response_model=list[WorkerAttemptRecord])
-async def get_worker_dlq(session: AsyncSession = Depends(get_session)):
+async def get_worker_dlq(
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
     return await list_worker_attempts(session, status="dlq")
 
 
@@ -756,7 +773,11 @@ async def get_evaluations(
 
 
 @router.get("/observability/summary")
-async def get_observability_summary(session: AsyncSession = Depends(get_session)):
+async def get_observability_summary(
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
     summary = await observability_summary(session)
     return {
         "worker": summary.worker,
@@ -789,13 +810,22 @@ async def get_incidents(
 @router.get("/runs/{run_id}/incidents", response_model=list[IncidentRecord])
 async def get_run_incidents(
     run_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
+    require_role(auth_context, "viewer", "operator", "admin")
+    run = await get_run(session, run_id)
+    if run is not None:
+        _query_tenant(run.tenant_id, auth_context)
     return await incidents_for_run(session, run_id)
 
 
 @router.get("/dashboard/summary", response_model=DashboardSummaryResponse)
-async def get_dashboard_summary(session: AsyncSession = Depends(get_session)):
+async def get_dashboard_summary(
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
     summary = await dashboard_summary(session)
     return DashboardSummaryResponse(
         total_runs=summary.total_runs,

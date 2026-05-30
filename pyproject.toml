@@ -1,6 +1,6 @@
 [project]
 name = "reward-hacking-guardrail"
-version = "0.8.0"
+version = "1.0.0"
 description = "Agent guardrail prototype for preventing reward hacking"
 requires-python = ">=3.11"
 dependencies = [

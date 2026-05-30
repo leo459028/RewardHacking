@@ -1,13 +1,13 @@
-# Migration 指南 v0.8
+# Migration 指南 v1.0
 
 本專案已導入 Alembic，初始 migration 會建立：
 
-目前 migration baseline：`v0.8.0`
+目前 migration baseline：`v1.0.0`
 
 - `agent_runs`
 - `incidents`
 
-目前 head 會一路套用到 `202605250002`。`v0.5.0` 在原本 `agent_runs`、`incidents` 之外，新增 worker、tool、approval 與 evaluation audit tables。`v0.6.0` 新增 `agent_runs.tenant_id`，既有資料 backfill 為 `default`，並建立 `governance_events` audit table。`v0.7.0` 新增 `tenants` 與 `tenant_api_keys`，並從既有 `agent_runs.tenant_id` backfill tenant 設定。`v0.8.0` 新增 `operations_evidence`、`release_gate_runs` 與 `release_gate_items`，用於保存 release readiness、營運證據與 release gate snapshot。
+目前 head 會一路套用到 `202605250002`。`v0.5.0` 在原本 `agent_runs`、`incidents` 之外，新增 worker、tool、approval 與 evaluation audit tables。`v0.6.0` 新增 `agent_runs.tenant_id`，既有資料 backfill 為 `default`，並建立 `governance_events` audit table。`v0.7.0` 新增 `tenants` 與 `tenant_api_keys`，並從既有 `agent_runs.tenant_id` backfill tenant 設定。`v0.8.0` 新增 `operations_evidence`、`release_gate_runs` 與 `release_gate_items`，用於保存 release readiness、營運證據與 release gate snapshot。`v1.0.0` 沒有新增資料表或 migration，`safety_regression` 沿用 `operations_evidence.evidence_type` 保存。
 
 Migration 檔案位於：
 

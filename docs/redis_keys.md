@@ -1,6 +1,6 @@
 # Redis Keys
 
-Redis 用於短期 state、cache、approval token、rate limit、circuit breaker 與 worker coordination。`v0.8.0` 目前已接入 API/worker flow 的 run state、worker idempotency key、tool circuit breaker、tenant request quota 與 high-risk quota。Operations Gate 不新增 Redis key；release readiness 與 evidence 以 Postgres audit tables 為準。
+Redis 用於短期 state、cache、approval token、rate limit、circuit breaker 與 worker coordination。`v1.0.0` 目前已接入 API/worker flow 的 run state、worker idempotency key、tool circuit breaker、tenant request quota 與 high-risk quota。Operations Gate 不新增 Redis key；release readiness、safety regression evidence 與 release gate snapshot 以 Postgres audit tables 為準。
 
 ## Key 命名原則
 

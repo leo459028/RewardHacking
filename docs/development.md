@@ -71,7 +71,7 @@ v0.6 的租戶治理路徑橫跨 schema、auth、quota、audit、API 與 Dashboa
 
 ## Operations Gate 開發注意
 
-v0.8 的 Operations Gate 橫跨 API、Dashboard、schema、model、migration 與營運文件。新增或修改 release readiness、evidence 或 gate 行為時，請同步檢查：
+v1.0 的 Operations Gate 橫跨 API、Dashboard、schema、model、migration、safety regression 與營運文件。新增或修改 release readiness、evidence 或 gate 行為時，請同步檢查：
 
 1. `app/services/operations.py` 的 readiness check 是否有明確 `check_key`、`status`、`detail` 與 metadata。
 2. `app/schemas/audit.py`、`app/models/operations.py` 與 migration 是否維持欄位同步。
