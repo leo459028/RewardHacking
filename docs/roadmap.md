@@ -1,4 +1,4 @@
-# Roadmap v1.1
+# Roadmap v1.2
 
 本 roadmap 將專案從 prototype 推進到可逐步承擔 guardrail 職責的服務。`v0.3.0` 起不再把 Kafka、Redis、Tool Executor、Approval 視為互不相干的線性 phase，而是先建立一條可展示、可查詢、可審計的產品閉環，再把完整 hardening 與 production governance 放到後續版本。
 
@@ -14,8 +14,9 @@
 | `v0.7.0` | 已完成 | Tenant Governance Center | 補 DB-backed tenant 設定、API key hash 儲存、RBAC-lite、tenant quota override 與 Governance Dashboard 查詢區塊。 |
 | `v0.8.0` | 已完成 | Production Operations Gate | 補 Operations Dashboard、operations evidence、release readiness、release gate snapshot 與 `X-Trace-Id` 基線。 |
 | `v1.0.0` | 已完成 | Production Ready：A + C-lite | 將 release gate 升級為 production readiness blocker，補 safety regression evidence、敏感 read API auth coverage、HTTP metrics、incident counter 與 red-team corpus regression。 |
-| `v1.1.0` | 目前版本 | Classical Chinese Prompt Guard | 偵測古文/文言式繞語包裝的 prompt injection、policy bypass、憑證外洩、破壞資料與惡意程式意圖，並在 API、Dashboard、metrics 與測試中可查。 |
-| `v1.2+` | 規劃中 | Production Operations Automation / C-full | 補真實 backup/restore automation、retention purge、secret rotation automation、完整 OpenTelemetry、Kafka lag alert、LLM judge 與更完整評測資料集。 |
+| `v1.1.0` | 已完成 | Classical Chinese Prompt Guard | 偵測古文/文言式繞語包裝的 prompt injection、policy bypass、憑證外洩、破壞資料與惡意程式意圖，並在 API、Dashboard、metrics 與測試中可查。 |
+| `v1.2.0` | 目前版本 | Control Plane Execution Plan | 新增 workflow/tool registry、execution plan persistence、Run Detail Execution Plan 與 Control Plane Dashboard，讓 queued run 在 worker 執行前已有可審計計畫。 |
+| `v1.3+` | 規劃中 | Production Operations Automation / C-full | 補真實 backup/restore automation、retention purge、secret rotation automation、完整 OpenTelemetry、Kafka lag alert、LLM judge、MCP Gateway、checkpoint/resume 與更完整評測資料集。 |
 
 ## Milestone：v0.2.0 / Phase 0-2 + Dashboard
 
@@ -221,6 +222,26 @@
 - 外部 LLM 翻譯或語義模型。
 - 完整古漢語 NLP。
 - 輸出端古文安全審查；本版聚焦 request ingress。
+
+## Milestone：v1.2.0 / Control Plane Execution Plan
+
+目標：保留現有安全控制面，不重建成完整 Agent 平台；先補上中層 Control Plane 骨架，讓 request 在進入 worker queue 前被轉成可查詢、可審計、可版本化的 execution plan。
+
+已完成項目：
+
+- 新增 builtin + DB-backed workflow registry 與 tool registry。
+- 新增 `execution_plans`，保存 `plan_id`、`run_id`、workflow version、model route、selected tools、steps、approval gates 與 policy snapshot。
+- Submit flow 會在 queued 前建立 execution plan，並在 `evaluation_summary.execution_plan` 保存摘要。
+- Worker 若找不到 execution plan，會 fail closed 到 `awaiting_approval`，加入 `missing_execution_plan` flag。
+- 新增 Control Plane API：`/v1/control-plane/workflows`、`/v1/control-plane/tools` 與 `/v1/runs/{run_id}/execution-plan`。
+- Dashboard 新增 `/dashboard/control-plane`，Run Detail 顯示 Execution Plan 區塊。
+
+本段不包含：
+
+- 真實 MCP Gateway 或外部 tool adapter。
+- LangGraph checkpoint/resume、replay/time travel。
+- 真實 model router 或外部模型呼叫；V1.2 的 model route 是 deterministic metadata。
+- 完整 workflow DSL 或 step-level table；V1.2 先以 JSON 保存 steps。
 
 ## 優先順序
 

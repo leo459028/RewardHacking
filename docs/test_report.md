@@ -4,6 +4,142 @@
 
 請不要只填預期結果；如果某項驗證沒有執行，要清楚寫明原因。例如：純文件修改未啟動 Docker、Docker Desktop 尚未開啟、或本次沒有影響 Dashboard。
 
+## 2026-05-31 - v1.2 文件與程式碼同步審核
+
+- 版本：`v1.2.0`
+- 分支：`codex/v1.2-control-plane`
+- 範圍：檢查 README 與 `docs/` 是否同步目前程式碼、API route、Dashboard route、data model、migration head 與 V1.2 Control Plane 行為；同步更新 `pyproject.toml`、`app/main.py` 版本 metadata、API/Dashboard/architecture/overview/migration/testing/observability/deployment/runbook/configuration/data model/security/development 等文件。
+- Migration：目前文件基線已同步為 `202605310001`，對應 `workflow_definitions`、`tool_definitions` 與 `execution_plans`。
+
+### 文件同步結果
+
+| 檢查項目 | 實際結果 |
+| --- | --- |
+| 版本 metadata | `pyproject.toml` 與 FastAPI app version 已同步為 `1.2.0`。 |
+| API / Dashboard route | 文件已補 `/v1/control-plane/workflows`、`/v1/control-plane/tools`、`/v1/runs/{run_id}/execution-plan` 與 `/dashboard/control-plane`。 |
+| Data model / migration | 文件已同步 V1.2 新增的 `workflow_definitions`、`tool_definitions`、`execution_plans` 與 migration head `202605310001`。 |
+| 安全與開發文件 | 已補 Control Plane execution plan、registry/tool scope、worker missing-plan fail closed 與開發同步檢查清單。 |
+| V1.1 文字 | roadmap、歷史圖資與 Prompt Guard 歷史段落保留；會誤解為現行基線的段落已改成 V1.2 或「v1.1 起」。 |
+
+### 測試命令
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `rg -n 'version="1\.1\.0"|version = "1\.1\.0"|202605250002 \(head\)|目前 head.*202605250002' README.md docs app pyproject.toml --glob '!docs/test_report.md'` | 通過，exit code 1，表示未找到舊 app version 或舊 migration head 殘留。 |
+| `rg -n 'v1\.1\.0|V1\.1|v1\.1' README.md docs --glob '!docs/test_report.md'` | 通過，仍有命中但皆為 V1.1 Prompt Guard、roadmap 或歷史圖資脈絡；未作為目前版本基線。 |
+| `pytest tests/test_v12_control_plane.py -q` | 通過，`5 passed in 0.86s`。 |
+| `pytest -q` | 通過，`54 passed in 6.88s`。 |
+| `ruff check app tests` | 通過，`All checks passed!`。 |
+| `git diff --check` | 通過，沒有 whitespace error。 |
+
+### Dashboard 驗證
+
+- 驗證網址：本次沒有重新操作 Browser。
+- 實際結果：本次變更主要是文件同步與版本 metadata；Dashboard 行為沿用同日上一節完整 Browser QA，已驗證 `/dashboard/control-plane`、Run Detail Execution Plan、Playground submit、Approval Deny、Operations evidence/release gate、Observability 與 Governance。
+- 未執行原因：此次未修改 Dashboard template 或 UI route 行為；已用自動化測試覆蓋 `/dashboard/control-plane` 與 Run Detail execution plan rendering。
+
+### Docker 驗證
+
+- 驗證命令：本次沒有重新 build 或重啟 Docker。
+- 實際結果：同日上一節已驗證 Docker stack、`alembic current`、`/v1/healthz` 與 `/v1/readyz`；本次文件同步沒有新增 migration 或 runtime dependency。
+- 未執行原因：此次不改 runtime 行為；`app/main.py` 僅同步 FastAPI version metadata，Docker container 若要反映 OpenAPI metadata 需另行 rebuild。
+
+### 限制與已知問題
+
+- V1.2 尚未新增 `*-v12.png` 架構圖資；文件已標註 `docs/assets/*-v11.png` 是歷史圖資與簡報輔助素材。
+- V1.2 Control Plane 仍是 execution plan 骨架；真實 MCP Gateway、LangGraph checkpoint/resume、replay/time travel 與外部 model router 尚未接入。
+
+## 2026-05-31 - v1.2 完整 Dashboard 輸入與點擊 QA
+
+- 版本：`v1.2.0`
+- 分支：`codex/v1.2-control-plane`
+- 範圍：重跑 V1.2 自動化測試、完整測試、Docker runtime smoke，並用 in-app Browser 實際操作 Dashboard Playground、Run Detail、Approval、Operations、Control Plane、Observability 與 Governance。
+- Migration：container 內目前 head 為 `202605310001 (head)`。
+
+### CLI / 自動化測試
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `pytest tests/test_v12_control_plane.py -q` | 通過，`5 passed in 0.85s`。 |
+| `pytest -q` | 通過，`54 passed in 7.81s`。 |
+| `ruff check app tests` | 通過，`All checks passed!`。 |
+| `git diff --check` | 通過，沒有 whitespace error。 |
+
+### Docker / API Runtime
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `docker compose ps` | 通過，`api`、`worker` 為 Up；`postgres`、`redis`、`kafka` 為 Up / healthy。 |
+| `docker compose exec -T api alembic current` | 通過，顯示 `202605310001 (head)`。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/healthz` | 通過，HTTP 200，回應 `{"status":"ok"}`。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/readyz` | 通過，HTTP 200，回應 `{"status":"ready"}`。 |
+
+### Dashboard Browser QA
+
+| 流程 | 實際結果 |
+| --- | --- |
+| Playground 低風險輸入與 Submit | 通過。以 Browser 實際填入 tenant `qa-v12-browser-low`、user、task type `analysis`、tools `read_data, summarize`、goal 與 prompt，點擊 `Submit Run` 後頁面顯示 `Result`、`queued`、`execution_plan` 與 `analysis-basic`。 |
+| Playground Run Detail | 通過。開啟 `/dashboard/runs/1858e58c-28ec-4730-9fe1-7786f83d8c08`，頁面顯示 `Execution Plan`、`analysis-basic`、`read_data`、`summarize` 與 run id。 |
+| Approval Queue Deny | 通過。以 Browser 建立 awaiting approval run `4c30dfef-42f9-4520-8103-f1525c85fe4b`，開啟 `/dashboard/approvals` 後確認 queue 中有該 run，點擊 `deny` button 後 Run Detail 顯示 `denied`、approval denial 訊息與 `Execution Plan`。 |
+| Operations evidence | 通過。開啟 `/dashboard/operations`，以 Browser 選擇 `safety_regression`、`pass`，輸入 reference `docs/test_report.md#v12-full-dashboard-qa` 與 summary `V1.2 full Dashboard QA safety regression evidence from Browser input and click flow.`，提交後頁面顯示該 evidence。 |
+| Operations release gate | 通過。以 Browser 輸入 release version `v1.2.0-dashboard-full-qa`、created by `browser-full-qa`，提交 `Create Release Gate Snapshot` 後頁面顯示該 release gate。 |
+| Control Plane page | 通過。`/dashboard/control-plane` 顯示 `Control Plane`、`Workflow Registry` 與 `analysis-basic`。 |
+| Observability page | 通過。`/dashboard/observability` 顯示 `Observability`、`Worker` 與 `Incident`。 |
+| Governance page | 通過。`/dashboard/governance` 顯示 `Governance`、`Tenant` 與 `Quota`。 |
+| Browser console | 通過。上述頁面與互動流程的 console error / warning count 均為 `0`。 |
+| Screenshot evidence | 通過。Browser 截圖已保存於本機暫存目錄：`C:/Users/leohung/AppData/Local/Temp/v12-dashboard-control-plane.png`、`v12-dashboard-run-detail.png`、`v12-dashboard-operations.png`、`v12-dashboard-observability.png`、`v12-dashboard-governance.png`。 |
+
+### 限制與已知問題
+
+- 本次未執行跨瀏覽器測試；驗證範圍是 Codex in-app Browser。
+- 本次未保存截圖到 repo；截圖只作 QA evidence，保存在本機暫存目錄。
+- V1.2 仍是 Control Plane execution plan 骨架；尚未接真實 MCP Gateway、LangGraph checkpoint/resume、replay/time travel 或外部 model router。
+
+## 2026-05-31 - v1.2 Control Plane Execution Plan
+
+- 版本：`v1.2.0`
+- 分支：`codex/v1.2-control-plane`
+- 範圍：新增 Control Plane 骨架，包含 workflow/tool registry、`execution_plans`、submit flow execution plan persistence、worker missing-plan fail-closed、Control Plane API、Run Detail Execution Plan 區塊與 `/dashboard/control-plane`。
+- Migration：新增 `202605310001_add_v12_control_plane.py`，建立 `workflow_definitions`、`tool_definitions` 與 `execution_plans`。
+
+### CLI / 自動化測試
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `pytest tests/test_v12_control_plane.py -q` | 通過，`5 passed in 0.84s`。 |
+| `pytest -q` | 通過，`54 passed in 6.94s`。 |
+| `ruff check app tests` | 通過，`All checks passed!`。 |
+| `git diff --check` | 通過，沒有 whitespace error。 |
+
+### Dashboard / API 驗證
+
+| 驗證項目 | 實際結果 |
+| --- | --- |
+| `POST /v1/agent/submit-with-details` 低風險 request | 通過。TestClient 驗證 response status 為 `queued`，`evaluation_summary.execution_plan.workflow_id` 為 `analysis-basic`。 |
+| `GET /v1/runs/{run_id}/execution-plan` | 通過。TestClient 驗證可查到同一個 `run_id`、`workflow_id=analysis-basic` 與 policy snapshot。 |
+| Control Plane RBAC | 通過。`viewer` 建立 workflow 回 `403`，`admin` 可建立 workflow，`viewer` 可讀 workflow list。 |
+| Worker missing execution plan fail-closed | 通過。直接建立缺少 execution plan 的 queued run 後，worker 轉為 `awaiting_approval`，policy flags 包含 `missing_execution_plan`。 |
+| `/dashboard/control-plane` | 通過。TestClient 驗證頁面顯示 `Control Plane` 與 `analysis-basic`。 |
+| `/dashboard/runs/{run_id}` | 通過。TestClient 驗證 Run Detail 顯示 `Execution Plan` 與 `analysis-basic`。 |
+| Browser `/dashboard/control-plane` live page | 通過。Docker stack 啟動後，用 in-app Browser 開啟 `http://localhost:8000/dashboard/control-plane`，頁面標題為 `Control Plane | 控制面`，可見 `Control Plane`、`Workflow Registry` 與 `analysis-basic`，console error / warning 為 `0`。 |
+| Browser Run Detail live page | 通過。用 live API 建立 run `a94ce562-7288-45b5-a83d-febaf49563ee`，再開 `/dashboard/runs/a94ce562-7288-45b5-a83d-febaf49563ee`，可見 `Execution Plan`、`analysis-basic` 與 `plan_5c21fed4bc92497aa993f118b25273df`，console error / warning 為 `0`。 |
+
+### Docker / Runtime 驗證
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `docker compose up -d --build` | 初次因 Docker Desktop 尚未啟動 / daemon pipe 不存在失敗；使用者啟動 Docker Desktop 後重跑通過，API / Worker image rebuild，`api`、`worker`、`postgres`、`redis`、`kafka` 啟動。 |
+| `docker compose ps` | 通過，`api`、`worker` 為 Up；`postgres`、`redis`、`kafka` 為 Up / healthy。 |
+| `docker compose exec -T api alembic current` | 通過，顯示 `202605310001 (head)`。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/healthz` | 通過，HTTP 200，回應 `{"status":"ok"}`。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/readyz` | 通過，HTTP 200，回應 `{"status":"ready"}`。 |
+
+### 限制與已知問題
+
+- Docker Compose runtime 已在使用者啟動 Docker Desktop 後補跑通過；Dashboard 已用 TestClient HTML assertion 與 in-app Browser live page 驗證 `/dashboard/control-plane` 與 Run Detail。
+- V1.2 的 `model_route` 是 deterministic control-plane metadata，不會呼叫外部模型。
+- V1.2 尚未接真實 MCP Gateway、LangGraph checkpoint/resume、replay/time travel 或外部 model router。
+
 ## 2026-05-31 - V1.1 架構圖資更新包
 
 - 版本：`v1.1.0`

@@ -1,8 +1,8 @@
-# Runbook v1.1
+# Runbook v1.2
 
 此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail、Kafka worker、Redis run state、approval queue、worker retry/DLQ、tool execution audit、evaluator/observability summary、tenant governance、production readiness gate、safety regression evidence 與古文/文言式 Prompt Guard 已接入 request path。
 
-目前營運基線：`v1.1.0`
+目前營運基線：`v1.2.0`
 
 ## 快速檢查
 
@@ -344,6 +344,8 @@ docker compose up kafka-init
 4. 若是 `bootstrap_keys_in_prod`，確認正式環境不要依賴 `.env` 的 `API_KEYS` fallback，改用 DB-managed API key 或正式 IAM。
 
 注意：v1.1 延續 v1.0 的 Operations Gate，這是審計與 readiness 層，不會自動執行 backup/restore、secret rotation、safety regression 或 retention purge。`APP_ENV=prod` 時缺少 fresh safety regression evidence 會讓 release gate fail closed。
+
+v1.2 另新增 Control Plane execution plan。若 worker 發現 queued run 缺少 `execution_plans`，會 fail closed 到 `awaiting_approval`，policy flags 會包含 `missing_execution_plan`；處理時應先查 `/v1/runs/{run_id}/execution-plan` 與 Run Detail 的 Execution Plan 區塊。
 
 ## 12. Redis 問題
 

@@ -41,6 +41,28 @@
 </section>
 {% endif %}
 
+{% if execution_plan %}
+<section class="panel">
+  <h2>Execution Plan <span class="heading-note">控制面執行計畫</span></h2>
+  <p><strong>Workflow</strong> {{ execution_plan.workflow_id }}@{{ execution_plan.workflow_version }}</p>
+  <p><strong>Status</strong> {{ execution_plan.status }}</p>
+  <div>
+    {% for gate in execution_plan.approval_gates %}
+      <span class="flag">{{ gate.get("gate_type") }}: {{ gate.get("status") }}</span>
+    {% else %}
+      <span class="muted">No approval gates.</span>
+    {% endfor %}
+  </div>
+  <pre>{{ {
+    "plan_id": execution_plan.plan_id,
+    "model_route": execution_plan.model_route,
+    "selected_tools": execution_plan.selected_tools,
+    "steps": execution_plan.steps,
+    "policy_snapshot": execution_plan.policy_snapshot
+  }|json_pretty }}</pre>
+</section>
+{% endif %}
+
 <section class="detail-grid">
   <div class="panel">
     <h2>Request <span class="heading-note">請求內容</span></h2>

@@ -5,6 +5,7 @@ from app.services.evaluator import Evaluator
 from app.services.policy_engine import PolicyEngine
 from app.services.orchestrator import AgentOrchestrator
 from app.services.run_state import RedisRunStateStore, RunStateStore
+from app.services.control_plane import ControlPlanePlanner
 
 
 def get_policy_engine() -> PolicyEngine:
@@ -22,6 +23,10 @@ def get_orchestrator() -> AgentOrchestrator:
         policy_engine=PolicyEngine(risk_threshold=settings.default_risk_threshold),
         evaluator=Evaluator(),
     )
+
+
+def get_control_plane_planner() -> ControlPlanePlanner:
+    return ControlPlanePlanner()
 
 
 def get_state_store() -> RunStateStore:

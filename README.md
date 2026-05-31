@@ -6,7 +6,7 @@
 
 ## 專案版號
 
-目前版本：`v1.1.0`
+目前版本：`v1.2.0`
 
 `v0.5.0` 是 V0.4 Execution Hardening 與 V0.5 Evaluator + Observability 的整合版。該版本已經有 queue、worker retry/DLQ、Redis run state、approval TTL/event、bounded executor transcript、tool execution audit、evaluation result 與 Dashboard 查詢入口，但還不是完整的 production sandbox、auth 或多租戶 production safety platform。
 
@@ -19,6 +19,8 @@
 `v1.0.0` 將 v0.8 的可查詢營運閘門推進為 production readiness baseline：`APP_ENV=prod` 時 release gate 會把 safety regression evidence、backup/restore evidence、secret rotation evidence、DLQ、stale queued runs、blocking incidents、expired approvals 與 bootstrap API key 當成上線阻擋條件。v1.0 也補齊敏感 read API 的 API key auth、HTTP request metrics、incident counter increment，並加入 deterministic red-team corpus regression。注意：v1.0 production ready 指的是 guardrail、audit 與 release gate baseline ready；bounded executor 仍不執行真實外部副作用，也不是完整 OS sandbox。
 
 `v1.1.0` 新增 Classical Chinese Prompt Guard：針對古文、文言文或混合中文包裝的駭客意圖做 deterministic prompt analysis。正常文言文教學與摘要不會被阻擋；若古文內容包含忽略指令、繞過政策、憑證外洩、破壞資料或惡意程式意圖，系統會加入 `classical_*` policy flags、提高風險分數，並進入人工審核或拒絕。Run detail 與 API response 的 `evaluation_summary.prompt_guard` 可查語言、正規化文字、flags 與 signals。
+
+`v1.2.0` 新增 Control Plane 骨架：低風險 request 在進入 worker queue 前，會先產生可查詢的 `execution_plan`，保存 workflow version、model route、selected tools、steps、approval gates 與 policy snapshot。新增 workflow/tool registry API、`/v1/runs/{run_id}/execution-plan` 查詢，以及 `/dashboard/control-plane` 與 Run Detail 的 Execution Plan 區塊。這版仍不宣稱已完成真實 MCP Gateway、LangGraph checkpoint/resume、replay/time travel 或外部模型路由；V1.2 的 model route 是 deterministic control-plane metadata。
 
 ## 這個專案想解決什麼問題
 
@@ -46,7 +48,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 
 ## Roadmap 完成後的適用情境
 
-以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v1.1.0` 已全部完成。
+以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v1.2.0` 已全部完成。
 
 1. AI coding agent 在修改程式碼前，檢查是否跳過測試、繞過規則或做破壞性操作。
 2. 內部營運 agent 執行批次任務前，確認工具權限、任務風險與是否需要人工核准。
@@ -85,9 +87,9 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - audit trail 可以幫助追蹤問題，但不能替代資料治理與資安制度。
 - 如果 prompt、工具權限或資料權限設計不良，guardrail 也可能被繞過或誤判。
 
-## 目前 v1.1 做到哪裡
+## 目前 v1.2 做到哪裡
 
-`v1.1.0` 目前是可部署驗證、可查詢、可審計的 guarded async execution + Tenant Governance Center + Production Readiness Gate baseline，並加入古文/文言式繞語攻擊防護。
+`v1.2.0` 目前是可部署驗證、可查詢、可審計的 guarded async execution + Tenant Governance Center + Production Readiness Gate baseline，並加入古文/文言式繞語攻擊防護與 Control Plane execution plan 骨架。
 
 已完成：
 
@@ -106,7 +108,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - Evaluator 會保存 task-specific rubric、deterministic fake judge signal、final score 與 verdict。
 - Dashboard 新增 `/dashboard/worker`、`/dashboard/observability` 與 `/dashboard/governance`，可查看 DLQ、worker attempts、incident/approval/evaluator/SLO summary 與 tenant governance summary。
 - 結果會寫進 Postgres audit trail。
-- Dashboard 可以查看 runs、incidents、risk score、policy flags、evaluation summary、event timeline、tool transcript 與 approval queue。
+- Dashboard 可以查看 runs、incidents、risk score、policy flags、evaluation summary、event timeline、tool transcript、execution plan 與 approval queue。
 - 已導入 Alembic migration。
 - 已有 API tests、service unit tests、dashboard HTML tests 與 GitHub CI。
 - 已有最小 API key auth、Dashboard Basic Auth、tenant quota 與 governance audit。
@@ -116,6 +118,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - Tenant 可設定 request quota 與 high-risk quota，會覆蓋全域 `.env` quota 預設。
 - Governance Dashboard 會顯示 tenant 設定與 API key 清單。
 - Operations Dashboard 會顯示 release readiness、operations evidence 與 release gate snapshot。
+- Control Plane Dashboard 會顯示 workflow registry、tool registry 與最新 execution plans。
 - Operations API 可建立 backup/restore drill、secret rotation、safety regression 等人工營運證據，並保存 release gate 檢查項。
 - `APP_ENV=prod` 時，release gate 會因缺少 safety regression evidence、blocking incidents、DLQ、stale queued runs、expired approvals 或 bootstrap `API_KEYS` 等條件 fail closed。
 - `AUTH_ENABLED=true` 時，`/v1/metrics`、worker DLQ、run subresources、observability summary 與 dashboard summary 等敏感 read API 都需要 `X-API-Key`。
@@ -123,6 +126,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - Prometheus metrics 會在 prompt guard 命中時遞增 `agent_prompt_guard_flags_total{flag}`。
 - 測試已加入 deterministic red-team corpus regression，覆蓋 prompt injection、PII exfiltration、destructive action、tool budget abuse、external network bypass、system/developer instruction reveal、done shortcut 與 not tested。
 - V1.1 測試已加入古文/文言式攻擊 regression，覆蓋正常文言文不阻擋、古文 prompt injection、憑證外洩、破壞意圖、惡意程式意圖、Dashboard Prompt Guard 顯示與 metrics。
+- V1.2 測試已加入 Control Plane regression，覆蓋 execution plan persistence、registry API RBAC、worker missing-plan fail-closed、Control Plane Dashboard 與 Run Detail Execution Plan 顯示。
 - API 會回傳 `X-Trace-Id`；submit flow 會把 trace id 保存到 request metadata 與 Kafka event payload。
 
 尚未完成：
@@ -134,7 +138,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - 還沒有完整 OAuth、RBAC、tenant 管理 UI、retention purge、真實 backup/restore 自動化、secret rotation 自動化或真實 OS sandbox。
 - 還沒有完整 OAuth/SSO、user/per-tool quota、Kafka consumer lag alert 或完整 OpenTelemetry。
 
-所以目前 `v1.1.0` 適合用來建立 agent guardrail 的 production readiness baseline，驗證 queue/worker retry/DLQ/approval/evaluator/observability/governance/operations/safety regression 與古文繞語攻擊防護的產品閉環；若要執行真實外部工具，仍必須另接完整 sandbox、IAM、secret manager 與正式維運流程。
+所以目前 `v1.2.0` 適合用來建立 agent guardrail 的 production readiness baseline，驗證 queue/worker retry/DLQ/approval/evaluator/observability/governance/operations/safety regression、古文繞語攻擊防護與 control-plane execution plan 的產品閉環；若要執行真實外部工具，仍必須另接完整 sandbox、IAM、secret manager、MCP gateway 與正式維運流程。
 
 ## 快速啟動
 
@@ -197,7 +201,7 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
 - [Dashboard 使用說明](docs/dashboard.md)
 - [API 文件](docs/api.md)
 - [架構文件](docs/architecture.md)
-- [V1.1 架構圖資](docs/assets/README.md)
+- [V1.1 架構圖資](docs/assets/README.md)（目前仍作為歷史圖資；V1.2 新增 Control Plane 文件但尚未新增 v12 圖資）
 - [部署文件](docs/deployment.md)
 - [Runbook](docs/runbook.md)
 
