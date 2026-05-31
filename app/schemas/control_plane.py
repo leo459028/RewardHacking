@@ -50,6 +50,7 @@ class ExecutionPlanDraft(BaseModel):
     plan_id: str
     run_id: str
     tenant_id: str = "default"
+    trace_id: str = ""
     workflow_id: str
     workflow_version: str
     status: str
@@ -58,6 +59,7 @@ class ExecutionPlanDraft(BaseModel):
     steps: list[dict[str, Any]] = Field(default_factory=list)
     approval_gates: list[dict[str, Any]] = Field(default_factory=list)
     policy_snapshot: dict[str, Any] = Field(default_factory=dict)
+    trace_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ExecutionPlanRecord(ExecutionPlanDraft):
@@ -65,3 +67,40 @@ class ExecutionPlanRecord(ExecutionPlanDraft):
     updated_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+class ExecutionPlanStepRecord(BaseModel):
+    step_id: str
+    plan_id: str
+    run_id: str
+    tenant_id: str
+    trace_id: str
+    step_type: str
+    status: str
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    duration_ms: int | None = None
+    input_summary: str = ""
+    output_summary: str = ""
+    error_summary: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+class RunTraceResponse(BaseModel):
+    trace_id: str
+    trace_metadata: dict[str, Any] = Field(default_factory=dict)
+    run: dict[str, Any]
+    execution_plan: dict[str, Any]
+    steps: list[ExecutionPlanStepRecord] = Field(default_factory=list)
+
+
+class ReplayBundleResponse(BaseModel):
+    schema_version: str = "control-plane-replay-bundle/v1.3"
+    trace_context: dict[str, Any]
+    run: dict[str, Any]
+    policy_decision: dict[str, Any]
+    execution_plan: dict[str, Any]
+    step_audit: list[ExecutionPlanStepRecord] = Field(default_factory=list)
+    tool_references: list[dict[str, Any]] = Field(default_factory=list)
+    limitations: dict[str, Any] = Field(default_factory=dict)

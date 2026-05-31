@@ -1,8 +1,8 @@
-# Runbook v1.2
+# Runbook v1.3
 
-此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail、Kafka worker、Redis run state、approval queue、worker retry/DLQ、tool execution audit、evaluator/observability summary、tenant governance、production readiness gate、safety regression evidence 與古文/文言式 Prompt Guard 已接入 request path。
+此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail、Kafka worker、Redis run state、approval queue、worker retry/DLQ、tool execution audit、evaluator/observability summary、tenant governance、production readiness gate、safety regression evidence、古文/文言式 Prompt Guard、Control Plane execution plan 與 Trace / Replay Readiness 已接入 request path。
 
-目前營運基線：`v1.2.0`
+目前營運基線：`v1.3.0`
 
 ## 快速檢查
 
@@ -30,6 +30,7 @@ curl http://localhost:8000/v1/metrics
 - `http://localhost:8000/dashboard/observability`
 - `http://localhost:8000/dashboard/governance`
 - `http://localhost:8000/dashboard/operations`
+- `http://localhost:8000/dashboard/control-plane`
 
 Dashboard：
 

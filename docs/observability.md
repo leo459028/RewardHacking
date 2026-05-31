@@ -1,8 +1,18 @@
-# Observability v1.2
+# Observability v1.3
+
+## V1.3 Trace / Replay Observability 補充
+
+V1.3 新增 metric：
+
+| Metric | Type | Labels | 說明 |
+| --- | --- | --- | --- |
+| `agent_control_plane_steps_total` | Counter | `step_type`, `status` | 每次建立 execution plan 時，依 step type 與 status 記錄 step audit row 數量。 |
+
+Trace 現況：HTTP `X-Trace-Id` 會進入 run request metadata、`execution_plans.trace_id`、`execution_plan_steps.trace_id`、`/v1/runs/{run_id}/trace` 與 replay bundle。`trace_metadata` 與 step `metadata` 已保留 `exporter_type=internal`、`external_trace_id`、`span_id`、`parent_span_id`，但 V1.3 尚未把資料實際送到 OTLP 或 LangSmith-style exporter。
 
 本專案目前提供 Prometheus metrics 與 structured logging 的基礎。Dashboard 會從 Postgres audit trail 讀取 runs/incidents/governance events/operations evidence；Prometheus metrics 仍由 `/v1/metrics` 提供。`AUTH_ENABLED=true` 時，`/v1/metrics` 需要 `X-API-Key`，允許 `viewer/operator/admin` 讀取。
 
-目前 observability 基線：`v1.2.0`
+目前 observability 基線：`v1.3.0`
 
 ## Metrics Endpoint
 
@@ -21,6 +31,7 @@ GET /v1/metrics
 | `agent_evaluation_final_score` | Histogram | 無 | detailed submit 的 evaluation final score 分布 |
 | `agent_policy_decisions_total` | Counter | `status` | policy decision 對應的 run status |
 | `agent_prompt_guard_flags_total` | Counter | `flag` | deterministic prompt analysis 命中的 prompt guard flags |
+| `agent_control_plane_steps_total` | Counter | `step_type`、`status` | V1.3 step-level audit persistence counter |
 | `agent_worker_jobs_total` | Counter | `status` | worker job 結果 |
 | `agent_worker_duration_seconds` | Histogram | 無 | worker job duration |
 | `agent_worker_retries_total` | Counter | 無 | worker retry count |
@@ -44,6 +55,8 @@ GET /v1/metrics
 - `operations_evidence`
 - `release_gate_runs`
 - `release_gate_items`
+- `execution_plans`
+- `execution_plan_steps`
 
 主要畫面：
 

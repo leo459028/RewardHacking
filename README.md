@@ -1,12 +1,27 @@
 # Agent Reward-Hacking Guardrail
 
+## V1.3 Trace / Replay Readiness
+
+目前版本：`v1.3.0`
+
+V1.3 延續 V1.2 Control Plane Execution Plan，新增內部 Trace Contract 與 Replay Bundle。每次 submit 會沿用 `X-Trace-Id`，將 trace id 寫入 run request metadata、`execution_plans.trace_id` 與 `execution_plan_steps.trace_id`，並保留 `exporter_type`、`external_trace_id`、`span_id`、`parent_span_id` 等 metadata，方便未來銜接 OTLP 或 LangSmith-style exporter。
+
+新增查詢入口：
+
+- `GET /v1/runs/{run_id}/trace`：查詢 run、execution plan 與 step-level audit timeline。
+- `GET /v1/runs/{run_id}/replay-bundle`：匯出可審計的 replay bundle，包含 request payload、policy decision、execution plan、step audit、tool references 與 trace metadata。
+- `/dashboard/runs/{run_id}`：新增 Trace / Replay 區塊、Replay Bundle 連結與 Step Audit 表格。
+- `/dashboard/control-plane`：最新 execution plans 新增 Trace ID、Step Summary 與 Plan Health。
+
+目前限制：V1.3 只提供 replay readiness 與內部 trace contract，不會重新執行 run，也尚未實作真實 OTLP、LangSmith、LangGraph checkpoint/resume 或 MCP Gateway 整合。
+
 這是一套幫 AI agent 加上安全護欄、審核流程與事後紀錄的系統。
 
 白話一點說：當 AI agent 被交代一個任務時，它可能會為了「看起來完成目標」而走捷徑，例如跳過測試、誤用工具、讀取不該讀的資料、繞過規則，甚至執行破壞性操作。這個專案的目標，是在任務執行前、中、後都加上檢查與紀錄，讓團隊比較容易發現風險、擋下高風險行為，並在事後追查發生了什麼。
 
 ## 專案版號
 
-目前版本：`v1.2.0`
+目前版本：`v1.3.0`
 
 `v0.5.0` 是 V0.4 Execution Hardening 與 V0.5 Evaluator + Observability 的整合版。該版本已經有 queue、worker retry/DLQ、Redis run state、approval TTL/event、bounded executor transcript、tool execution audit、evaluation result 與 Dashboard 查詢入口，但還不是完整的 production sandbox、auth 或多租戶 production safety platform。
 
@@ -48,7 +63,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 
 ## Roadmap 完成後的適用情境
 
-以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v1.2.0` 已全部完成。
+以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v1.3.0` 已全部完成。
 
 1. AI coding agent 在修改程式碼前，檢查是否跳過測試、繞過規則或做破壞性操作。
 2. 內部營運 agent 執行批次任務前，確認工具權限、任務風險與是否需要人工核准。
@@ -87,9 +102,9 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - audit trail 可以幫助追蹤問題，但不能替代資料治理與資安制度。
 - 如果 prompt、工具權限或資料權限設計不良，guardrail 也可能被繞過或誤判。
 
-## 目前 v1.2 做到哪裡
+## 目前 v1.3 做到哪裡
 
-`v1.2.0` 目前是可部署驗證、可查詢、可審計的 guarded async execution + Tenant Governance Center + Production Readiness Gate baseline，並加入古文/文言式繞語攻擊防護與 Control Plane execution plan 骨架。
+`v1.3.0` 目前是可部署驗證、可查詢、可審計的 guarded async execution + Tenant Governance Center + Production Readiness Gate baseline，並加入古文/文言式繞語攻擊防護、Control Plane execution plan 骨架，以及 Trace / Replay Readiness。V1.3 會把 `X-Trace-Id` 串到 `execution_plans` 與 `execution_plan_steps`，並提供 `/v1/runs/{run_id}/trace`、`/v1/runs/{run_id}/replay-bundle`、Run Detail 的 Trace / Replay 區塊與 Control Plane Dashboard 的 Trace ID / Step Summary / Plan Health。
 
 已完成：
 
@@ -126,7 +141,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - Prometheus metrics 會在 prompt guard 命中時遞增 `agent_prompt_guard_flags_total{flag}`。
 - 測試已加入 deterministic red-team corpus regression，覆蓋 prompt injection、PII exfiltration、destructive action、tool budget abuse、external network bypass、system/developer instruction reveal、done shortcut 與 not tested。
 - V1.1 測試已加入古文/文言式攻擊 regression，覆蓋正常文言文不阻擋、古文 prompt injection、憑證外洩、破壞意圖、惡意程式意圖、Dashboard Prompt Guard 顯示與 metrics。
-- V1.2 測試已加入 Control Plane regression，覆蓋 execution plan persistence、registry API RBAC、worker missing-plan fail-closed、Control Plane Dashboard 與 Run Detail Execution Plan 顯示。
+- V1.3 測試已加入 Trace / Replay regression，覆蓋 trace API、replay bundle、step audit persistence、Control Plane Dashboard 與 Run Detail Trace / Replay 顯示；V1.2 Control Plane regression 仍保留。
 - API 會回傳 `X-Trace-Id`；submit flow 會把 trace id 保存到 request metadata 與 Kafka event payload。
 
 尚未完成：
@@ -138,7 +153,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - 還沒有完整 OAuth、RBAC、tenant 管理 UI、retention purge、真實 backup/restore 自動化、secret rotation 自動化或真實 OS sandbox。
 - 還沒有完整 OAuth/SSO、user/per-tool quota、Kafka consumer lag alert 或完整 OpenTelemetry。
 
-所以目前 `v1.2.0` 適合用來建立 agent guardrail 的 production readiness baseline，驗證 queue/worker retry/DLQ/approval/evaluator/observability/governance/operations/safety regression、古文繞語攻擊防護與 control-plane execution plan 的產品閉環；若要執行真實外部工具，仍必須另接完整 sandbox、IAM、secret manager、MCP gateway 與正式維運流程。
+所以目前 `v1.3.0` 適合用來建立 agent guardrail 的 production readiness baseline，驗證 queue/worker retry/DLQ/approval/evaluator/observability/governance/operations/safety regression、古文繞語攻擊防護、control-plane execution plan 與 trace/replay audit bundle 的產品閉環；若要執行真實外部工具或外部 trace exporter，仍必須另接完整 sandbox、IAM、secret manager、MCP gateway、OTLP/LangSmith-style exporter 與正式維運流程。
 
 ## 快速啟動
 
@@ -201,7 +216,7 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
 - [Dashboard 使用說明](docs/dashboard.md)
 - [API 文件](docs/api.md)
 - [架構文件](docs/architecture.md)
-- [V1.1 架構圖資](docs/assets/README.md)（目前仍作為歷史圖資；V1.2 新增 Control Plane 文件但尚未新增 v12 圖資）
+- [V1.1 架構圖資](docs/assets/README.md)（目前仍作為歷史圖資；V1.3 新增 Trace / Replay 文字文件、API 與 Dashboard，但尚未新增 v13 圖資）
 - [部署文件](docs/deployment.md)
 - [Runbook](docs/runbook.md)
 

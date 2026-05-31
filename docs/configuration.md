@@ -94,7 +94,7 @@ Redis 與 Kafka 已在 `v0.3.0` request path 中使用，但 `/v1/readyz` 目前
 
 `v1.1.0` 起的古文/文言式繞語攻擊防護是 deterministic 規則，不需要新增環境變數。正常文言文不會只因語言形式被阻擋；若 prompt 命中古文包裝的 prompt injection、policy bypass、憑證外洩、破壞資料或惡意程式意圖，系統會加入 `classical_*` flags、提高 risk score，並把分析結果保存到 `evaluation_summary.prompt_guard`。
 
-`v1.2.0` 的 Control Plane execution plan 也不需要新增環境變數。Builtin workflow/tool registry 由程式內建，DB-managed registry 與 `execution_plans` 保存於 Postgres；V1.2 的 `model_route` 是 deterministic metadata，不會呼叫外部模型。
+`v1.3.0` 的 Trace / Replay Readiness 也不需要新增環境變數。Builtin workflow/tool registry 由程式內建，DB-managed registry、`execution_plans` 與 `execution_plan_steps` 保存於 Postgres；V1.3 的 `model_route` 與 trace metadata 都是 deterministic/internal metadata，不會呼叫外部模型或 exporter。
 
 ## Auth / Dashboard Auth
 
@@ -122,7 +122,7 @@ Dashboard 可用 `DASHBOARD_AUTH_ENABLED=true` 開啟 Basic Auth。這是 v0.6 M
 
 ## Operations Gate
 
-`v1.2.0` 延續 v1.0 的 release readiness 設定，用來驅動 `/v1/operations/readiness` 與 `/dashboard/operations`。這些設定目前是 release gate 的檢查依據，不代表系統已自動執行備份、還原、secret rotation、safety regression 或 retention purge。
+`v1.3.0` 延續 v1.0 的 release readiness 設定，用來驅動 `/v1/operations/readiness` 與 `/dashboard/operations`。這些設定目前是 release gate 的檢查依據，不代表系統已自動執行備份、還原、secret rotation、safety regression、trace export 或 retention purge。
 
 - backup/restore drill、secret rotation 與 safety regression 需要由 admin 透過 Operations API 或 Dashboard 寫入 evidence。
 - release gate 會保存當下檢查項目，方便事後審計。
