@@ -6,7 +6,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import JSONResponse, Response
 
-from app.api.deps import get_event_publisher, get_orchestrator, get_state_store
+from app.api.deps import (
+    get_control_plane_planner,
+    get_event_publisher,
+    get_orchestrator,
+    get_state_store,
+)
 from app.core.config import get_settings
 from app.infra.postgres import get_session
 from app.observability.metrics import (
@@ -40,6 +45,13 @@ from app.schemas.audit import (
     TenantUpdateRequest,
     ToolExecutionRecord,
     WorkerAttemptRecord,
+)
+from app.schemas.control_plane import (
+    ExecutionPlanRecord,
+    ToolDefinitionCreateRequest,
+    ToolDefinitionRecord,
+    WorkflowDefinitionCreateRequest,
+    WorkflowDefinitionRecord,
 )
 from app.services.events import EventPublisher
 from app.services.auth import (
@@ -87,6 +99,18 @@ from app.services.operations import (
     persist_operations_evidence,
     persist_release_gate,
 )
+from app.services.control_plane import (
+    ControlPlanePlanner,
+    create_tool_definition,
+    create_workflow_definition,
+    get_execution_plan_for_run,
+    list_tool_definitions,
+    list_workflow_definitions,
+    persist_execution_plan,
+    tool_to_dict,
+    workflow_to_dict,
+)
+from app.services.orchestrator import OrchestrationResult
 from app.workers.producer import make_event
 
 router = APIRouter(prefix="/v1", tags=["agent"])
@@ -185,6 +209,70 @@ async def _gate_record(session: AsyncSession, gate) -> ReleaseGateRecord:
     )
 
 
+def _workflow_record(payload: dict) -> WorkflowDefinitionRecord:
+    return WorkflowDefinitionRecord(**payload)
+
+
+def _tool_record(payload: dict) -> ToolDefinitionRecord:
+    return ToolDefinitionRecord(
+        tool_name=payload["tool_name"],
+        display_name=payload["display_name"],
+        status=payload["status"],
+        task_types=payload["task_types"],
+        requires_approval=payload["requires_approval"],
+        risk_level=payload["risk_level"],
+        metadata=payload.get("metadata", {}),
+    )
+
+
+def _execution_plan_record(plan) -> ExecutionPlanRecord:
+    return ExecutionPlanRecord(
+        plan_id=plan.plan_id,
+        run_id=plan.run_id,
+        tenant_id=plan.tenant_id,
+        workflow_id=plan.workflow_id,
+        workflow_version=plan.workflow_version,
+        status=plan.status,
+        model_route=plan.model_route,
+        selected_tools=plan.selected_tools,
+        steps=plan.steps,
+        approval_gates=plan.approval_gates,
+        policy_snapshot=plan.policy_snapshot,
+        created_at=plan.created_at,
+        updated_at=plan.updated_at,
+    )
+
+
+async def _attach_execution_plan(
+    session: AsyncSession,
+    *,
+    planner: ControlPlanePlanner,
+    agent_request: AgentRequest,
+    result: OrchestrationResult,
+) -> None:
+    workflows = await list_workflow_definitions(session)
+    tools = await list_tool_definitions(session)
+    plan = planner.plan(
+        request=agent_request,
+        run_id=result.response.run_id,
+        policy_snapshot=dict(result.evaluation_summary.get("policy", {})),
+        workflows=workflows,
+        tools=tools,
+    )
+    result.evaluation_summary["execution_plan"] = plan.model_dump()
+    if result.response.status == "queued" and plan.status != "planned":
+        result.response.status = "awaiting_approval"
+        result.response.decision_reason = "Control plane execution plan requires approval."
+        if "control_plane_plan_requires_approval" not in result.response.policy_flags:
+            result.response.policy_flags.append("control_plane_plan_requires_approval")
+        result.evaluation_summary["run_state"] = {"status": "awaiting_approval"}
+        result.evaluation_summary["approval"] = {
+            "status": "pending",
+            "reason": result.response.decision_reason,
+        }
+    await persist_execution_plan(session, plan)
+
+
 @router.get("/healthz")
 async def healthz():
     return {"status": "ok"}
@@ -200,6 +288,63 @@ async def readyz(session: AsyncSession = Depends(get_session)):
 async def metrics(auth_context: AuthContext = Depends(get_auth_context)):
     require_role(auth_context, "viewer", "operator", "admin")
     return Response(generate_latest(), media_type="text/plain; version=0.0.4")
+
+
+@router.get("/control-plane/workflows", response_model=list[WorkflowDefinitionRecord])
+async def get_control_plane_workflows(
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    return [_workflow_record(item) for item in await list_workflow_definitions(session)]
+
+
+@router.post("/control-plane/workflows", response_model=WorkflowDefinitionRecord)
+async def post_control_plane_workflow(
+    payload: WorkflowDefinitionCreateRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin")
+    workflow = await create_workflow_definition(
+        session,
+        workflow_id=payload.workflow_id,
+        version=payload.version,
+        task_type=payload.task_type,
+        display_name=payload.display_name,
+        status=payload.status,
+        definition=payload.definition,
+    )
+    return _workflow_record(workflow_to_dict(workflow))
+
+
+@router.get("/control-plane/tools", response_model=list[ToolDefinitionRecord])
+async def get_control_plane_tools(
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    return [_tool_record(item) for item in await list_tool_definitions(session)]
+
+
+@router.post("/control-plane/tools", response_model=ToolDefinitionRecord)
+async def post_control_plane_tool(
+    payload: ToolDefinitionCreateRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin")
+    tool = await create_tool_definition(
+        session,
+        tool_name=payload.tool_name,
+        display_name=payload.display_name,
+        status=payload.status,
+        task_types=payload.task_types,
+        requires_approval=payload.requires_approval,
+        risk_level=payload.risk_level,
+        metadata=payload.metadata,
+    )
+    return _tool_record(tool_to_dict(tool))
 
 
 @router.get("/operations/readiness", response_model=OperationsReadinessResponse)
@@ -442,6 +587,7 @@ async def submit_agent_request(
     agent_request: AgentRequest,
     auth_context: AuthContext = Depends(get_auth_context),
     orchestrator: AgentOrchestrator = Depends(get_orchestrator),
+    planner: ControlPlanePlanner = Depends(get_control_plane_planner),
     session: AsyncSession = Depends(get_session),
     state_store: RunStateStore = Depends(get_state_store),
     event_publisher: EventPublisher = Depends(get_event_publisher),
@@ -515,6 +661,12 @@ async def submit_agent_request(
                 remaining=high_risk_quota.remaining,
                 details={"bucket": high_risk_quota.bucket},
             )
+    await _attach_execution_plan(
+        session,
+        planner=planner,
+        agent_request=agent_request,
+        result=result,
+    )
     await persist_orchestration_result(session, agent_request, result)
     await state_store.set_run_state(result.response.run_id, result.response.status)
     if result.response.status == "queued":
@@ -542,6 +694,7 @@ async def submit_agent_request_with_details(
     agent_request: AgentRequest,
     auth_context: AuthContext = Depends(get_auth_context),
     orchestrator: AgentOrchestrator = Depends(get_orchestrator),
+    planner: ControlPlanePlanner = Depends(get_control_plane_planner),
     session: AsyncSession = Depends(get_session),
     state_store: RunStateStore = Depends(get_state_store),
     event_publisher: EventPublisher = Depends(get_event_publisher),
@@ -615,6 +768,12 @@ async def submit_agent_request_with_details(
                 remaining=high_risk_quota.remaining,
                 details={"bucket": high_risk_quota.bucket},
             )
+    await _attach_execution_plan(
+        session,
+        planner=planner,
+        agent_request=agent_request,
+        result=result,
+    )
     await persist_orchestration_result(session, agent_request, result)
     await state_store.set_run_state(result.response.run_id, result.response.status)
     if result.response.status == "queued":
@@ -705,6 +864,19 @@ async def get_runs(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get("/runs/{run_id}/execution-plan", response_model=ExecutionPlanRecord)
+async def get_run_execution_plan(
+    run_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    plan = await get_execution_plan_for_run(session, run_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Execution plan not found.")
+    return _execution_plan_record(plan)
 
 
 @router.get("/runs/{run_id}", response_model=RunRecord)

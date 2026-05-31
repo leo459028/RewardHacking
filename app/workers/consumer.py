@@ -25,6 +25,7 @@ from app.services.audit_log import (
     update_orchestration_result,
     worker_attempt_count,
 )
+from app.services.control_plane import get_execution_plan_for_run
 from app.services.events import EventPublisher, KafkaEventPublisher
 from app.services.evaluator import Evaluator
 from app.services.orchestrator import AgentOrchestrator, OrchestrationResult
@@ -78,6 +79,35 @@ def _retry_result(run_id: str, message: str) -> OrchestrationResult:
     return OrchestrationResult(response=response, execution_output="", evaluation_summary=summary)
 
 
+def _missing_execution_plan_result(run_id: str) -> OrchestrationResult:
+    message = "Control plane execution plan is missing; execution requires approval."
+    response = AgentResponse(
+        run_id=run_id,
+        status="awaiting_approval",
+        decision_reason=message,
+        risk_score=1.0,
+        policy_flags=["missing_execution_plan"],
+    )
+    summary = {
+        "run_state": {"status": "awaiting_approval"},
+        "control_plane": {
+            "status": "missing_execution_plan",
+            "reason": message,
+        },
+        "approval": {
+            "status": "pending",
+            "reason": message,
+        },
+        "event_timeline": [
+            {
+                "event_type": "control_plane.plan_missing",
+                "status": "awaiting_approval",
+            }
+        ],
+    }
+    return OrchestrationResult(response=response, execution_output="", evaluation_summary=summary)
+
+
 async def process_run_by_id(
     session,
     *,
@@ -92,6 +122,22 @@ async def process_run_by_id(
         raise ValueError(f"Run not found: {run_id}")
     if run.status != "queued":
         return run
+
+    request = AgentRequest.model_validate(run.request_payload)
+    plan = await get_execution_plan_for_run(session, run_id)
+    if plan is None:
+        result = _missing_execution_plan_result(run_id)
+        updated = await update_orchestration_result(session, run, request, result)
+        await persist_worker_attempt(
+            session,
+            run_id=run_id,
+            attempt_number=await worker_attempt_count(session, run_id) + 1,
+            status=updated.status,
+            failure_reason="missing_execution_plan",
+        )
+        await session.commit()
+        await state_store.set_run_state(run_id, updated.status)
+        return updated
 
     attempt_number = await worker_attempt_count(session, run_id) + 1
     acquired = await state_store.mark_idempotency_key(f"run:{run_id}:worker:{attempt_number}")
@@ -109,7 +155,6 @@ async def process_run_by_id(
     await session.commit()
     await session.refresh(run)
 
-    request = AgentRequest.model_validate(run.request_payload)
     failure_reason = ""
     try:
         disabled_tools = list((await state_store.get_open_breakers(request.allowed_tools)).keys())
