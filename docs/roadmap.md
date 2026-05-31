@@ -1,4 +1,4 @@
-# Roadmap v1.0
+# Roadmap v1.1
 
 本 roadmap 將專案從 prototype 推進到可逐步承擔 guardrail 職責的服務。`v0.3.0` 起不再把 Kafka、Redis、Tool Executor、Approval 視為互不相干的線性 phase，而是先建立一條可展示、可查詢、可審計的產品閉環，再把完整 hardening 與 production governance 放到後續版本。
 
@@ -13,8 +13,9 @@
 | `v0.6.0` | 已完成 | Tenant Governance MVP | 補 API key auth、Dashboard Basic Auth、tenant-aware audit、Redis quota 與 Governance Dashboard。 |
 | `v0.7.0` | 已完成 | Tenant Governance Center | 補 DB-backed tenant 設定、API key hash 儲存、RBAC-lite、tenant quota override 與 Governance Dashboard 查詢區塊。 |
 | `v0.8.0` | 已完成 | Production Operations Gate | 補 Operations Dashboard、operations evidence、release readiness、release gate snapshot 與 `X-Trace-Id` 基線。 |
-| `v1.0.0` | 目前版本 | Production Ready：A + C-lite | 將 release gate 升級為 production readiness blocker，補 safety regression evidence、敏感 read API auth coverage、HTTP metrics、incident counter 與 red-team corpus regression。 |
-| `v1.1+` | 規劃中 | Production Operations Automation / C-full | 補真實 backup/restore automation、retention purge、secret rotation automation、完整 OpenTelemetry、Kafka lag alert、LLM judge 與更完整評測資料集。 |
+| `v1.0.0` | 已完成 | Production Ready：A + C-lite | 將 release gate 升級為 production readiness blocker，補 safety regression evidence、敏感 read API auth coverage、HTTP metrics、incident counter 與 red-team corpus regression。 |
+| `v1.1.0` | 目前版本 | Classical Chinese Prompt Guard | 偵測古文/文言式繞語包裝的 prompt injection、policy bypass、憑證外洩、破壞資料與惡意程式意圖，並在 API、Dashboard、metrics 與測試中可查。 |
+| `v1.2+` | 規劃中 | Production Operations Automation / C-full | 補真實 backup/restore automation、retention purge、secret rotation automation、完整 OpenTelemetry、Kafka lag alert、LLM judge 與更完整評測資料集。 |
 
 ## Milestone：v0.2.0 / Phase 0-2 + Dashboard
 
@@ -200,6 +201,26 @@
 - 外部 LLM-as-judge 或大型標註資料平台；`LLM_JUDGE_ENABLED` 預設仍為 `false`。
 - OAuth/SSO 或完整企業 IAM；本版仍使用 DB-managed API key、RBAC-lite 與 Dashboard Basic Auth。
 - 真實 OS sandbox、真實 backup/restore automation、secret rotation automation、retention purge、完整 OpenTelemetry 或 Kafka broker lag alert。
+
+## Milestone：v1.1.0 / Classical Chinese Prompt Guard
+
+目標：防止使用者用古文、文言文或混合中文包裝駭客意圖來繞過 prompt sanitizer 與 policy engine，同時避免把正常文言文教學誤擋。
+
+已完成項目：
+
+- 新增 deterministic prompt analysis，輸出 language、normalized prompt、flags 與 signals。
+- 正常文言文內容不阻擋；古文攻擊意圖會加入 `classical_*` policy flags。
+- 風險評分會把古文繞語攻擊納入 high-risk 訊號。
+- `evaluation_summary.prompt_guard` 保存可審計分析結果。
+- Dashboard run detail 顯示 Prompt Guard 區塊。
+- Prometheus 新增 `agent_prompt_guard_flags_total{flag}`。
+- 新增 V1.1 regression tests，覆蓋正常文言文、古文 prompt injection、憑證外洩、破壞意圖、惡意程式意圖、Dashboard 與 metrics。
+
+本段不包含：
+
+- 外部 LLM 翻譯或語義模型。
+- 完整古漢語 NLP。
+- 輸出端古文安全審查；本版聚焦 request ingress。
 
 ## 優先順序
 

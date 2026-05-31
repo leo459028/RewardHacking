@@ -6,7 +6,7 @@
 
 ## 專案版號
 
-目前版本：`v1.0.0`
+目前版本：`v1.1.0`
 
 `v0.5.0` 是 V0.4 Execution Hardening 與 V0.5 Evaluator + Observability 的整合版。該版本已經有 queue、worker retry/DLQ、Redis run state、approval TTL/event、bounded executor transcript、tool execution audit、evaluation result 與 Dashboard 查詢入口，但還不是完整的 production sandbox、auth 或多租戶 production safety platform。
 
@@ -17,6 +17,8 @@
 `v0.8.0` 新增 Production Operations Gate：提供 `/dashboard/operations`、Operations API、release readiness checks、operations evidence 與 release gate snapshot。這版會把 backup/restore drill、secret rotation 等營運證據保存到 audit trail，並加入 `X-Trace-Id` response header 與 submit metadata，但不自動執行真實備份還原、secret rotation、完整 OpenTelemetry 或 Kafka lag alert。
 
 `v1.0.0` 將 v0.8 的可查詢營運閘門推進為 production readiness baseline：`APP_ENV=prod` 時 release gate 會把 safety regression evidence、backup/restore evidence、secret rotation evidence、DLQ、stale queued runs、blocking incidents、expired approvals 與 bootstrap API key 當成上線阻擋條件。v1.0 也補齊敏感 read API 的 API key auth、HTTP request metrics、incident counter increment，並加入 deterministic red-team corpus regression。注意：v1.0 production ready 指的是 guardrail、audit 與 release gate baseline ready；bounded executor 仍不執行真實外部副作用，也不是完整 OS sandbox。
+
+`v1.1.0` 新增 Classical Chinese Prompt Guard：針對古文、文言文或混合中文包裝的駭客意圖做 deterministic prompt analysis。正常文言文教學與摘要不會被阻擋；若古文內容包含忽略指令、繞過政策、憑證外洩、破壞資料或惡意程式意圖，系統會加入 `classical_*` policy flags、提高風險分數，並進入人工審核或拒絕。Run detail 與 API response 的 `evaluation_summary.prompt_guard` 可查語言、正規化文字、flags 與 signals。
 
 ## 這個專案想解決什麼問題
 
@@ -44,7 +46,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 
 ## Roadmap 完成後的適用情境
 
-以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v1.0.0` 已全部完成。
+以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v1.1.0` 已全部完成。
 
 1. AI coding agent 在修改程式碼前，檢查是否跳過測試、繞過規則或做破壞性操作。
 2. 內部營運 agent 執行批次任務前，確認工具權限、任務風險與是否需要人工核准。
@@ -83,9 +85,9 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - audit trail 可以幫助追蹤問題，但不能替代資料治理與資安制度。
 - 如果 prompt、工具權限或資料權限設計不良，guardrail 也可能被繞過或誤判。
 
-## 目前 v1.0 做到哪裡
+## 目前 v1.1 做到哪裡
 
-`v1.0.0` 目前是可部署驗證、可查詢、可審計的 guarded async execution + Tenant Governance Center + Production Readiness Gate baseline。
+`v1.1.0` 目前是可部署驗證、可查詢、可審計的 guarded async execution + Tenant Governance Center + Production Readiness Gate baseline，並加入古文/文言式繞語攻擊防護。
 
 已完成：
 
@@ -118,7 +120,9 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - `APP_ENV=prod` 時，release gate 會因缺少 safety regression evidence、blocking incidents、DLQ、stale queued runs、expired approvals 或 bootstrap `API_KEYS` 等條件 fail closed。
 - `AUTH_ENABLED=true` 時，`/v1/metrics`、worker DLQ、run subresources、observability summary 與 dashboard summary 等敏感 read API 都需要 `X-API-Key`。
 - Prometheus metrics 已包含 HTTP request counter / latency，且 incident 建立時會遞增 `agent_incidents_total{severity,code}`。
+- Prometheus metrics 會在 prompt guard 命中時遞增 `agent_prompt_guard_flags_total{flag}`。
 - 測試已加入 deterministic red-team corpus regression，覆蓋 prompt injection、PII exfiltration、destructive action、tool budget abuse、external network bypass、system/developer instruction reveal、done shortcut 與 not tested。
+- V1.1 測試已加入古文/文言式攻擊 regression，覆蓋正常文言文不阻擋、古文 prompt injection、憑證外洩、破壞意圖、惡意程式意圖、Dashboard Prompt Guard 顯示與 metrics。
 - API 會回傳 `X-Trace-Id`；submit flow 會把 trace id 保存到 request metadata 與 Kafka event payload。
 
 尚未完成：
@@ -130,7 +134,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - 還沒有完整 OAuth、RBAC、tenant 管理 UI、retention purge、真實 backup/restore 自動化、secret rotation 自動化或真實 OS sandbox。
 - 還沒有完整 OAuth/SSO、user/per-tool quota、Kafka consumer lag alert 或完整 OpenTelemetry。
 
-所以目前 `v1.0.0` 適合用來建立 agent guardrail 的 production readiness baseline，驗證 queue/worker retry/DLQ/approval/evaluator/observability/governance/operations/safety regression 的產品閉環；若要執行真實外部工具，仍必須另接完整 sandbox、IAM、secret manager 與正式維運流程。
+所以目前 `v1.1.0` 適合用來建立 agent guardrail 的 production readiness baseline，驗證 queue/worker retry/DLQ/approval/evaluator/observability/governance/operations/safety regression 與古文繞語攻擊防護的產品閉環；若要執行真實外部工具，仍必須另接完整 sandbox、IAM、secret manager 與正式維運流程。
 
 ## 快速啟動
 
@@ -193,6 +197,7 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
 - [Dashboard 使用說明](docs/dashboard.md)
 - [API 文件](docs/api.md)
 - [架構文件](docs/architecture.md)
+- [V1.1 架構圖資](docs/assets/README.md)
 - [部署文件](docs/deployment.md)
 - [Runbook](docs/runbook.md)
 

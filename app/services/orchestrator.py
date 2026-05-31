@@ -9,10 +9,11 @@ import structlog
 from app.schemas.agent import AgentRequest, AgentResponse
 from app.schemas.events import ExecutionEvent, EvaluationEvent, IncidentEvent, PolicyDecisionEvent
 from app.schemas.policy import PolicyDecision
+from app.observability.metrics import PROMPT_GUARD_FLAGS_TOTAL
 from app.services.executor import BoundedToolExecutor, ToolExecutionResult
 from app.services.evaluator import Evaluator
 from app.services.policy_engine import PolicyEngine
-from app.services.prompt_sanitizer import sanitize_prompt
+from app.services.prompt_sanitizer import PromptAnalysis, analyze_prompt
 
 logger = structlog.get_logger()
 
@@ -38,15 +39,17 @@ class AgentOrchestrator:
         self,
         request: AgentRequest,
         disabled_tools: list[str] | None,
-    ) -> tuple[AgentRequest, PolicyDecision]:
-        prompt, prompt_flags = sanitize_prompt(request.prompt)
-        cleaned_request = request.model_copy(update={"prompt": prompt})
+    ) -> tuple[AgentRequest, PolicyDecision, PromptAnalysis]:
+        analysis = analyze_prompt(request.prompt)
+        cleaned_request = request.model_copy(update={"prompt": analysis.cleaned_prompt})
         policy = self.policy_engine.evaluate(
             request=cleaned_request,
-            prompt_flags=prompt_flags,
+            prompt_flags=analysis.flags,
             disabled_tools=disabled_tools,
         )
-        return cleaned_request, policy
+        for flag in sorted(set(analysis.flags)):
+            PROMPT_GUARD_FLAGS_TOTAL.labels(flag=flag).inc()
+        return cleaned_request, policy, analysis
 
     def _policy_event(self, policy: PolicyDecision, run_id: str, trace_id: str) -> dict:
         return PolicyDecisionEvent(
@@ -64,10 +67,12 @@ class AgentOrchestrator:
         trace_id: str,
         status: str,
         policy: PolicyDecision,
+        prompt_analysis: PromptAnalysis,
     ) -> dict:
         policy_event = self._policy_event(policy, run_id, trace_id)
         summary = {
             "policy": policy.model_dump(),
+            "prompt_guard": prompt_analysis.model_dump(),
             "policy_event": policy_event,
             "event_timeline": [
                 {
@@ -99,7 +104,7 @@ class AgentOrchestrator:
     ) -> OrchestrationResult:
         run_id = str(uuid4())
         trace_id = str(uuid4())
-        _cleaned_request, policy = self._evaluate_policy(request, disabled_tools)
+        _cleaned_request, policy, prompt_analysis = self._evaluate_policy(request, disabled_tools)
 
         if policy.decision.value == "deny":
             status = "denied"
@@ -135,6 +140,7 @@ class AgentOrchestrator:
                 trace_id=trace_id,
                 status=status,
                 policy=policy,
+                prompt_analysis=prompt_analysis,
             ),
         )
 
@@ -147,7 +153,7 @@ class AgentOrchestrator:
     ) -> OrchestrationResult:
         run_id = run_id or str(uuid4())
         trace_id = str(uuid4())
-        cleaned_request, policy = self._evaluate_policy(request, disabled_tools)
+        cleaned_request, policy, prompt_analysis = self._evaluate_policy(request, disabled_tools)
 
         if policy.decision.value == "deny" or policy.requires_human_review:
             status = "denied" if policy.decision.value == "deny" else "awaiting_approval"
@@ -167,6 +173,7 @@ class AgentOrchestrator:
                     trace_id=trace_id,
                     status=status,
                     policy=policy,
+                    prompt_analysis=prompt_analysis,
                 ),
             )
 
@@ -186,6 +193,7 @@ class AgentOrchestrator:
 
         summary = {
             "policy": policy.model_dump(),
+            "prompt_guard": prompt_analysis.model_dump(),
             "policy_event": self._policy_event(policy, run_id, trace_id),
             "execution_event": ExecutionEvent(
                 event_id=str(uuid4()),

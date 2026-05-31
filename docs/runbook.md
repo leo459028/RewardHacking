@@ -1,8 +1,8 @@
-# Runbook v1.0
+# Runbook v1.1
 
-此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail、Kafka worker、Redis run state、approval queue、worker retry/DLQ、tool execution audit、evaluator/observability summary、tenant governance、production readiness gate 與 safety regression evidence 已接入 request path。
+此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail、Kafka worker、Redis run state、approval queue、worker retry/DLQ、tool execution audit、evaluator/observability summary、tenant governance、production readiness gate、safety regression evidence 與古文/文言式 Prompt Guard 已接入 request path。
 
-目前營運基線：`v1.0.0`
+目前營運基線：`v1.1.0`
 
 ## 快速檢查
 
@@ -229,6 +229,21 @@ curl -X POST http://localhost:8000/dashboard/playground \
 3. 對 code task 要求 test report 或 diff artifact。
 4. 調整 evaluator 前先補測試資料。
 
+## 6A. 古文 / 文言式攻擊被擋下
+
+症狀：
+
+- `policy_flags` 出現 `classical_chinese_obfuscation`、`classical_prompt_injection`、`classical_policy_bypass`、`classical_credential_exfiltration`、`classical_destructive_intent` 或 `classical_malware_intent`。
+- run detail 的 Prompt Guard 顯示 `language=zh_classical`。
+- `agent_prompt_guard_flags_total{flag}` 增加。
+
+處理步驟：
+
+1. 到 `/dashboard/runs/{run_id}` 查看 Prompt Guard 區塊，確認 matched signals。
+2. 若 prompt 是正常文言文教學或摘要，補 regression test 並調整規則，避免誤擋。
+3. 若 prompt 包含洩密、繞過政策、破壞資料或惡意程式意圖，維持 fail closed，要求人工審核。
+4. 需要追蹤趨勢時，查 `/v1/metrics` 的 `agent_prompt_guard_flags_total{flag}`。
+
 ## 7. Destructive Action Request
 
 症狀：
@@ -328,7 +343,7 @@ docker compose up kafka-init
 3. 若是 `backup_restore_evidence`、`secret_rotation_evidence` 或 `safety_regression_evidence` 為 `warn` / `fail`，補做人工 drill 或 red-team corpus regression 後透過 Dashboard 或 API 建立 evidence。
 4. 若是 `bootstrap_keys_in_prod`，確認正式環境不要依賴 `.env` 的 `API_KEYS` fallback，改用 DB-managed API key 或正式 IAM。
 
-注意：v1.0 的 Operations Gate 是審計與 readiness 層，不會自動執行 backup/restore、secret rotation、safety regression 或 retention purge。`APP_ENV=prod` 時缺少 fresh safety regression evidence 會讓 release gate fail closed。
+注意：v1.1 延續 v1.0 的 Operations Gate，這是審計與 readiness 層，不會自動執行 backup/restore、secret rotation、safety regression 或 retention purge。`APP_ENV=prod` 時缺少 fresh safety regression evidence 會讓 release gate fail closed。
 
 ## 12. Redis 問題
 

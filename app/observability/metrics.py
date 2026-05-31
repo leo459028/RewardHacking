@@ -37,6 +37,12 @@ POLICY_DECISIONS_TOTAL = Counter(
     ["status"],
 )
 
+PROMPT_GUARD_FLAGS_TOTAL = Counter(
+    "agent_prompt_guard_flags_total",
+    "Prompt guard flags detected by deterministic prompt analysis",
+    ["flag"],
+)
+
 INCIDENTS_TOTAL = Counter(
     "agent_incidents_total",
     "Incidents by severity and code",
