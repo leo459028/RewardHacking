@@ -1,4 +1,4 @@
-# Roadmap v1.2
+# Roadmap v1.3
 
 本 roadmap 將專案從 prototype 推進到可逐步承擔 guardrail 職責的服務。`v0.3.0` 起不再把 Kafka、Redis、Tool Executor、Approval 視為互不相干的線性 phase，而是先建立一條可展示、可查詢、可審計的產品閉環，再把完整 hardening 與 production governance 放到後續版本。
 
@@ -15,8 +15,9 @@
 | `v0.8.0` | 已完成 | Production Operations Gate | 補 Operations Dashboard、operations evidence、release readiness、release gate snapshot 與 `X-Trace-Id` 基線。 |
 | `v1.0.0` | 已完成 | Production Ready：A + C-lite | 將 release gate 升級為 production readiness blocker，補 safety regression evidence、敏感 read API auth coverage、HTTP metrics、incident counter 與 red-team corpus regression。 |
 | `v1.1.0` | 已完成 | Classical Chinese Prompt Guard | 偵測古文/文言式繞語包裝的 prompt injection、policy bypass、憑證外洩、破壞資料與惡意程式意圖，並在 API、Dashboard、metrics 與測試中可查。 |
-| `v1.2.0` | 目前版本 | Control Plane Execution Plan | 新增 workflow/tool registry、execution plan persistence、Run Detail Execution Plan 與 Control Plane Dashboard，讓 queued run 在 worker 執行前已有可審計計畫。 |
-| `v1.3+` | 規劃中 | Production Operations Automation / C-full | 補真實 backup/restore automation、retention purge、secret rotation automation、完整 OpenTelemetry、Kafka lag alert、LLM judge、MCP Gateway、checkpoint/resume 與更完整評測資料集。 |
+| `v1.2.0` | 已完成 | Control Plane Execution Plan | 新增 workflow/tool registry、execution plan persistence、Run Detail Execution Plan 與 Control Plane Dashboard，讓 queued run 在 worker 執行前已有可審計計畫。 |
+| `v1.3.0` | 目前版本 | Trace / Replay Readiness | 串接 run、execution plan 與 step audit 的 trace id，新增 trace API、replay bundle API、step-level audit、Dashboard Trace / Replay 區塊與 control-plane plan health。 |
+| `v1.4+` | 規劃中 | Production Operations Automation / C-full | 補真實 backup/restore automation、retention purge、secret rotation automation、完整 OpenTelemetry、Kafka lag alert、LLM judge、MCP Gateway、checkpoint/resume、真正 replay execution 與更完整評測資料集。 |
 
 ## Milestone：v0.2.0 / Phase 0-2 + Dashboard
 
@@ -242,6 +243,27 @@
 - LangGraph checkpoint/resume、replay/time travel。
 - 真實 model router 或外部模型呼叫；V1.2 的 model route 是 deterministic metadata。
 - 完整 workflow DSL 或 step-level table；V1.2 先以 JSON 保存 steps。
+
+## Milestone：v1.3.0 / Trace / Replay Readiness
+
+目標：把 V1.2 的 execution plan 從「可查詢的執行計畫」升級成「可追蹤、可匯出、可審計的控制面證據鏈」。
+
+完成項目：
+
+- `execution_plans` 新增 `trace_id` 與 `trace_metadata`。
+- 新增 `execution_plan_steps`，保存 step type、status、時間、duration、input/output/error summary 與 metadata。
+- 新增 `/v1/runs/{run_id}/trace`，回傳 run trace、execution plan summary 與 step timeline。
+- 新增 `/v1/runs/{run_id}/replay-bundle`，回傳 run request、policy decision、execution plan、step audit、tool references 與 trace metadata。
+- Run Detail Dashboard 新增 Trace / Replay、Replay Bundle 入口與 Step Audit 表格。
+- Control Plane Dashboard 新增 Trace ID、Step Summary 與 Plan Health。
+- 新增 `agent_control_plane_steps_total{step_type,status}` metric 與 V1.3 regression tests。
+
+本段不包含：
+
+- 真正自動重放 replay execution。
+- OTLP exporter 或 LangSmith-style exporter。
+- LangGraph checkpoint/resume。
+- MCP Gateway。
 
 ## 優先順序
 

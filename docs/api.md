@@ -1,8 +1,8 @@
-# API 文件 v1.2
+# API 文件 v1.3
 
 API 由 FastAPI 提供，所有 JSON API route 都掛在 `/v1` prefix 下。啟動後可透過 OpenAPI UI 查看互動式文件：
 
-目前 API 版本：`v1.2.0`
+目前 API 版本：`v1.3.0`
 
 - `http://localhost:8000/docs`
 - `http://localhost:8000/redoc`
@@ -23,6 +23,8 @@ API 由 FastAPI 提供，所有 JSON API route 都掛在 `/v1` prefix 下。啟�
 | `GET` | `/v1/runs` | 查詢已保存的 runs |
 | `GET` | `/v1/runs/{run_id}` | 查詢單一 run |
 | `GET` | `/v1/runs/{run_id}/execution-plan` | 查詢單一 run 的 Control Plane execution plan |
+| `GET` | `/v1/runs/{run_id}/trace` | 查詢單一 run 的 trace context、execution plan summary 與 step audit timeline |
+| `GET` | `/v1/runs/{run_id}/replay-bundle` | 匯出單一 run 的 replay readiness bundle，供離線 debug、稽核與未來 exporter 使用 |
 | `GET` | `/v1/runs/{run_id}/incidents` | 查詢單一 run 的 incidents |
 | `GET` | `/v1/incidents` | 查詢 incidents |
 | `GET` | `/v1/approvals` | 查詢 awaiting approval 的 runs |
@@ -86,6 +88,8 @@ Dashboard UI 另提供：
 - `POST /v1/control-plane/workflows`
 - `GET /v1/control-plane/tools`
 - `POST /v1/control-plane/tools`
+- `GET /v1/runs/{run_id}/trace`
+- `GET /v1/runs/{run_id}/replay-bundle`
 - `GET /v1/operations/readiness`
 - `GET /v1/operations/evidence`
 - `POST /v1/operations/evidence`
@@ -208,9 +212,9 @@ RBAC-lite role：
 
 目前 request path 中，低風險 `allow` 會先回 `queued`，由 worker 後續更新為 `completed` 或 `awaiting_approval`。Policy `escalate` 目前對外會呈現為 `awaiting_approval`；`accepted` 與 `escalated` 保留在 schema 中作為歷史/相容狀態值。
 
-## Control Plane Execution Plan
+## Control Plane Trace / Replay
 
-`v1.2.0` 在 submit flow 中加入 Control Plane Planner。低風險 request 進入 queue 前會先建立一筆 `execution_plans`，並在 `evaluation_summary.execution_plan` 保存摘要。若 worker 找不到 run 對應的 execution plan，會 fail closed，將 run 更新為 `awaiting_approval`，並加入 `missing_execution_plan` policy flag。
+`v1.3.0` 在 submit flow 中加入 Trace / Replay Readiness。低風險 request 進入 queue 前會先建立一筆 `execution_plans` 與多筆 `execution_plan_steps`，並在 `evaluation_summary.execution_plan` 保存摘要。若 worker 找不到 run 對應的 execution plan，會 fail closed，將 run 更新為 `awaiting_approval`，並加入 `missing_execution_plan` policy flag。
 
 `GET /v1/runs/{run_id}/execution-plan` 回傳：
 
@@ -224,7 +228,7 @@ RBAC-lite role：
   "status": "planned",
   "model_route": {
     "model": "deterministic-control-plane",
-    "routing_reason": "V1.2 deterministic route for analysis."
+    "routing_reason": "V1.3 deterministic route for analysis."
   },
   "selected_tools": [
     {
@@ -246,7 +250,7 @@ RBAC-lite role：
 }
 ```
 
-V1.2 的 `model_route` 是可審計 metadata，不會呼叫外部模型。真實 model router、MCP Gateway、LangGraph checkpoint/resume 與 replay/time travel 不在本版範圍。
+V1.3 的 `model_route` 是可審計 metadata，不會呼叫外部模型。真實 model router、MCP Gateway、LangGraph checkpoint/resume、replay/time travel 與外部 trace exporter 不在本版範圍。
 
 ## Prompt Guard Summary
 
@@ -364,7 +368,7 @@ GET /v1/operations/evidence?evidence_type=backup_restore_drill
 
 ```json
 {
-  "release_version": "v1.2.0",
+  "release_version": "v1.3.0",
   "created_by": "release-manager"
 }
 ```
@@ -375,7 +379,7 @@ GET /v1/operations/evidence?evidence_type=backup_restore_drill
 
 ```json
 {
-  "release_version": "v1.2.0",
+  "release_version": "v1.3.0",
   "created_by": "release-manager"
 }
 ```
@@ -476,3 +480,15 @@ GET /v1/governance/summary?tenant_id=default
 ```
 
 正式環境建議後續補上 Kafka consumer lag alert、完整 OpenTelemetry tracing 與自動化 backup/restore drill。
+## V1.3 Trace / Replay API 補充
+
+目前 API metadata 版本為 `v1.3.0`。V1.3 新增兩個 run subresource，延續既有 `X-Trace-Id`：
+
+| Method | Path | 說明 |
+| --- | --- | --- |
+| `GET` | `/v1/runs/{run_id}/trace` | 回傳 run 摘要、execution plan、trace metadata 與 step audit timeline。 |
+| `GET` | `/v1/runs/{run_id}/replay-bundle` | 匯出 replay readiness bundle，供離線 debug、稽核與未來 exporter 使用。 |
+
+`GET /v1/runs/{run_id}/trace` 回傳 `trace_id`、`trace_metadata`、`run`、`execution_plan` 與 `steps`。每個 step 會包含 `step_type`、`status`、`started_at`、`finished_at`、`duration_ms`、`input_summary`、`output_summary`、`error_summary` 與 `metadata`。
+
+`GET /v1/runs/{run_id}/replay-bundle` 會包含 `schema_version=control-plane-replay-bundle/v1.3`、`trace_context`、`run.request_payload`、`policy_decision`、`execution_plan`、`step_audit`、`tool_references` 與 `limitations`。目前 `limitations.automatic_replay=false`，代表 V1.3 只輸出可審計 bundle，不會重新執行 run。

@@ -1,10 +1,10 @@
-# 專案文件總覽 v1.2
+# 專案文件總覽 v1.3
 
 本目錄收錄 Agent Reward-Hacking Guardrail 的繁體中文文件。專有名詞保留英文，方便與程式碼、API schema、infra component 對照。
 
 ## 版本
 
-目前版本：`v1.2.0`
+目前版本：`v1.3.0`
 
 `v0.6.0` 對應 Tenant Governance MVP。此版本保留 v0.5 的 queued submit、Kafka request event、worker consumer、Redis run state / idempotency / circuit breaker、approval API、bounded executor transcript、worker retry/DLQ、approval TTL/event、tool execution audit、evaluation result、內建 Dashboard worker/observability 頁，並新增 `tenant_id` audit、API key auth、Dashboard Basic Auth、tenant quota、governance events、governance summary API 與 Governance Dashboard。
 
@@ -18,6 +18,8 @@
 
 `v1.2.0` 對應 Control Plane Execution Plan。此版本新增 builtin + DB-backed workflow/tool registry、`execution_plans`、Control Plane API、Run Detail Execution Plan 區塊與 `/dashboard/control-plane`，讓低風險 run 進入 worker queue 前已有可查詢、可審計的執行計畫。這仍是控制面骨架，不包含真實 MCP Gateway、LangGraph checkpoint/resume、replay/time travel 或外部 model router。
 
+`v1.3.0` 對應 Trace / Replay Readiness。此版本把 V1.2 的 execution plan 串上 `X-Trace-Id`，新增 `execution_plan_steps` step-level audit、`/v1/runs/{run_id}/trace`、`/v1/runs/{run_id}/replay-bundle`，並在 Run Detail 與 Control Plane Dashboard 顯示 Trace / Replay 資訊。V1.3 先提供內部 trace contract 與 replay bundle，不實作真正自動重放、OTLP exporter、LangSmith-style exporter、LangGraph checkpoint/resume 或 MCP Gateway。
+
 ## 專案定位
 
 這個專案是一個 guardrail service prototype，用來示範如何在 agent 系統外層建立風險治理流程：
@@ -27,10 +29,11 @@
 - 使用 deterministic policy engine 做 `allow`、`escalate`、`deny`。
 - 對低風險任務建立 queued run，交由 worker 進行 bounded execution。
 - 在 queued 前建立 Control Plane execution plan，保存 workflow version、selected tools、steps、approval gates 與 policy snapshot。
+- 將 execution plan、step audit 與 run metadata 綁到同一個 trace id，提供 trace 查詢與 replay bundle 匯出。
 - 對 destructive 或需審核任務建立 approval queue，不直接執行工具。
 - 用 evaluator 檢查輸出是否有 reward hacking、shortcut、未驗證或 policy violation 訊號。
 - 將 run、policy decision、evaluation summary 與 incident 保存到 Postgres audit trail。
-- 用內建 dashboard 查看 runs、incidents、risk score、event timeline、tool transcript、execution plan、approval queue、tenant governance、control plane、operations gate 與 playground 測試結果。
+- 用內建 dashboard 查看 runs、incidents、risk score、event timeline、tool transcript、execution plan、Trace / Replay、approval queue、tenant governance、control plane、operations gate 與 playground 測試結果。
 - 以 API key auth 對應 tenant，支援 `.env` bootstrap fallback 與 DB-managed API key，並以 Redis quota 對 tenant request 與 high-risk request 做 fail-closed 控制。
 - 以 operations evidence 保存 backup/restore、secret rotation 與 safety regression 證據，讓 production release gate 可 fail closed。
 
@@ -53,11 +56,11 @@
 | [安全設計](security.md) | Threat model、guardrail 原則、production hardening |
 | [Runbook](runbook.md) | 常見事故處理、診斷步驟與營運 KPI |
 | [Roadmap](roadmap.md) | 從 skeleton 到 production 的分階段路線 |
-| [V1.1 架構圖資](assets/README.md) | `docs/assets/*-v11.png`，歷史架構圖、流程圖、資料模型、Dashboard、metrics 與 threat model；V1.2 文件已補 Control Plane 文字說明，尚未新增 v12 圖資 |
+| [V1.1 架構圖資](assets/README.md) | `docs/assets/*-v11.png`，歷史架構圖、流程圖、資料模型、Dashboard、metrics 與 threat model；V1.3 文件已補 Trace / Replay 文字說明，尚未新增 v13 圖資 |
 
 ## V1.1 架構圖資
 
-新版圖資保存在 `docs/assets/*-v11.png`，舊版 `*-v1.png` 已保留作為歷史圖資。V1.2 目前尚未新增 `*-v12.png` 圖資，因此若需要圖片仍可引用 V1.1 圖資，但文字文件已以 V1.2 Control Plane 為準。
+新版圖資保存在 `docs/assets/*-v11.png`，舊版 `*-v1.png` 已保留作為歷史圖資。V1.3 目前尚未新增 `*-v13.png` 圖資，因此若需要圖片仍可引用 V1.1 圖資，但文字文件已以 V1.3 Trace / Replay Readiness 為準。
 
 ![V1.1 Architecture](assets/architecture-ad-marketing-v11.png)
 
