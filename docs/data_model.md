@@ -172,7 +172,7 @@ Tables：`release_gate_runs`、`release_gate_items`
 | 欄位 | 型別 | 說明 |
 | --- | --- | --- |
 | `gate_id` | string | 對外查詢 release gate 的 ID |
-| `release_version` | string | 例如 `v1.2.0` |
+| `release_version` | string | 例如 `v1.3.0` |
 | `status` | string | `pass`、`warn` 或 `fail` |
 | `summary` | text | gate 結果摘要 |
 | `created_by` | string | 建立者 |
@@ -216,7 +216,7 @@ Table：`tool_definitions`
 
 Table：`execution_plans`
 
-V1.2 在低風險 run 進入 worker queue 前建立 execution plan。Worker 若找不到對應 plan，會 fail closed，將 run 轉為 `awaiting_approval` 並加入 `missing_execution_plan` flag。
+V1.3 在低風險 run 進入 worker queue 前建立 execution plan，並把 HTTP `X-Trace-Id` 寫入 `trace_id` 與 `trace_metadata`。Worker 若找不到對應 plan，會 fail closed，將 run 轉為 `awaiting_approval` 並加入 `missing_execution_plan` flag。
 
 | 欄位 | 型別 | 說明 |
 | --- | --- | --- |
@@ -225,11 +225,33 @@ V1.2 在低風險 run 進入 worker queue 前建立 execution plan。Worker 若�
 | `tenant_id` | string | run 所屬 tenant |
 | `workflow_id` / `workflow_version` | string | planner 選出的 workflow |
 | `status` | string | `planned` 或 `requires_approval` |
-| `model_route` | JSON | V1.2 deterministic model route metadata，不代表外部模型呼叫 |
+| `model_route` | JSON | deterministic model route metadata，不代表外部模型呼叫 |
 | `selected_tools` | JSON | planner 選出的工具與風險資訊 |
 | `steps` | JSON | policy、approval、tool execution、evaluation 等步驟 |
 | `approval_gates` | JSON | tool 或 registry 造成的 approval gates |
 | `policy_snapshot` | JSON | submit 時的 policy decision 快照 |
+| `trace_id` | string | 與 run request metadata 對齊的 trace id |
+| `trace_metadata` | JSON | 保留 `exporter_type`、`external_trace_id`、`span_id`、`parent_span_id` 等未來 exporter 欄位 |
+
+### `ExecutionPlanStep`
+
+Table：`execution_plan_steps`
+
+V1.3 新增 step-level audit，用來讓 Trace / Replay API 與 Dashboard 查詢每個 execution plan step 的狀態與摘要。
+
+| 欄位 | 型別 | 說明 |
+| --- | --- | --- |
+| `step_id` | string | step 對外識別，例如 `step_1_plan` |
+| `plan_id` | string | 對應 `execution_plans.plan_id` |
+| `run_id` | string | 對應 `agent_runs.run_id` |
+| `trace_id` | string | 與 execution plan / run metadata 對齊 |
+| `step_index` | integer | step 在 timeline 中的順序 |
+| `step_type` | string | `policy_check`、`tool_execution`、`evaluation` 等 |
+| `status` | string | `planned`、`completed`、`failed` 等 |
+| `started_at` / `finished_at` | timestamp | step 時間戳 |
+| `duration_ms` | integer | step duration |
+| `input_summary` / `output_summary` / `error_summary` | text | replay bundle 與 Dashboard 用的摘要 |
+| `metadata_payload` | JSON | step metadata 與未來 exporter 欄位 |
 
 ## Event Schemas
 
@@ -258,9 +280,9 @@ V1.2 在低風險 run 進入 worker queue 前建立 execution plan。Worker 若�
 - `worker.failed`
 - `approval.decision`
 
-`v1.2.0` 延續 v1.0 的 HTTP `X-Trace-Id` 基線：trace id 會寫入 submit request 的 `metadata.trace_id`，並跟著 `agent.requests` 的 `payload.request.metadata.trace_id` 傳給 worker；release gate snapshot 也會保存建立當下的 trace id。`BaseEvent.trace_id` 目前由 event helper 另行產生 UUID；後續若導入完整 OpenTelemetry，應把 API response header、Kafka envelope、logs 與 database 的 trace id 對齊。
+`v1.3.0` 延續 v1.0 的 HTTP `X-Trace-Id` 基線：trace id 會寫入 submit request 的 `metadata.trace_id`，並同步到 `execution_plans.trace_id`、`execution_plan_steps.trace_id`、trace API 與 replay bundle。`agent.requests` 的 `payload.request.metadata.trace_id` 仍會傳給 worker；release gate snapshot 也會保存建立當下的 trace id。`BaseEvent.trace_id` 目前由 event helper 另行產生 UUID；後續若導入完整 OpenTelemetry，應把 API response header、Kafka envelope、logs 與 database 的 trace id 對齊。
 
-`v1.2.0` 新增 `execution_plans`，但 Kafka event envelope 尚未直接內嵌完整 plan；worker 會用 `run_id` 從 Postgres 讀取對應 execution plan。
+`v1.3.0` 新增 `execution_plan_steps`，但 Kafka event envelope 尚未直接內嵌完整 plan、step audit 或 replay bundle；worker 會用 `run_id` 從 Postgres 讀取對應 execution plan。
 
 ## 資料生命週期建議
 
@@ -282,3 +304,24 @@ policy decision、execution summary、evaluation summary、incident 已進 Postg
 - Log 中不應輸出完整 prompt 或 tool output。
 - `metadata` 欄位應避免存 access token、password、private key。
 - Audit retention 到期後需要清除或匿名化。
+## V1.3 Trace / Replay Data Model 補充
+
+V1.3 在 `execution_plans` 增加：
+
+| 欄位 | 型別 | 說明 |
+| --- | --- | --- |
+| `trace_id` | string | 沿用 HTTP `X-Trace-Id`，用來串起 run、plan 與 step audit。 |
+| `trace_metadata` | JSON | 內部 Trace Contract metadata，保留 `exporter_type`、`external_trace_id`、`span_id`、`parent_span_id` 與未來 exporter 提示。 |
+
+V1.3 新增 `execution_plan_steps`：
+
+| 欄位 | 型別 | 說明 |
+| --- | --- | --- |
+| `step_id` | string | plan step id，例如 `policy-check`。 |
+| `plan_id` / `run_id` / `tenant_id` | string | 對應 execution plan、run 與 tenant。 |
+| `trace_id` | string | 與 `execution_plans.trace_id` 一致。 |
+| `step_type` | string | `policy_check`、`approval_gate`、`tool_execution`、`evaluation` 等。 |
+| `status` | string | `completed`、`planned`、`pending`、`blocked` 或 `failed`。 |
+| `started_at` / `finished_at` / `duration_ms` | timestamp / integer | step audit 的時間欄位；尚未執行的 step 可為空。 |
+| `input_summary` / `output_summary` / `error_summary` | text | 給 Dashboard、稽核與 replay bundle 使用的摘要。 |
+| `metadata_payload` | JSON | step-level span/exporter metadata。 |

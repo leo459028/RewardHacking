@@ -63,6 +63,34 @@
 </section>
 {% endif %}
 
+{% if execution_plan %}
+<section class="panel">
+  <h2>Trace / Replay <span class="heading-note">V1.3 trace contract</span></h2>
+  <p><strong>Trace ID</strong> {{ execution_plan.trace_id or run.request_payload.get("metadata", {}).get("trace_id", "") }}</p>
+  <p><strong>Replay Bundle</strong> <a href="/v1/runs/{{ run.run_id }}/replay-bundle">/v1/runs/{{ run.run_id }}/replay-bundle</a></p>
+  <pre>{{ execution_plan.trace_metadata|json_pretty }}</pre>
+  <h3>Step Audit</h3>
+  <table>
+    <thead><tr><th>Step</th><th>Type</th><th>Status</th><th>Duration</th><th>Input</th><th>Output</th><th>Error</th></tr></thead>
+    <tbody>
+    {% for step in execution_plan_steps %}
+      <tr>
+        <td>{{ step.step_id }}</td>
+        <td>{{ step.step_type }}</td>
+        <td><span class="status {{ step.status }}">{{ step.status }}</span></td>
+        <td>{{ step.duration_ms if step.duration_ms is not none else "" }}</td>
+        <td>{{ step.input_summary }}</td>
+        <td>{{ step.output_summary }}</td>
+        <td>{{ step.error_summary }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="muted">No step audit rows.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
 <section class="detail-grid">
   <div class="panel">
     <h2>Request <span class="heading-note">請求內容</span></h2>

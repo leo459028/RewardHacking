@@ -58,18 +58,22 @@
 <section class="panel">
   <h2>Latest Execution Plans <span class="heading-note">最近執行計畫</span></h2>
   <table>
-    <thead><tr><th>Plan</th><th>Run</th><th>Workflow</th><th>Status</th><th>Tools</th></tr></thead>
+    <thead><tr><th>Plan</th><th>Run</th><th>Trace ID</th><th>Workflow</th><th>Status</th><th>Step Summary</th><th>Plan Health</th><th>Tools</th></tr></thead>
     <tbody>
     {% for plan in plans %}
+      {% set summary = step_summaries.get(plan.run_id, {}) %}
       <tr>
         <td>{{ plan.plan_id }}</td>
         <td><a href="/dashboard/runs/{{ plan.run_id }}">{{ plan.run_id[:8] }}</a></td>
+        <td>{{ plan.trace_id }}</td>
         <td>{{ plan.workflow_id }}@{{ plan.workflow_version }}</td>
         <td><span class="status {{ plan.status }}">{{ plan.status }}</span></td>
+        <td>{{ summary.get("completed", 0) }}/{{ summary.get("total", 0) }} completed</td>
+        <td>{{ summary.get("health", "unknown") }}</td>
         <td><pre>{{ plan.selected_tools|json_pretty }}</pre></td>
       </tr>
     {% else %}
-      <tr><td colspan="5" class="muted">No execution plans yet.</td></tr>
+      <tr><td colspan="8" class="muted">No execution plans yet.</td></tr>
     {% endfor %}
     </tbody>
   </table>
