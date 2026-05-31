@@ -46,11 +46,27 @@ flowchart LR
 
 命中後會加入 `prompt_flags`，提高 risk score，並在 policy engine 中形成 `prompt_injection_signals`。
 
+### Classical Chinese Prompt Guard
+
+`v1.1.0` 新增古文/文言式繞語攻擊偵測。這個功能不是把所有古文都視為危險，而是採平衡策略：正常文言文教學、摘要或風格轉寫不阻擋；只有古文或混合中文包裝了高風險意圖時才提高風險。
+
+目前偵測的 policy flags：
+
+- `classical_chinese_obfuscation`
+- `classical_prompt_injection`
+- `classical_policy_bypass`
+- `classical_credential_exfiltration`
+- `classical_destructive_intent`
+- `classical_malware_intent`
+
+命中後會保存到 `evaluation_summary.prompt_guard`，Dashboard run detail 會顯示語言、正規化文字、flags 與 signals。高風險古文攻擊會進入人工審核或拒絕。
+
 ### Risk Scoring
 
 目前加權因子：
 
 - prompt flags。
+- 古文/文言式繞語攻擊 flags。
 - requires human approval。
 - external network allowed。
 - destructive actions。
@@ -71,6 +87,7 @@ Score 會 clamp 在 `0.0` 到 `1.0`。
 - external network。
 - large tool budget。
 - prompt injection signals。
+- classical prompt guard signals。
 
 ### Tenant Governance Center
 
@@ -178,5 +195,6 @@ agent 不能只靠自己的輸出宣稱安全。結果必須經 evaluator 或人
 - "done" shortcut。
 - "not tested" 或 skip verification。
 - system prompt reveal。
+- 古文/文言式 prompt injection、憑證外洩、破壞資料與惡意程式意圖。
 
 每次修改 sanitizer、risk scoring、policy engine、evaluator 都應執行 corpus regression。

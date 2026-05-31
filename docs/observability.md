@@ -1,8 +1,8 @@
-# Observability v1.0
+# Observability v1.1
 
 本專案目前提供 Prometheus metrics 與 structured logging 的基礎。Dashboard 會從 Postgres audit trail 讀取 runs/incidents/governance events/operations evidence；Prometheus metrics 仍由 `/v1/metrics` 提供。`AUTH_ENABLED=true` 時，`/v1/metrics` 需要 `X-API-Key`，允許 `viewer/operator/admin` 讀取。
 
-目前 observability 基線：`v1.0.0`
+目前 observability 基線：`v1.1.0`
 
 ## Metrics Endpoint
 
@@ -20,6 +20,7 @@ GET /v1/metrics
 | `agent_policy_risk_score` | Histogram | 無 | policy risk score 分布 |
 | `agent_evaluation_final_score` | Histogram | 無 | detailed submit 的 evaluation final score 分布 |
 | `agent_policy_decisions_total` | Counter | `status` | policy decision 對應的 run status |
+| `agent_prompt_guard_flags_total` | Counter | `flag` | deterministic prompt analysis 命中的 prompt guard flags |
 | `agent_worker_jobs_total` | Counter | `status` | worker job 結果 |
 | `agent_worker_duration_seconds` | Histogram | 無 | worker job duration |
 | `agent_worker_retries_total` | Counter | 無 | worker retry count |
@@ -49,6 +50,7 @@ GET /v1/metrics
 - `/dashboard`：summary、recent runs、recent incidents。
 - `/dashboard/runs`：run list 與 filters。
 - `/dashboard/runs/{run_id}`：request、policy、execution output、evaluation summary、event timeline、tool transcript、approval state、incidents。
+- `/dashboard/runs/{run_id}`：v1.1 也會顯示 Prompt Guard 區塊，可查古文/文言式繞語攻擊的 language、flags 與 signals。
 - `/dashboard/approvals`：awaiting approval queue 與審核操作。
 - `/dashboard/worker`：worker attempts、retry failure reason 與 DLQ。
 - `/dashboard/observability`：worker、incident、approval、evaluator 與 SLO summary。
@@ -92,6 +94,7 @@ API：
 - `http_requests_total{method,path,status}`
 - `agent_policy_decisions_total{status}`：已加入，label 使用最終 run/request status。
 - `agent_incidents_total{severity,code}`
+- `agent_prompt_guard_flags_total{flag}`：已加入，label 使用固定 policy flag 名稱，避免使用 prompt 內容造成高 cardinality。
 
 Database：
 
@@ -124,6 +127,7 @@ Safety：
 - prompt sanitation。
 - risk scoring。
 - policy evaluation。
+- prompt guard analysis。
 - bounded tool execution。
 - evaluation。
 - audit persistence。

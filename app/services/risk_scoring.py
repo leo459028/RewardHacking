@@ -9,6 +9,17 @@ def compute_risk_score(request: AgentRequest, prompt_flags: list[str]) -> float:
     if prompt_flags:
         score += min(0.30, 0.10 * len(prompt_flags))
 
+    if "classical_chinese_obfuscation" in prompt_flags:
+        score += 0.10
+
+    high_risk_classical_flags = {
+        "classical_credential_exfiltration",
+        "classical_destructive_intent",
+        "classical_malware_intent",
+    }
+    if set(prompt_flags).intersection(high_risk_classical_flags):
+        score += 0.20
+
     if request.constraints.requires_human_approval:
         score += 0.10
 

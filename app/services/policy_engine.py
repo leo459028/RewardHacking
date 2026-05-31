@@ -31,6 +31,10 @@ class PolicyEngine:
         if context.prompt_flags:
             flags.append("prompt_injection_signals")
 
+        for prompt_flag in sorted(set(context.prompt_flags)):
+            if prompt_flag.startswith("classical_"):
+                flags.append(prompt_flag)
+
         if request.constraints.max_tool_calls <= 0:
             flags.append("invalid_tool_budget")
 

@@ -1,8 +1,16 @@
-# 架構文件 v1.0
+# 架構文件 v1.1
 
-本專案目前是 Agent Reward-Hacking Guardrail 的 guarded async execution hardening 版本。核心流程是 FastAPI API 接收 agent request、進行 prompt sanitation、risk scoring 與 policy decision；低風險任務寫入 Postgres audit trail、標記為 `queued`，並 publish Kafka request event；worker 重新讀取 run、重跑 policy、執行 bounded executor、evaluate 結果並寫回 audit trail。高風險或 destructive 任務會進入 `awaiting_approval`，由 Dashboard 或 API 進行審核。
+本專案目前是 Agent Reward-Hacking Guardrail 的 guarded async execution hardening 版本。核心流程是 FastAPI API 接收 agent request、進行 prompt sanitation / Prompt Guard analysis、risk scoring 與 policy decision；低風險任務寫入 Postgres audit trail、標記為 `queued`，並 publish Kafka request event；worker 重新讀取 run、重跑 policy、執行 bounded executor、evaluate 結果並寫回 audit trail。高風險或 destructive 任務會進入 `awaiting_approval`，由 Dashboard 或 API 進行審核。
 
-目前架構版本：`v1.0.0`
+目前架構版本：`v1.1.0`
+
+## V1.1 架構圖資
+
+新版架構圖已保存在 `docs/assets/*-v11.png`，舊版 `*-v1.png` 會保留作為 v1.0 歷史基線。V1.1 圖資已補上 Classical Chinese Prompt Guard、`evaluation_summary.prompt_guard`、Dashboard Prompt Guard panel 與 `agent_prompt_guard_flags_total{flag}`，適合用於目前版本的文件、簡報與架構說明。
+
+![V1.1 Architecture](assets/architecture-ad-marketing-v11.png)
+
+完整清單請看 [V1.1 架構圖資](assets/README.md)。
 
 ## 目前架構
 
@@ -26,6 +34,8 @@ flowchart LR
   DB --> UI["Dashboard UI"]
   DB --> GD["Governance Dashboard"]
   DB --> OP["Operations Dashboard"]
+  S --> PG["Prompt Guard Summary"]
+  PG --> DB
   A --> M["Prometheus Metrics"]
 ```
 
@@ -50,6 +60,7 @@ flowchart LR
 - DB-backed tenant 設定、API key hash 儲存、RBAC-lite 與 tenant quota override。
 - Operations evidence、safety regression evidence、release gate snapshot、release readiness checks 與 `X-Trace-Id` response header。
 - 敏感 read API 的 API key auth coverage、HTTP request metrics 與 incident counter。
+- Classical Chinese Prompt Guard、`evaluation_summary.prompt_guard`、Dashboard Prompt Guard 區塊與 `agent_prompt_guard_flags_total{flag}` metric。
 
 目前尚未完整接入：
 
@@ -123,7 +134,7 @@ sequenceDiagram
 
 ### `app/services`
 
-- `prompt_sanitizer.py`：偵測 prompt injection 訊號。
+- `prompt_sanitizer.py`：偵測 prompt injection 訊號，並分析古文/文言式繞語攻擊的 language、flags 與 signals。
 - `risk_scoring.py`：計算 risk score。
 - `policy_engine.py`：產生 `allow`、`escalate`、`deny` decision，並接收 disabled tools 作為 circuit breaker signal。
 - `orchestrator.py`：負責 submit / execute 兩段流程，串接 sanitizer、policy、executor、evaluator。
@@ -144,7 +155,7 @@ sequenceDiagram
 
 ### `app/models`
 
-- `AgentRun`：保存 request、status、risk score、policy flags、execution output、evaluation summary。
+- `AgentRun`：保存 request、status、risk score、policy flags、execution output、evaluation summary；v1.1 的 Prompt Guard 結果保存在 `evaluation_summary.prompt_guard`。
 - `Incident`：保存 policy/evaluation/approval/worker 產生的事件。
 - `GovernanceEvent`：保存 quota hit 與 high-risk quota fail-closed 等治理事件。
 - `Tenant`：保存 tenant 名稱、狀態與 tenant-level quota。
