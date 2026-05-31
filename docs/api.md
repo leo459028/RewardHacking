@@ -1,8 +1,8 @@
-# API 文件 v1.1
+# API 文件 v1.2
 
 API 由 FastAPI 提供，所有 JSON API route 都掛在 `/v1` prefix 下。啟動後可透過 OpenAPI UI 查看互動式文件：
 
-目前 API 版本：`v1.1.0`
+目前 API 版本：`v1.2.0`
 
 - `http://localhost:8000/docs`
 - `http://localhost:8000/redoc`
@@ -14,10 +14,15 @@ API 由 FastAPI 提供，所有 JSON API route 都掛在 `/v1` prefix 下。啟�
 | `GET` | `/v1/healthz` | API process 健康檢查 |
 | `GET` | `/v1/readyz` | Postgres readiness 檢查 |
 | `GET` | `/v1/metrics` | Prometheus metrics |
+| `GET` | `/v1/control-plane/workflows` | 查詢 workflow registry，包含 builtin 與 DB-managed workflows |
+| `POST` | `/v1/control-plane/workflows` | 建立或更新 DB-managed workflow，需 `admin` role |
+| `GET` | `/v1/control-plane/tools` | 查詢 tool registry，包含 builtin 與 DB-managed tools |
+| `POST` | `/v1/control-plane/tools` | 建立或更新 DB-managed tool，需 `admin` role |
 | `POST` | `/v1/agent/submit` | 送出 agent request，回傳簡化結果並寫入 audit trail |
 | `POST` | `/v1/agent/submit-with-details` | 送出 agent request，回傳 policy、execution、evaluation 細節並寫入 audit trail |
 | `GET` | `/v1/runs` | 查詢已保存的 runs |
 | `GET` | `/v1/runs/{run_id}` | 查詢單一 run |
+| `GET` | `/v1/runs/{run_id}/execution-plan` | 查詢單一 run 的 Control Plane execution plan |
 | `GET` | `/v1/runs/{run_id}/incidents` | 查詢單一 run 的 incidents |
 | `GET` | `/v1/incidents` | 查詢 incidents |
 | `GET` | `/v1/approvals` | 查詢 awaiting approval 的 runs |
@@ -52,6 +57,7 @@ Dashboard UI 另提供：
 - `/dashboard/worker`
 - `/dashboard/observability`
 - `/dashboard/governance`
+- `/dashboard/control-plane`
 - `/dashboard/operations`
 - `/dashboard/playground`
 
@@ -76,6 +82,10 @@ Dashboard UI 另提供：
 - `POST /v1/tenants/{tenant_id}/api-keys`
 - `POST /v1/tenants/{tenant_id}/api-keys/{key_id}/revoke`
 - `GET /v1/metrics`
+- `GET /v1/control-plane/workflows`
+- `POST /v1/control-plane/workflows`
+- `GET /v1/control-plane/tools`
+- `POST /v1/control-plane/tools`
 - `GET /v1/operations/readiness`
 - `GET /v1/operations/evidence`
 - `POST /v1/operations/evidence`
@@ -198,9 +208,49 @@ RBAC-lite role：
 
 目前 request path 中，低風險 `allow` 會先回 `queued`，由 worker 後續更新為 `completed` 或 `awaiting_approval`。Policy `escalate` 目前對外會呈現為 `awaiting_approval`；`accepted` 與 `escalated` 保留在 schema 中作為歷史/相容狀態值。
 
+## Control Plane Execution Plan
+
+`v1.2.0` 在 submit flow 中加入 Control Plane Planner。低風險 request 進入 queue 前會先建立一筆 `execution_plans`，並在 `evaluation_summary.execution_plan` 保存摘要。若 worker 找不到 run 對應的 execution plan，會 fail closed，將 run 更新為 `awaiting_approval`，並加入 `missing_execution_plan` policy flag。
+
+`GET /v1/runs/{run_id}/execution-plan` 回傳：
+
+```json
+{
+  "plan_id": "plan_...",
+  "run_id": "a1b2c3",
+  "tenant_id": "default",
+  "workflow_id": "analysis-basic",
+  "workflow_version": "1.0.0",
+  "status": "planned",
+  "model_route": {
+    "model": "deterministic-control-plane",
+    "routing_reason": "V1.2 deterministic route for analysis."
+  },
+  "selected_tools": [
+    {
+      "name": "read_data",
+      "risk_level": "low",
+      "requires_approval": false
+    }
+  ],
+  "steps": [
+    {"step_id": "policy-check", "step_type": "policy_check", "status": "completed"},
+    {"step_id": "tool-execution", "step_type": "tool_execution", "status": "planned", "tools": ["read_data"]},
+    {"step_id": "evaluation", "step_type": "evaluation", "status": "planned"}
+  ],
+  "approval_gates": [],
+  "policy_snapshot": {
+    "decision": "allow",
+    "risk_score": 0.1
+  }
+}
+```
+
+V1.2 的 `model_route` 是可審計 metadata，不會呼叫外部模型。真實 model router、MCP Gateway、LangGraph checkpoint/resume 與 replay/time travel 不在本版範圍。
+
 ## Prompt Guard Summary
 
-`v1.1.0` 會在 `POST /v1/agent/submit-with-details` 與 `GET /v1/runs/{run_id}` 的 `evaluation_summary.prompt_guard` 保存 prompt analysis 結果。這個區塊用來查詢古文、文言文或混合中文是否被用來包裝高風險意圖。
+`v1.1.0` 起會在 `POST /v1/agent/submit-with-details` 與 `GET /v1/runs/{run_id}` 的 `evaluation_summary.prompt_guard` 保存 prompt analysis 結果。這個區塊用來查詢古文、文言文或混合中文是否被用來包裝高風險意圖。
 
 ```json
 {
@@ -314,7 +364,7 @@ GET /v1/operations/evidence?evidence_type=backup_restore_drill
 
 ```json
 {
-  "release_version": "v1.1.0",
+  "release_version": "v1.2.0",
   "created_by": "release-manager"
 }
 ```
@@ -325,7 +375,7 @@ GET /v1/operations/evidence?evidence_type=backup_restore_drill
 
 ```json
 {
-  "release_version": "v1.1.0",
+  "release_version": "v1.2.0",
   "created_by": "release-manager"
 }
 ```

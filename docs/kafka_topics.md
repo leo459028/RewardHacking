@@ -1,6 +1,6 @@
 # Kafka Topics
 
-Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execution、evaluation 與 incident processing。`v1.1.0` 目前 API 會在低風險 request 建立 `queued` run 後 publish `agent.requests`，worker 會消費該 topic 並寫回 Postgres audit trail；retry/backoff、DLQ audit、tenant_id request payload、HTTP `X-Trace-Id` metadata 與 Prompt Guard summary 已納入。Kafka consumer lag alert 與完整 OpenTelemetry trace propagation 尚未納入本版。
+Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execution、evaluation 與 incident processing。`v1.2.0` 目前 API 會在低風險 request 建立 `queued` run 與 Control Plane execution plan 後 publish `agent.requests`，worker 會消費該 topic、用 `run_id` 從 Postgres 讀取 request 與 execution plan，並寫回 Postgres audit trail；retry/backoff、DLQ audit、tenant_id request payload、HTTP `X-Trace-Id` metadata、Prompt Guard summary 與 execution plan summary 已納入。Kafka consumer lag alert 與完整 OpenTelemetry trace propagation 尚未納入本版。
 
 ## Topic 清單
 
@@ -27,7 +27,9 @@ Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execut
 }
 ```
 
-注意：`v1.1.0` 延續 v1.0 的 HTTP `X-Trace-Id` 基線，會保存到 `payload.request.metadata.trace_id`。Event envelope 的 `trace_id` 目前仍由 `make_event()` 另外產生 UUID，尚未和 HTTP trace id 完全對齊；release gate snapshot 會保存建立當下的 HTTP trace id；後續導入 OpenTelemetry 時應讓 API response header、Kafka envelope、logs 與 database 使用同一條 trace。
+注意：`v1.2.0` 延續 v1.0 的 HTTP `X-Trace-Id` 基線，會保存到 `payload.request.metadata.trace_id`。Event envelope 的 `trace_id` 目前仍由 `make_event()` 另外產生 UUID，尚未和 HTTP trace id 完全對齊；release gate snapshot 會保存建立當下的 HTTP trace id；後續導入 OpenTelemetry 時應讓 API response header、Kafka envelope、logs 與 database 使用同一條 trace。
+
+V1.2 的 Kafka request payload 不直接包含完整 execution plan；worker 以 `run_id` 查詢 `execution_plans`。若查不到 plan，worker 會 fail closed 到 `awaiting_approval`，並加入 `missing_execution_plan` flag。
 
 ## `agent.requests`
 
