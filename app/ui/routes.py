@@ -49,8 +49,10 @@ from app.services.operations import (
 )
 from app.services.control_plane import (
     ControlPlanePlanner,
+    execution_plan_step_summaries,
     get_execution_plan_for_run,
     latest_execution_plans,
+    list_execution_plan_steps,
     list_tool_definitions,
     list_workflow_definitions,
     persist_execution_plan,
@@ -104,6 +106,7 @@ async def _attach_execution_plan(
         request=agent_request,
         run_id=result.response.run_id,
         policy_snapshot=dict(result.evaluation_summary.get("policy", {})),
+        trace_id=str(agent_request.metadata.get("trace_id", "")),
         workflows=await list_workflow_definitions(session),
         tools=await list_tool_definitions(session),
     )
@@ -192,6 +195,7 @@ async def dashboard_run_detail(
     attempts = await list_worker_attempts(session, run_id=run_id)
     tool_executions = await list_tool_executions(session, run_id=run_id)
     execution_plan = await get_execution_plan_for_run(session, run_id)
+    execution_plan_steps = await list_execution_plan_steps(session, run_id)
     return templates.TemplateResponse(
         request,
         "run_detail.html",
@@ -201,6 +205,7 @@ async def dashboard_run_detail(
             "attempts": attempts,
             "tool_executions": tool_executions,
             "execution_plan": execution_plan,
+            "execution_plan_steps": execution_plan_steps,
             "active": "runs",
         },
     )
@@ -211,6 +216,7 @@ async def dashboard_control_plane(request: Request, session: AsyncSession = Depe
     workflows = await list_workflow_definitions(session)
     tools = await list_tool_definitions(session)
     plans = await latest_execution_plans(session, limit=25)
+    step_summaries = await execution_plan_step_summaries(session, [plan.run_id for plan in plans])
     return templates.TemplateResponse(
         request,
         "control_plane.html",
@@ -218,6 +224,7 @@ async def dashboard_control_plane(request: Request, session: AsyncSession = Depe
             "workflows": workflows,
             "tools": tools,
             "plans": plans,
+            "step_summaries": step_summaries,
             "active": "control-plane",
         },
     )
@@ -428,7 +435,10 @@ async def submit_playground(
                 allow_destructive_actions=form.get("allow_destructive_actions") == "on",
                 allow_pii_access=form.get("allow_pii_access") == "on",
             ),
-            metadata={"source": "dashboard_playground"},
+            metadata={
+                "source": "dashboard_playground",
+                "trace_id": str(getattr(request.state, "trace_id", "")),
+            },
         )
         disabled_tools = list((await state_store.get_open_breakers(agent_request.allowed_tools)).keys())
         result = orchestrator.submit(agent_request, disabled_tools=disabled_tools)

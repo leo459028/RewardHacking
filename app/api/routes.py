@@ -48,6 +48,9 @@ from app.schemas.audit import (
 )
 from app.schemas.control_plane import (
     ExecutionPlanRecord,
+    ExecutionPlanStepRecord,
+    ReplayBundleResponse,
+    RunTraceResponse,
     ToolDefinitionCreateRequest,
     ToolDefinitionRecord,
     WorkflowDefinitionCreateRequest,
@@ -104,9 +107,11 @@ from app.services.control_plane import (
     create_tool_definition,
     create_workflow_definition,
     get_execution_plan_for_run,
+    list_execution_plan_steps,
     list_tool_definitions,
     list_workflow_definitions,
     persist_execution_plan,
+    step_to_dict,
     tool_to_dict,
     workflow_to_dict,
 )
@@ -230,6 +235,7 @@ def _execution_plan_record(plan) -> ExecutionPlanRecord:
         plan_id=plan.plan_id,
         run_id=plan.run_id,
         tenant_id=plan.tenant_id,
+        trace_id=plan.trace_id,
         workflow_id=plan.workflow_id,
         workflow_version=plan.workflow_version,
         status=plan.status,
@@ -238,9 +244,14 @@ def _execution_plan_record(plan) -> ExecutionPlanRecord:
         steps=plan.steps,
         approval_gates=plan.approval_gates,
         policy_snapshot=plan.policy_snapshot,
+        trace_metadata=plan.trace_metadata,
         created_at=plan.created_at,
         updated_at=plan.updated_at,
     )
+
+
+def _execution_plan_step_record(step) -> ExecutionPlanStepRecord:
+    return ExecutionPlanStepRecord(**step_to_dict(step))
 
 
 async def _attach_execution_plan(
@@ -256,6 +267,7 @@ async def _attach_execution_plan(
         request=agent_request,
         run_id=result.response.run_id,
         policy_snapshot=dict(result.evaluation_summary.get("policy", {})),
+        trace_id=str(agent_request.metadata.get("trace_id", "")),
         workflows=workflows,
         tools=tools,
     )
@@ -877,6 +889,82 @@ async def get_run_execution_plan(
     if plan is None:
         raise HTTPException(status_code=404, detail="Execution plan not found.")
     return _execution_plan_record(plan)
+
+
+@router.get("/runs/{run_id}/trace", response_model=RunTraceResponse)
+async def get_run_trace(
+    run_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    run = await get_run(session, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    _query_tenant(run.tenant_id, auth_context)
+    plan = await get_execution_plan_for_run(session, run_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Execution plan not found.")
+    steps = await list_execution_plan_steps(session, run_id)
+    return RunTraceResponse(
+        trace_id=plan.trace_id or run.request_payload.get("metadata", {}).get("trace_id", ""),
+        trace_metadata=plan.trace_metadata,
+        run={
+            "run_id": run.run_id,
+            "tenant_id": run.tenant_id,
+            "status": run.status,
+            "task_type": run.task_type,
+            "created_at": run.created_at,
+            "updated_at": run.updated_at,
+        },
+        execution_plan=_execution_plan_record(plan).model_dump(),
+        steps=[_execution_plan_step_record(step) for step in steps],
+    )
+
+
+@router.get("/runs/{run_id}/replay-bundle", response_model=ReplayBundleResponse)
+async def get_run_replay_bundle(
+    run_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    run = await get_run(session, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    _query_tenant(run.tenant_id, auth_context)
+    plan = await get_execution_plan_for_run(session, run_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Execution plan not found.")
+    steps = await list_execution_plan_steps(session, run_id)
+    trace_id = plan.trace_id or run.request_payload.get("metadata", {}).get("trace_id", "")
+    return ReplayBundleResponse(
+        trace_context={
+            "trace_id": trace_id,
+            **plan.trace_metadata,
+        },
+        run={
+            "run_id": run.run_id,
+            "tenant_id": run.tenant_id,
+            "user_id": run.user_id,
+            "task_type": run.task_type,
+            "status": run.status,
+            "request_payload": run.request_payload,
+            "execution_output": run.execution_output,
+            "evaluation_summary": run.evaluation_summary,
+            "created_at": run.created_at,
+            "updated_at": run.updated_at,
+        },
+        policy_decision=dict(run.evaluation_summary.get("policy", plan.policy_snapshot)),
+        execution_plan=_execution_plan_record(plan).model_dump(),
+        step_audit=[_execution_plan_step_record(step) for step in steps],
+        tool_references=plan.selected_tools,
+        limitations={
+            "automatic_replay": False,
+            "external_export": False,
+            "note": "V1.3 provides an auditable replay bundle but does not re-execute the run.",
+        },
+    )
 
 
 @router.get("/runs/{run_id}", response_model=RunRecord)

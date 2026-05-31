@@ -1,8 +1,10 @@
-# 架構文件 v1.2
+# 架構文件 v1.3
 
 本專案目前是 Agent Reward-Hacking Guardrail 的 guarded async execution hardening 版本。核心流程是 FastAPI API 接收 agent request、進行 prompt sanitation / Prompt Guard analysis、risk scoring 與 policy decision；低風險任務寫入 Postgres audit trail、標記為 `queued`，並 publish Kafka request event；worker 重新讀取 run、重跑 policy、執行 bounded executor、evaluate 結果並寫回 audit trail。高風險或 destructive 任務會進入 `awaiting_approval`，由 Dashboard 或 API 進行審核。
 
-目前架構版本：`v1.2.0`
+目前架構版本：`v1.3.0`
+
+V1.3 延續 V1.2 Control Plane Execution Plan，新增 Trace / Replay Readiness。API submit 會沿用 `X-Trace-Id`，並把同一個 trace id 關聯到 run request metadata、`execution_plans.trace_id` 與 `execution_plan_steps.trace_id`。Run Detail Dashboard 可直接查看 Trace / Replay、Replay Bundle 入口與 Step Audit；Control Plane Dashboard 也會顯示 Trace ID、Step Summary 與 Plan Health。
 
 ## V1.1 架構圖資
 
@@ -166,6 +168,7 @@ sequenceDiagram
 - `ReleaseGateRun` / `ReleaseGateItem`：保存 release gate snapshot 與每個檢查項目。
 - `WorkflowDefinition` / `ToolDefinition`：保存 V1.2 Control Plane 的可版本化 workflow 與 tool registry。
 - `ExecutionPlan`：保存每個 run 的 control-plane plan，讓 queued run 在 worker 執行前已有可查詢、可審計的執行計畫。
+- `ExecutionPlanStep`：保存 V1.3 step-level audit，支援 trace timeline、Replay Bundle 與 Dashboard Step Audit。
 
 ### `app/workers`
 
@@ -188,6 +191,8 @@ sequenceDiagram
 - `GET /v1/runs`
 - `GET /v1/runs/{run_id}`
 - `GET /v1/runs/{run_id}/execution-plan`
+- `GET /v1/runs/{run_id}/trace`
+- `GET /v1/runs/{run_id}/replay-bundle`
 - `GET /v1/runs/{run_id}/incidents`
 - `GET /v1/incidents`
 - `GET /v1/approvals`
@@ -228,4 +233,4 @@ sequenceDiagram
 - Approval workflow 已有 TTL、reviewer、request changes 與 event audit；多 reviewer queue 與權限控管放到後續版本。
 - Dashboard 已有可選 Basic Auth MVP；正式公開前仍應接入更完整的 SSO/RBAC 或反向代理保護。
 - Operations Gate 保存 readiness 與人工 evidence，不會自動執行真實備份、還原、purge、safety regression 或 secret rotation。
-- V1.2 的 Control Plane 是 execution plan 骨架；尚未接真實 MCP Gateway、LangGraph checkpoint/resume、replay/time travel 或外部 model router。
+- V1.3 的 Control Plane Trace / Replay 是內部 trace contract 與 replay bundle；尚未接真實 MCP Gateway、LangGraph checkpoint/resume、真正 replay execution、OTLP/LangSmith-style exporter 或外部 model router。

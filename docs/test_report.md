@@ -1247,3 +1247,115 @@ print('\n'.join(sorted(routes)))"
 - 驗證命令：`docker info`、`docker compose ps`、`docker compose up -d --build`。
 - 實際結果：Docker Desktop 可用；重新 build 後 `rewardhacking-api-1` 與 `rewardhacking-worker-1` 已重建並啟動，Postgres、Redis、Kafka 仍維持 healthy。
 - 限制或已知問題：一般 sandbox 權限無法直接連到 Docker API，需要核准後的 Docker 權限執行 Docker 驗證。
+## 2026-06-01 - V1.3 Control Plane Trace / Replay Readiness
+
+- 版本：`v1.3.0`
+- 分支：`codex/v1.3-trace-replay`
+- 變更範圍：新增內部 Trace Contract、`execution_plan_steps` step-level audit、`GET /v1/runs/{run_id}/trace`、`GET /v1/runs/{run_id}/replay-bundle`、Run Detail 的 Trace / Replay 區塊、Control Plane Dashboard 的 Trace ID / Step Summary / Plan Health，以及 `agent_control_plane_steps_total{step_type,status}` metrics。
+- Migration：新增 `202606010001_add_v13_trace_replay.py`，擴充 `execution_plans.trace_id`、`execution_plans.trace_metadata`，並新增 `execution_plan_steps`。
+
+### 測試命令與結果
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `pytest tests/test_v13_trace_replay.py -q` | 先紅燈：4 failed，原因為 `/trace`、`/replay-bundle`、Dashboard Trace 區塊與 step metric 尚未存在；實作後通過：`4 passed in 0.82s`。 |
+| `pytest tests/test_v12_control_plane.py tests/test_api.py -q` | 通過：`13 passed in 2.21s`。 |
+| `pytest -q` | 通過：`58 passed in 7.51s`。 |
+| `ruff check app tests` | 通過：`All checks passed!`。 |
+| `git diff --check` | 通過，沒有 whitespace error。 |
+
+### Dashboard 驗證結果
+
+- `tests/test_v13_trace_replay.py` 以 TestClient 驗證 `/dashboard/runs/{run_id}` HTTP 200，頁面包含 `Trace / Replay`、指定的 `trace_id`、`/v1/runs/{run_id}/replay-bundle` 與 `Step Audit`。
+- 同一測試驗證 `/dashboard/control-plane` HTTP 200，頁面包含 `Trace ID`、`Step Summary` 與 `Plan Health`。
+- 本次未啟動 live browser / localhost 視覺 QA；Dashboard 驗證以 server-rendered HTML assertion 為準。
+
+### Docker 驗證結果
+
+- 本次 V1.3 實作與驗證未啟動 Docker Compose，也未執行 container 內 migration smoke test。
+- 原因：目前新增功能可由 SQLite in-memory 測試、API TestClient 與 Alembic migration 檔案審查涵蓋；若要做 runtime smoke，請先開啟 Docker Desktop，再執行 `docker compose up -d --build`、`docker compose exec -T api alembic upgrade head`、`/v1/healthz`、`/v1/readyz` 與 Dashboard live check。
+
+### 已知限制
+
+- V1.3 只提供 replay readiness bundle，不會自動重新執行 run。
+- `trace_metadata` 與 step `metadata` 已保留 OTLP / LangSmith-style exporter 欄位，但尚未實作外部 exporter。
+- Step audit 是 control-plane planning 階段的可追蹤證據鏈，尚未接 LangGraph checkpoint/resume 或 MCP Gateway。
+
+## 2026-06-01 - V1.3 Docker Runtime 與 Dashboard 輸入點擊 QA
+
+- 版本：`v1.3.0`
+- 分支：`codex/v1.3-trace-replay`
+- 測試環境：Docker Compose runtime，`api`、`worker`、`postgres`、`redis`、`kafka` 啟動於本機，Dashboard URL 為 `http://localhost:8000/dashboard`。
+- 測試 run：`bfc41434-0f6b-4b6f-b162-1a2ccda9b872`，tenant `qa-v13-browser`，user `browser-v13-user`，task type `analysis`，tools `read_data, summarize`。
+
+### CLI / Runtime 驗證
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `docker compose up -d --build` | 通過，API / worker image build 完成，Postgres、Redis、Kafka healthy，API 與 worker 啟動。 |
+| `docker compose exec -T api alembic upgrade head` | 通過，PostgreSQL migration 執行完成。 |
+| `docker compose exec -T api alembic current` | 通過，顯示 `202606010001 (head)`。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/healthz` | HTTP 200，回傳 `{"status":"ok"}`。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/readyz` | HTTP 200，回傳 `{"status":"ready"}`。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/runs/bfc41434-0f6b-4b6f-b162-1a2ccda9b872/trace` | HTTP 200，回傳 trace payload，包含 `trace_id`、`trace_metadata`、execution plan 與 steps。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/runs/bfc41434-0f6b-4b6f-b162-1a2ccda9b872/replay-bundle` | HTTP 200，回傳 `schema_version=control-plane-replay-bundle/v1.3`。 |
+| `/v1/metrics` | HTTP 200，包含 `agent_control_plane_steps_total{status="completed",step_type="policy_check"} 1.0`、`tool_execution` 與 `evaluation` step metrics。 |
+| `pytest tests/test_v13_trace_replay.py -q` | 通過：`4 passed in 1.19s`。 |
+| `pytest tests/test_v12_control_plane.py tests/test_api.py -q` | 通過：`13 passed in 3.09s`。 |
+| `pytest -q` | 通過：`58 passed in 8.97s`。 |
+| `ruff check app tests` | 通過：`All checks passed!`。 |
+| `git diff --check` | 通過，沒有 whitespace error。 |
+
+### Dashboard 輸入與點擊驗證
+
+| 流程 | 實際結果 |
+| --- | --- |
+| 開啟 `/dashboard/playground` | HTTP page render 正常，title 為 `Playground | 測試沙盒`，DOM 顯示 Playground 表單，console error/warn 為 0。 |
+| 表單輸入 | 實際輸入 tenant、user、task type、allowed tools、max tool calls、goal、prompt，並確認 `No external network` checked。 |
+| 點擊 `Submit Run` | 通過，Dashboard result 區塊顯示 `queued`、risk `0.100`，並產生 `Open run detail` 連結。 |
+| 點擊 `Open run detail` | 通過，進入 `/dashboard/runs/bfc41434-0f6b-4b6f-b162-1a2ccda9b872`，頁面顯示 run detail，worker 隨後將 run 更新為 `completed`。 |
+| Run Detail Trace / Replay | 通過，頁面顯示 `Trace / Replay`、`Trace ID`、Replay Bundle 連結與 `Step Audit`，並可看到 `policy_check`、`tool_execution`、`evaluation` steps。 |
+| 點擊側邊欄 `Control Plane` | 通過，進入 `/dashboard/control-plane`，頁面顯示 `Trace ID`、`Step Summary`、`Plan Health`，並包含剛才的 run 與 `analysis-basic`。 |
+| Replay Bundle 連結 | DOM 中有正確連結；in-app Browser 直接開 `/v1/runs/{run_id}/replay-bundle` 時回報 `net::ERR_BLOCKED_BY_CLIENT`，因此 Browser 端 JSON 開啟受限；改用 HTTP request 驗證 API，結果 HTTP 200 且內容正確。 |
+
+### 截圖證據
+
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v13-dashboard-qa\01-playground-before.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v13-dashboard-qa\02-playground-filled.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v13-dashboard-qa\03-playground-result.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v13-dashboard-qa\04-run-detail-trace.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v13-dashboard-qa\04b-run-detail-replay-link.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v13-dashboard-qa\06-control-plane.png`
+
+### 已知限制
+
+- Browser plugin 對 replay bundle JSON URL 回報 `ERR_BLOCKED_BY_CLIENT`；API 本身經 PowerShell HTTP request 驗證為 HTTP 200。
+- 本次 Dashboard 視覺 QA 使用桌面 viewport；未另外跑手機 viewport。
+
+## 2026-06-01 - V1.3 文件與程式碼同步檢查
+
+- 版本：`v1.3.0`
+- 分支：`codex/v1.3-trace-replay`
+- 變更範圍：同步 README 與 docs 目前版本、API 路由、Dashboard 驗收入口、migration head、data model、observability、deployment、runbook、testing guide、security、Kafka/Redis/configuration 與 assets 說明，避免文件仍把 V1.2 當作目前版本。
+- 文件同步結果：當前狀態已對齊 V1.3 Trace / Replay Readiness；V1.2 內容僅保留於 Roadmap、Migration 與歷史演進段落。
+
+### 測試命令與結果
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `pytest tests/test_v13_trace_replay.py tests/test_v12_control_plane.py tests/test_api.py -q` | 通過：`17 passed in 3.16s`。 |
+| `pytest -q` | 通過：`58 passed in 8.38s`。 |
+| `ruff check app tests` | 通過：`All checks passed!`。 |
+| `git diff --check` | 通過，沒有 whitespace error。 |
+| `rg` 掃描目前版本仍標示 V1.2 的文件 | 只剩 `docs/migrations.md` 的 V1.2 migration 歷史敘述與 `docs/roadmap.md` 的 V1.2 milestone 標題，屬於保留的版本歷史，不是目前版本標示。 |
+
+### Dashboard / Docker 驗證結果
+
+- 本次只同步文件與版本敘述，未修改 Dashboard runtime 行為，因此未重新執行 browser 點擊測試。
+- V1.3 Dashboard 輸入點擊 QA 與 Docker runtime 驗證已在上一節完成，包含 `/dashboard/playground` 表單輸入、Submit Run、Run Detail Trace / Replay、Control Plane 點擊與 replay bundle API HTTP 驗證。
+- Docker stack 未因本次文件同步重新 build；目前沒有新增需要 container runtime 才能驗證的程式變更。
+
+### 已知限制
+
+- `docs/assets` 仍使用 V1.1 圖資作為歷史素材；V1.3 Trace / Replay 尚未新增 `*-v13.png` 圖資，文字文件為目前準確來源。
+- Roadmap 與 Migration 仍保留 V1.2 段落，方便追蹤版本演進。

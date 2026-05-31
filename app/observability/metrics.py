@@ -76,3 +76,9 @@ EVALUATOR_VERDICTS_TOTAL = Counter(
     "Evaluator verdict count",
     ["verdict"],
 )
+
+CONTROL_PLANE_STEPS_TOTAL = Counter(
+    "agent_control_plane_steps_total",
+    "Control plane execution plan step audit rows by type and status",
+    ["step_type", "status"],
+)

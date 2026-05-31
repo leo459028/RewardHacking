@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.control_plane import ExecutionPlan, ToolDefinition, WorkflowDefinition
+from app.models.control_plane import ExecutionPlan, ExecutionPlanStep, ToolDefinition, WorkflowDefinition
+from app.observability.metrics import CONTROL_PLANE_STEPS_TOTAL
 from app.schemas.agent import AgentRequest
 from app.schemas.control_plane import ExecutionPlanDraft
 
@@ -146,6 +148,7 @@ class ControlPlanePlanner:
         request: AgentRequest,
         run_id: str,
         policy_snapshot: dict,
+        trace_id: str = "",
         workflows: list[dict] | None = None,
         tools: list[dict] | None = None,
     ) -> ExecutionPlanDraft:
@@ -225,17 +228,25 @@ class ControlPlanePlanner:
             plan_id=f"plan_{uuid4().hex}",
             run_id=run_id,
             tenant_id=request.tenant_id or "default",
+            trace_id=trace_id,
             workflow_id=workflow["workflow_id"],
             workflow_version=workflow["version"],
             status=status,
             model_route={
                 "model": "deterministic-control-plane",
-                "routing_reason": f"V1.2 deterministic route for {request.task_type}.",
+                "routing_reason": f"V1.3 deterministic route for {request.task_type}.",
             },
             selected_tools=selected_tools,
             steps=steps,
             approval_gates=approval_gates,
             policy_snapshot=policy_snapshot,
+            trace_metadata={
+                "exporter_type": "internal",
+                "external_trace_id": None,
+                "span_id": f"span_{uuid4().hex}",
+                "parent_span_id": None,
+                "future_exporters": ["otlp", "langsmith-style"],
+            },
         )
 
     def _select_workflow(self, task_type: str, workflows: list[dict]) -> dict:
@@ -379,6 +390,7 @@ async def persist_execution_plan(
         return existing
     row = ExecutionPlan(**plan.model_dump())
     session.add(row)
+    _add_step_audit_rows(session, plan)
     await session.commit()
     await session.refresh(row)
     return row
@@ -388,6 +400,127 @@ async def get_execution_plan_for_run(session: AsyncSession, run_id: str) -> Exec
     return await session.scalar(select(ExecutionPlan).where(ExecutionPlan.run_id == run_id))
 
 
+async def list_execution_plan_steps(session: AsyncSession, run_id: str) -> list[ExecutionPlanStep]:
+    stmt = (
+        select(ExecutionPlanStep)
+        .where(ExecutionPlanStep.run_id == run_id)
+        .order_by(ExecutionPlanStep.id.asc())
+    )
+    return list((await session.scalars(stmt)).all())
+
+
 async def latest_execution_plans(session: AsyncSession, *, limit: int = 20) -> list[ExecutionPlan]:
     stmt = select(ExecutionPlan).order_by(ExecutionPlan.created_at.desc()).limit(limit)
     return list((await session.scalars(stmt)).all())
+
+
+async def execution_plan_step_summaries(session: AsyncSession, run_ids: list[str]) -> dict[str, dict]:
+    if not run_ids:
+        return {}
+    stmt = select(ExecutionPlanStep).where(ExecutionPlanStep.run_id.in_(run_ids))
+    rows = list((await session.scalars(stmt)).all())
+    summaries: dict[str, dict] = {}
+    for row in rows:
+        summary = summaries.setdefault(
+            row.run_id,
+            {"total": 0, "completed": 0, "blocked": 0, "failed": 0, "pending": 0, "status_counts": {}},
+        )
+        summary["total"] += 1
+        summary["status_counts"][row.status] = summary["status_counts"].get(row.status, 0) + 1
+        if row.status in summary:
+            summary[row.status] += 1
+        if row.status in {"blocked", "failed"}:
+            summary["health"] = "attention"
+        elif summary.get("health") != "attention":
+            summary["health"] = "ready"
+    return summaries
+
+
+def step_to_dict(step: ExecutionPlanStep) -> dict:
+    return {
+        "step_id": step.step_id,
+        "plan_id": step.plan_id,
+        "run_id": step.run_id,
+        "tenant_id": step.tenant_id,
+        "trace_id": step.trace_id,
+        "step_type": step.step_type,
+        "status": step.status,
+        "started_at": step.started_at,
+        "finished_at": step.finished_at,
+        "duration_ms": step.duration_ms,
+        "input_summary": step.input_summary,
+        "output_summary": step.output_summary,
+        "error_summary": step.error_summary,
+        "metadata": step.metadata_payload,
+        "created_at": step.created_at,
+    }
+
+
+def _add_step_audit_rows(session: AsyncSession, plan: ExecutionPlanDraft) -> None:
+    started_at = datetime.now(timezone.utc)
+    parent_span_id = plan.trace_metadata.get("span_id")
+    for index, step in enumerate(plan.steps):
+        status = str(step.get("status", "planned"))
+        row = ExecutionPlanStep(
+            step_id=str(step.get("step_id") or f"step-{index + 1}"),
+            plan_id=plan.plan_id,
+            run_id=plan.run_id,
+            tenant_id=plan.tenant_id,
+            trace_id=plan.trace_id,
+            step_type=str(step.get("step_type", "unknown")),
+            status=status,
+            started_at=started_at,
+            finished_at=started_at if status in {"completed", "blocked", "failed"} else None,
+            duration_ms=0 if status in {"completed", "blocked", "failed"} else None,
+            input_summary=_step_input_summary(step, plan),
+            output_summary=_step_output_summary(step, plan),
+            error_summary=_step_error_summary(step),
+            metadata_payload={
+                "exporter_type": "internal",
+                "external_trace_id": None,
+                "span_id": f"span_{uuid4().hex}",
+                "parent_span_id": parent_span_id,
+                "source_plan_step_id": step.get("step_id"),
+                "step_index": index,
+            },
+        )
+        session.add(row)
+        CONTROL_PLANE_STEPS_TOTAL.labels(step_type=row.step_type, status=row.status).inc()
+
+
+def _step_input_summary(step: dict, plan: ExecutionPlanDraft) -> str:
+    step_type = step.get("step_type")
+    if step_type == "policy_check":
+        return f"Policy snapshot for tenant {plan.tenant_id}."
+    if step_type == "tool_execution":
+        tools = ", ".join(tool["name"] for tool in plan.selected_tools) or "no active tools"
+        return f"Selected tools: {tools}."
+    if step_type == "approval_gate":
+        return f"Approval gates: {len(plan.approval_gates)}."
+    if step_type == "evaluation":
+        return "Evaluation will inspect execution output and policy context."
+    return f"Execution plan step {step.get('step_id', 'unknown')}."
+
+
+def _step_output_summary(step: dict, plan: ExecutionPlanDraft) -> str:
+    step_type = step.get("step_type")
+    status = step.get("status", "planned")
+    if step_type == "policy_check":
+        decision = plan.policy_snapshot.get("decision", "unknown")
+        return f"Policy decision: {decision}; status: {status}."
+    if step_type == "tool_execution":
+        return f"Tool execution status: {status}."
+    if step_type == "approval_gate":
+        return f"Approval gate status: {status}."
+    if step_type == "evaluation":
+        return f"Evaluation status: {status}."
+    return f"Step status: {status}."
+
+
+def _step_error_summary(step: dict) -> str:
+    if step.get("status") not in {"blocked", "failed"}:
+        return ""
+    gates = step.get("gates") or []
+    if gates:
+        return "; ".join(str(gate.get("reason", "")) for gate in gates if gate.get("reason"))
+    return str(step.get("reason", "Step did not complete."))

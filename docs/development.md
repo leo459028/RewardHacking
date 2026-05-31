@@ -80,17 +80,17 @@ v1.0 的 Operations Gate 橫跨 API、Dashboard、schema、model、migration、s
 5. `X-Trace-Id` 是否仍會回到 response header，submit flow 是否保存到 `request_payload.metadata.trace_id`。
 6. `tests/test_v08_operations_gate.py`、API 文件、Dashboard 文件、Runbook、Migration 文件與 `docs/test_report.md` 是否同步更新。
 
-## Control Plane 開發注意
+## Control Plane / Trace Replay 開發注意
 
-v1.2 的 Control Plane 橫跨 workflow/tool registry、execution plan persistence、submit flow、worker fail-closed、API、Dashboard 與文件。新增或修改相關能力時，請同步檢查：
+v1.3 的 Control Plane 橫跨 workflow/tool registry、execution plan persistence、step audit、trace/replay API、submit flow、worker fail-closed、Dashboard 與文件。新增或修改相關能力時，請同步檢查：
 
-1. `app/models/control_plane.py`、`app/schemas/control_plane.py` 與 `migrations/versions/202605310001_add_v12_control_plane.py` 是否維持欄位同步。
+1. `app/models/control_plane.py`、`app/schemas/control_plane.py`、`migrations/versions/202605310001_add_v12_control_plane.py` 與 `migrations/versions/202606010001_add_v13_trace_replay.py` 是否維持欄位同步。
 2. `app/services/control_plane.py` 的 builtin workflow/tool registry、`ControlPlanePlanner` 與 DB 讀寫是否符合 API 文件。
 3. `POST /v1/agent/submit-with-details` 是否仍會在 queued run 建立前保存 `execution_plans`，並把摘要寫入 `evaluation_summary.execution_plan`。
-4. `GET /v1/control-plane/workflows`、`POST /v1/control-plane/workflows`、`GET /v1/control-plane/tools`、`POST /v1/control-plane/tools` 與 `GET /v1/runs/{run_id}/execution-plan` 是否符合 RBAC 與 response schema。
-5. `/dashboard/control-plane` 與 `/dashboard/runs/{run_id}` 是否能查到同一份 workflow、tool 與 execution plan。
+4. `GET /v1/control-plane/workflows`、`POST /v1/control-plane/workflows`、`GET /v1/control-plane/tools`、`POST /v1/control-plane/tools`、`GET /v1/runs/{run_id}/execution-plan`、`GET /v1/runs/{run_id}/trace` 與 `GET /v1/runs/{run_id}/replay-bundle` 是否符合 RBAC 與 response schema。
+5. `/dashboard/control-plane` 與 `/dashboard/runs/{run_id}` 是否能查到同一份 workflow、tool、execution plan、trace id、step audit 與 replay bundle 入口。
 6. worker 若遇到 queued run 缺少 execution plan，是否維持 fail closed 到 `awaiting_approval` 並加入 `missing_execution_plan`。
-7. `tests/test_v12_control_plane.py`、API 文件、Dashboard 文件、Migration 文件、Runbook 與 `docs/test_report.md` 是否同步更新。
+7. `tests/test_v13_trace_replay.py`、`tests/test_v12_control_plane.py`、API 文件、Dashboard 文件、Migration 文件、Runbook 與 `docs/test_report.md` 是否同步更新。
 
 ## 新增 Policy Rule
 

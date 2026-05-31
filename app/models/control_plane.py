@@ -1,4 +1,4 @@
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, func
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -40,6 +40,7 @@ class ExecutionPlan(Base):
     plan_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     run_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     tenant_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False, default="default")
+    trace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False, default="")
     workflow_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     workflow_version: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
@@ -48,5 +49,27 @@ class ExecutionPlan(Base):
     steps: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     approval_gates: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     policy_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    trace_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class ExecutionPlanStep(Base):
+    __tablename__ = "execution_plan_steps"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    step_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    plan_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    run_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False, default="default")
+    trace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False, default="")
+    step_type: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    started_at = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    input_summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    output_summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    error_summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    metadata_payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
