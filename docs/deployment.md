@@ -1,8 +1,8 @@
-# 部署文件 v1.0
+# 部署文件 v1.1
 
-本專案提供 Dockerfile 與 Docker Compose，適合本機開發、demo、CI smoke test。`v1.0.0` 已包含 API、worker、tenant-aware audit、DB-backed API key、RBAC-lite、Dashboard Basic Auth、Redis tenant quota、Governance Dashboard、Production Readiness Gate、safety regression evidence、敏感 read API auth coverage、HTTP metrics 與 incident counter。正式環境部署前仍需補上完整 OAuth/SSO、secret 管理、完整 OpenTelemetry、真實 sandbox、完整 worker lifecycle 與安全控制。
+本專案提供 Dockerfile 與 Docker Compose，適合本機開發、demo、CI smoke test。`v1.1.0` 已包含 API、worker、tenant-aware audit、DB-backed API key、RBAC-lite、Dashboard Basic Auth、Redis tenant quota、Governance Dashboard、Production Readiness Gate、safety regression evidence、敏感 read API auth coverage、HTTP metrics、incident counter 與 Classical Chinese Prompt Guard。正式環境部署前仍需補上完整 OAuth/SSO、secret 管理、完整 OpenTelemetry、真實 sandbox、完整 worker lifecycle 與安全控制。
 
-目前部署版本：`v1.0.0`
+目前部署版本：`v1.1.0`
 
 ## 本機 Docker Compose
 
@@ -24,7 +24,7 @@ Dockerfile 會在 API 啟動前執行：
 alembic upgrade head
 ```
 
-Compose 會在 `api` 與 `worker` service 內覆蓋 Postgres、Redis、Kafka 的 container network hostnames；因此 `.env.example` 可以保留 host 端 `localhost` 設定，方便直接執行本機 migration 或 API。`AUTH_ENABLED`、`API_KEYS`、`DASHBOARD_AUTH_ENABLED`、`QUOTA_ENABLED`、tenant quota 與 operations gate 設定也由同一份環境設定管理。v0.7 的 tenant / DB-managed API key 與 v1.0 的 operations evidence / release gate / safety regression evidence 會保存在 Postgres。
+Compose 會在 `api` 與 `worker` service 內覆蓋 Postgres、Redis、Kafka 的 container network hostnames；因此 `.env.example` 可以保留 host 端 `localhost` 設定，方便直接執行本機 migration 或 API。`AUTH_ENABLED`、`API_KEYS`、`DASHBOARD_AUTH_ENABLED`、`QUOTA_ENABLED`、tenant quota 與 operations gate 設定也由同一份環境設定管理。v0.7 的 tenant / DB-managed API key、v1.0 的 operations evidence / release gate / safety regression evidence，以及 v1.1 的 Prompt Guard summary 都會保存在 Postgres。
 
 3. 檢查服務：
 

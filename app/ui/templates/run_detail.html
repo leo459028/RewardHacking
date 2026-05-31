@@ -25,6 +25,22 @@
   {% for flag in run.policy_flags %}<span class="flag">{{ flag }}</span>{% else %}<span class="muted">No policy flags.</span>{% endfor %}
 </section>
 
+{% if run.evaluation_summary.get("prompt_guard") %}
+<section class="panel">
+  <h2>Prompt Guard <span class="heading-note">classical Chinese obfuscation analysis</span></h2>
+  {% set prompt_guard = run.evaluation_summary.get("prompt_guard") %}
+  <p><strong>Language</strong> {{ prompt_guard.get("language", "unknown") }}</p>
+  <div>
+    {% for flag in prompt_guard.get("flags", []) %}
+      <span class="flag">{{ flag }}</span>
+    {% else %}
+      <span class="muted">No prompt guard flags.</span>
+    {% endfor %}
+  </div>
+  <pre>{{ prompt_guard|json_pretty }}</pre>
+</section>
+{% endif %}
+
 <section class="detail-grid">
   <div class="panel">
     <h2>Request <span class="heading-note">請求內容</span></h2>
