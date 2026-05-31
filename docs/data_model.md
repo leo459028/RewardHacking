@@ -29,6 +29,13 @@ Table：`agent_runs`
 | `created_at` | timestamp | 建立時間 |
 | `updated_at` | timestamp | 更新時間 |
 
+`v1.1.0` 的 Prompt Guard 不新增欄位或資料表；分析結果保存在 `evaluation_summary.prompt_guard`，包含：
+
+- `language`：例如 `en`、`zh`、`mixed_zh`、`zh_classical`。
+- `normalized_prompt`：去除頭尾與重複空白後的 prompt。
+- `flags`：例如 `classical_chinese_obfuscation`、`classical_prompt_injection`。
+- `signals`：每個命中規則的 category、canonical intent 與 matched text。
+
 索引：
 
 - `run_id` unique index。
@@ -165,7 +172,7 @@ Tables：`release_gate_runs`、`release_gate_items`
 | 欄位 | 型別 | 說明 |
 | --- | --- | --- |
 | `gate_id` | string | 對外查詢 release gate 的 ID |
-| `release_version` | string | 例如 `v1.0.0` |
+| `release_version` | string | 例如 `v1.1.0` |
 | `status` | string | `pass`、`warn` 或 `fail` |
 | `summary` | text | gate 結果摘要 |
 | `created_by` | string | 建立者 |
@@ -201,7 +208,7 @@ Tables：`release_gate_runs`、`release_gate_items`
 - `worker.failed`
 - `approval.decision`
 
-`v1.0.0` 的 HTTP `X-Trace-Id` 會寫入 submit request 的 `metadata.trace_id`，並跟著 `agent.requests` 的 `payload.request.metadata.trace_id` 傳給 worker；release gate snapshot 也會保存建立當下的 trace id。`BaseEvent.trace_id` 目前由 event helper 另行產生 UUID；後續若導入完整 OpenTelemetry，應把 HTTP response header、Kafka envelope、logs 與 database 的 trace id 對齊。
+`v1.1.0` 延續 v1.0 的 HTTP `X-Trace-Id` 基線：trace id 會寫入 submit request 的 `metadata.trace_id`，並跟著 `agent.requests` 的 `payload.request.metadata.trace_id` 傳給 worker；release gate snapshot 也會保存建立當下的 trace id。`BaseEvent.trace_id` 目前由 event helper 另行產生 UUID；後續若導入完整 OpenTelemetry，應把 HTTP response header、Kafka envelope、logs 與 database 的 trace id 對齊。
 
 ## 資料生命週期建議
 
