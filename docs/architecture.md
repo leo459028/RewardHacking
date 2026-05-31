@@ -1,12 +1,12 @@
-# 架構文件 v1.1
+# 架構文件 v1.2
 
 本專案目前是 Agent Reward-Hacking Guardrail 的 guarded async execution hardening 版本。核心流程是 FastAPI API 接收 agent request、進行 prompt sanitation / Prompt Guard analysis、risk scoring 與 policy decision；低風險任務寫入 Postgres audit trail、標記為 `queued`，並 publish Kafka request event；worker 重新讀取 run、重跑 policy、執行 bounded executor、evaluate 結果並寫回 audit trail。高風險或 destructive 任務會進入 `awaiting_approval`，由 Dashboard 或 API 進行審核。
 
-目前架構版本：`v1.1.0`
+目前架構版本：`v1.2.0`
 
 ## V1.1 架構圖資
 
-新版架構圖已保存在 `docs/assets/*-v11.png`，舊版 `*-v1.png` 會保留作為 v1.0 歷史基線。V1.1 圖資已補上 Classical Chinese Prompt Guard、`evaluation_summary.prompt_guard`、Dashboard Prompt Guard panel 與 `agent_prompt_guard_flags_total{flag}`，適合用於目前版本的文件、簡報與架構說明。
+新版架構圖已保存在 `docs/assets/*-v11.png`，舊版 `*-v1.png` 會保留作為 v1.0 歷史基線。V1.1 圖資已補上 Classical Chinese Prompt Guard、`evaluation_summary.prompt_guard`、Dashboard Prompt Guard panel 與 `agent_prompt_guard_flags_total{flag}`；V1.2 目前已更新文字文件與 Dashboard，不另新增 `*-v12.png` 圖資。
 
 ![V1.1 Architecture](assets/architecture-ad-marketing-v11.png)
 
@@ -61,6 +61,7 @@ flowchart LR
 - Operations evidence、safety regression evidence、release gate snapshot、release readiness checks 與 `X-Trace-Id` response header。
 - 敏感 read API 的 API key auth coverage、HTTP request metrics 與 incident counter。
 - Classical Chinese Prompt Guard、`evaluation_summary.prompt_guard`、Dashboard Prompt Guard 區塊與 `agent_prompt_guard_flags_total{flag}` metric。
+- Control Plane execution plan：`workflow_definitions`、`tool_definitions` 與 `execution_plans` 保存 workflow version、selected tools、steps、approval gates 與 policy snapshot。
 
 目前尚未完整接入：
 
@@ -145,6 +146,7 @@ sequenceDiagram
 - `events.py`：Kafka 與 in-memory event publisher。
 - `evaluator.py`：以 heuristic 評估 shortcut、hallucination、policy violation。
 - `operations.py`：計算 release readiness、保存 operations/safety regression evidence 與 release gate snapshot。
+- `control_plane.py`：提供 builtin workflow/tool registry、DB-backed registry 查詢、execution plan 產生與保存。
 - `audit_log.py`：封裝 run/incident persistence、approval decision 與 dashboard summary 查詢。
 
 ### `app/infra`
@@ -162,6 +164,8 @@ sequenceDiagram
 - `TenantApiKey`：保存 API key hash、prefix、role、status 與撤銷狀態。
 - `OperationsEvidence`：保存 backup/restore、secret rotation、safety regression 等人工營運證據。
 - `ReleaseGateRun` / `ReleaseGateItem`：保存 release gate snapshot 與每個檢查項目。
+- `WorkflowDefinition` / `ToolDefinition`：保存 V1.2 Control Plane 的可版本化 workflow 與 tool registry。
+- `ExecutionPlan`：保存每個 run 的 control-plane plan，讓 queued run 在 worker 執行前已有可查詢、可審計的執行計畫。
 
 ### `app/workers`
 
@@ -175,10 +179,15 @@ sequenceDiagram
 - `GET /v1/healthz`
 - `GET /v1/readyz`
 - `GET /v1/metrics`
+- `GET /v1/control-plane/workflows`
+- `POST /v1/control-plane/workflows`
+- `GET /v1/control-plane/tools`
+- `POST /v1/control-plane/tools`
 - `POST /v1/agent/submit`
 - `POST /v1/agent/submit-with-details`
 - `GET /v1/runs`
 - `GET /v1/runs/{run_id}`
+- `GET /v1/runs/{run_id}/execution-plan`
 - `GET /v1/runs/{run_id}/incidents`
 - `GET /v1/incidents`
 - `GET /v1/approvals`
@@ -219,3 +228,4 @@ sequenceDiagram
 - Approval workflow 已有 TTL、reviewer、request changes 與 event audit；多 reviewer queue 與權限控管放到後續版本。
 - Dashboard 已有可選 Basic Auth MVP；正式公開前仍應接入更完整的 SSO/RBAC 或反向代理保護。
 - Operations Gate 保存 readiness 與人工 evidence，不會自動執行真實備份、還原、purge、safety regression 或 secret rotation。
+- V1.2 的 Control Plane 是 execution plan 骨架；尚未接真實 MCP Gateway、LangGraph checkpoint/resume、replay/time travel 或外部 model router。

@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Control Plane | 控制面{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Control Plane</h1>
+    <div class="title-note">控制面骨架</div>
+  </div>
+  <a class="button secondary" href="/dashboard/playground">Open Playground</a>
+</div>
+
+<section class="grid stats">
+  <div class="stat"><div class="stat-label">Workflows</div><div class="stat-value">{{ workflows|length }}</div></div>
+  <div class="stat"><div class="stat-label">Tools</div><div class="stat-value">{{ tools|length }}</div></div>
+  <div class="stat"><div class="stat-label">Plans</div><div class="stat-value">{{ plans|length }}</div></div>
+</section>
+
+<section class="panel">
+  <h2>Workflow Registry <span class="heading-note">工作流註冊表</span></h2>
+  <table>
+    <thead><tr><th>Workflow</th><th>Version</th><th>Task</th><th>Status</th><th>Definition</th></tr></thead>
+    <tbody>
+    {% for workflow in workflows %}
+      <tr>
+        <td>{{ workflow.workflow_id if workflow.workflow_id is defined else workflow.get("workflow_id") }}</td>
+        <td>{{ workflow.version if workflow.version is defined else workflow.get("version") }}</td>
+        <td>{{ workflow.task_type if workflow.task_type is defined else workflow.get("task_type") }}</td>
+        <td>{{ workflow.status if workflow.status is defined else workflow.get("status") }}</td>
+        <td><pre>{{ (workflow.definition if workflow.definition is defined else workflow.get("definition"))|json_pretty }}</pre></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="muted">No workflows.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Tool Registry <span class="heading-note">工具註冊表</span></h2>
+  <table>
+    <thead><tr><th>Tool</th><th>Tasks</th><th>Risk</th><th>Approval</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for tool in tools %}
+      <tr>
+        <td>{{ tool.tool_name if tool.tool_name is defined else tool.get("tool_name") }}</td>
+        <td>{{ tool.task_types if tool.task_types is defined else tool.get("task_types") }}</td>
+        <td>{{ tool.risk_level if tool.risk_level is defined else tool.get("risk_level") }}</td>
+        <td>{{ tool.requires_approval if tool.requires_approval is defined else tool.get("requires_approval") }}</td>
+        <td>{{ tool.status if tool.status is defined else tool.get("status") }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="muted">No tools.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Latest Execution Plans <span class="heading-note">最近執行計畫</span></h2>
+  <table>
+    <thead><tr><th>Plan</th><th>Run</th><th>Workflow</th><th>Status</th><th>Tools</th></tr></thead>
+    <tbody>
+    {% for plan in plans %}
+      <tr>
+        <td>{{ plan.plan_id }}</td>
+        <td><a href="/dashboard/runs/{{ plan.run_id }}">{{ plan.run_id[:8] }}</a></td>
+        <td>{{ plan.workflow_id }}@{{ plan.workflow_version }}</td>
+        <td><span class="status {{ plan.status }}">{{ plan.status }}</span></td>
+        <td><pre>{{ plan.selected_tools|json_pretty }}</pre></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="muted">No execution plans yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

@@ -1,8 +1,8 @@
-# Observability v1.1
+# Observability v1.2
 
 本專案目前提供 Prometheus metrics 與 structured logging 的基礎。Dashboard 會從 Postgres audit trail 讀取 runs/incidents/governance events/operations evidence；Prometheus metrics 仍由 `/v1/metrics` 提供。`AUTH_ENABLED=true` 時，`/v1/metrics` 需要 `X-API-Key`，允許 `viewer/operator/admin` 讀取。
 
-目前 observability 基線：`v1.1.0`
+目前 observability 基線：`v1.2.0`
 
 ## Metrics Endpoint
 
@@ -50,7 +50,8 @@ GET /v1/metrics
 - `/dashboard`：summary、recent runs、recent incidents。
 - `/dashboard/runs`：run list 與 filters。
 - `/dashboard/runs/{run_id}`：request、policy、execution output、evaluation summary、event timeline、tool transcript、approval state、incidents。
-- `/dashboard/runs/{run_id}`：v1.1 也會顯示 Prompt Guard 區塊，可查古文/文言式繞語攻擊的 language、flags 與 signals。
+- `/dashboard/runs/{run_id}`：顯示 Prompt Guard 區塊，可查古文/文言式繞語攻擊的 language、flags 與 signals；v1.2 也會顯示 Execution Plan 區塊，可查 workflow version、selected tools、steps、approval gates 與 policy snapshot。
+- `/dashboard/control-plane`：顯示 workflow registry、tool registry 與 latest execution plans。
 - `/dashboard/approvals`：awaiting approval queue 與審核操作。
 - `/dashboard/worker`：worker attempts、retry failure reason 與 DLQ。
 - `/dashboard/observability`：worker、incident、approval、evaluator 與 SLO summary。

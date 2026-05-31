@@ -10,7 +10,12 @@ from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_event_publisher, get_orchestrator, get_state_store
+from app.api.deps import (
+    get_control_plane_planner,
+    get_event_publisher,
+    get_orchestrator,
+    get_state_store,
+)
 from app.core.config import get_settings
 from app.infra.postgres import get_session
 from app.schemas.audit import ApprovalDecisionRequest
@@ -42,6 +47,15 @@ from app.services.operations import (
     persist_operations_evidence,
     persist_release_gate,
 )
+from app.services.control_plane import (
+    ControlPlanePlanner,
+    get_execution_plan_for_run,
+    latest_execution_plans,
+    list_tool_definitions,
+    list_workflow_definitions,
+    persist_execution_plan,
+)
+from app.services.orchestrator import OrchestrationResult
 from app.services.run_state import RunStateStore
 from app.workers.producer import make_event
 
@@ -77,6 +91,34 @@ def _json_pretty(value: object) -> str:
 
 
 templates.env.filters["json_pretty"] = _json_pretty
+
+
+async def _attach_execution_plan(
+    session: AsyncSession,
+    *,
+    planner: ControlPlanePlanner,
+    agent_request: AgentRequest,
+    result: OrchestrationResult,
+) -> None:
+    plan = planner.plan(
+        request=agent_request,
+        run_id=result.response.run_id,
+        policy_snapshot=dict(result.evaluation_summary.get("policy", {})),
+        workflows=await list_workflow_definitions(session),
+        tools=await list_tool_definitions(session),
+    )
+    result.evaluation_summary["execution_plan"] = plan.model_dump()
+    if result.response.status == "queued" and plan.status != "planned":
+        result.response.status = "awaiting_approval"
+        result.response.decision_reason = "Control plane execution plan requires approval."
+        if "control_plane_plan_requires_approval" not in result.response.policy_flags:
+            result.response.policy_flags.append("control_plane_plan_requires_approval")
+        result.evaluation_summary["run_state"] = {"status": "awaiting_approval"}
+        result.evaluation_summary["approval"] = {
+            "status": "pending",
+            "reason": result.response.decision_reason,
+        }
+    await persist_execution_plan(session, plan)
 
 
 @router.get("/", include_in_schema=False)
@@ -149,6 +191,7 @@ async def dashboard_run_detail(
     incidents = await incidents_for_run(session, run_id)
     attempts = await list_worker_attempts(session, run_id=run_id)
     tool_executions = await list_tool_executions(session, run_id=run_id)
+    execution_plan = await get_execution_plan_for_run(session, run_id)
     return templates.TemplateResponse(
         request,
         "run_detail.html",
@@ -157,7 +200,25 @@ async def dashboard_run_detail(
             "incidents": incidents,
             "attempts": attempts,
             "tool_executions": tool_executions,
+            "execution_plan": execution_plan,
             "active": "runs",
+        },
+    )
+
+
+@router.get("/dashboard/control-plane", response_class=HTMLResponse)
+async def dashboard_control_plane(request: Request, session: AsyncSession = Depends(get_session)):
+    workflows = await list_workflow_definitions(session)
+    tools = await list_tool_definitions(session)
+    plans = await latest_execution_plans(session, limit=25)
+    return templates.TemplateResponse(
+        request,
+        "control_plane.html",
+        {
+            "workflows": workflows,
+            "tools": tools,
+            "plans": plans,
+            "active": "control-plane",
         },
     )
 
@@ -342,6 +403,7 @@ async def submit_playground(
     request: Request,
     session: AsyncSession = Depends(get_session),
     orchestrator: AgentOrchestrator = Depends(get_orchestrator),
+    planner: ControlPlanePlanner = Depends(get_control_plane_planner),
     state_store: RunStateStore = Depends(get_state_store),
     event_publisher: EventPublisher = Depends(get_event_publisher),
 ):
@@ -370,6 +432,12 @@ async def submit_playground(
         )
         disabled_tools = list((await state_store.get_open_breakers(agent_request.allowed_tools)).keys())
         result = orchestrator.submit(agent_request, disabled_tools=disabled_tools)
+        await _attach_execution_plan(
+            session,
+            planner=planner,
+            agent_request=agent_request,
+            result=result,
+        )
         await persist_orchestration_result(session, agent_request, result)
         await state_store.set_run_state(result.response.run_id, result.response.status)
         if result.response.status == "queued":

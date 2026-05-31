@@ -23,7 +23,9 @@ flowchart LR
   T --> C["Prompt Sanitizer"]
   C --> D["Risk Scoring"]
   D --> E["Policy Engine"]
-  E -->|allow| F["Bounded Execution"]
+  E --> P["Control Plane Execution Plan"]
+  P -->|valid plan| F["Bounded Execution"]
+  P -->|missing / invalid plan| H
   E -->|escalate| H["Human Review"]
   E -->|deny| I["Incident / Audit"]
   F --> G["Independent Evaluator"]
@@ -48,7 +50,7 @@ flowchart LR
 
 ### Classical Chinese Prompt Guard
 
-`v1.1.0` 新增古文/文言式繞語攻擊偵測。這個功能不是把所有古文都視為危險，而是採平衡策略：正常文言文教學、摘要或風格轉寫不阻擋；只有古文或混合中文包裝了高風險意圖時才提高風險。
+`v1.1.0` 起加入古文/文言式繞語攻擊偵測。這個功能不是把所有古文都視為危險，而是採平衡策略：正常文言文教學、摘要或風格轉寫不阻擋；只有古文或混合中文包裝了高風險意圖時才提高風險。
 
 目前偵測的 policy flags：
 
@@ -67,6 +69,7 @@ flowchart LR
 
 - prompt flags。
 - 古文/文言式繞語攻擊 flags。
+- 缺少 Control Plane execution plan。
 - requires human approval。
 - external network allowed。
 - destructive actions。
@@ -88,6 +91,18 @@ Score 會 clamp 在 `0.0` 到 `1.0`。
 - large tool budget。
 - prompt injection signals。
 - classical prompt guard signals。
+
+### Control Plane Execution Plan
+
+`v1.2.0` 在 request 進入 queued 狀態前會建立 Control Plane execution plan，保存於 `execution_plans`，並把摘要寫入 `agent_runs.evaluation_summary.execution_plan`。這層目前是安全控制面的骨架，用來讓後續 executor、MCP Gateway、model router 或 LangGraph runtime 有可審計的 plan contract。
+
+目前安全邊界：
+
+- workflow/tool registry：builtin registry 與 DB-managed registry 都可查，Dashboard 路徑為 `/dashboard/control-plane`。
+- tool scope：plan 會保存 `allowed_tools`、`tool_policy`、`risk_policy` 與 deterministic `model_route` metadata。
+- run-level audit：可用 `GET /v1/runs/{run_id}/execution-plan` 查單次 run 的 plan。
+- fail closed：worker 處理 queued run 時若找不到 execution plan，會轉入 `awaiting_approval`，policy flags 包含 `missing_execution_plan`。
+- 目前限制：V1.2 尚未接真實 MCP Gateway、LangGraph checkpoint/resume、replay/time travel 或外部 model router。
 
 ### Tenant Governance Center
 

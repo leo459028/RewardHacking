@@ -29,7 +29,7 @@ Table：`agent_runs`
 | `created_at` | timestamp | 建立時間 |
 | `updated_at` | timestamp | 更新時間 |
 
-`v1.1.0` 的 Prompt Guard 不新增欄位或資料表；分析結果保存在 `evaluation_summary.prompt_guard`，包含：
+`v1.1.0` 起的 Prompt Guard 不新增欄位或資料表；分析結果保存在 `evaluation_summary.prompt_guard`，包含：
 
 - `language`：例如 `en`、`zh`、`mixed_zh`、`zh_classical`。
 - `normalized_prompt`：去除頭尾與重複空白後的 prompt。
@@ -172,7 +172,7 @@ Tables：`release_gate_runs`、`release_gate_items`
 | 欄位 | 型別 | 說明 |
 | --- | --- | --- |
 | `gate_id` | string | 對外查詢 release gate 的 ID |
-| `release_version` | string | 例如 `v1.1.0` |
+| `release_version` | string | 例如 `v1.2.0` |
 | `status` | string | `pass`、`warn` 或 `fail` |
 | `summary` | text | gate 結果摘要 |
 | `created_by` | string | 建立者 |
@@ -180,6 +180,56 @@ Tables：`release_gate_runs`、`release_gate_items`
 | `check_key` | string | item 檢查鍵，例如 `backup_restore_evidence`、`safety_regression_evidence` |
 | `title` / `detail` | string / text | item 顯示文字 |
 | `metadata_payload` | JSON | item 補充資訊 |
+
+### `WorkflowDefinition`
+
+Table：`workflow_definitions`
+
+記錄 V1.2 Control Plane 的 DB-managed workflow。系統也內建 builtin workflows；DB 中相同 `workflow_id` 與 `version` 的資料會覆蓋 builtin 顯示結果。
+
+| 欄位 | 型別 | 說明 |
+| --- | --- | --- |
+| `workflow_id` | string | workflow 識別，例如 `analysis-basic` |
+| `version` | string | workflow 版本 |
+| `task_type` | string | 對應 `AgentRequest.task_type` |
+| `display_name` | string | Dashboard 顯示名稱 |
+| `status` | string | `active` 時可被 planner 選用 |
+| `definition` | JSON | workflow steps 或後續 registry metadata |
+
+### `ToolDefinition`
+
+Table：`tool_definitions`
+
+記錄 V1.2 Control Plane 的 DB-managed tool registry。系統也內建 builtin tools；DB 中相同 `tool_name` 的資料會覆蓋 builtin 顯示結果。
+
+| 欄位 | 型別 | 說明 |
+| --- | --- | --- |
+| `tool_name` | string | tool 識別，例如 `read_data` |
+| `display_name` | string | Dashboard 顯示名稱 |
+| `status` | string | `active` 時可被 planner 選用 |
+| `task_types` | JSON | 可使用此 tool 的任務類型 |
+| `requires_approval` | boolean | 是否強制進 approval gate |
+| `risk_level` | string | `low`、`medium`、`high` 等風險標註 |
+| `metadata_payload` | JSON | registry 補充資訊 |
+
+### `ExecutionPlan`
+
+Table：`execution_plans`
+
+V1.2 在低風險 run 進入 worker queue 前建立 execution plan。Worker 若找不到對應 plan，會 fail closed，將 run 轉為 `awaiting_approval` 並加入 `missing_execution_plan` flag。
+
+| 欄位 | 型別 | 說明 |
+| --- | --- | --- |
+| `plan_id` | string | execution plan 對外識別 |
+| `run_id` | string | 對應 `agent_runs.run_id`，唯一 |
+| `tenant_id` | string | run 所屬 tenant |
+| `workflow_id` / `workflow_version` | string | planner 選出的 workflow |
+| `status` | string | `planned` 或 `requires_approval` |
+| `model_route` | JSON | V1.2 deterministic model route metadata，不代表外部模型呼叫 |
+| `selected_tools` | JSON | planner 選出的工具與風險資訊 |
+| `steps` | JSON | policy、approval、tool execution、evaluation 等步驟 |
+| `approval_gates` | JSON | tool 或 registry 造成的 approval gates |
+| `policy_snapshot` | JSON | submit 時的 policy decision 快照 |
 
 ## Event Schemas
 
@@ -208,7 +258,9 @@ Tables：`release_gate_runs`、`release_gate_items`
 - `worker.failed`
 - `approval.decision`
 
-`v1.1.0` 延續 v1.0 的 HTTP `X-Trace-Id` 基線：trace id 會寫入 submit request 的 `metadata.trace_id`，並跟著 `agent.requests` 的 `payload.request.metadata.trace_id` 傳給 worker；release gate snapshot 也會保存建立當下的 trace id。`BaseEvent.trace_id` 目前由 event helper 另行產生 UUID；後續若導入完整 OpenTelemetry，應把 HTTP response header、Kafka envelope、logs 與 database 的 trace id 對齊。
+`v1.2.0` 延續 v1.0 的 HTTP `X-Trace-Id` 基線：trace id 會寫入 submit request 的 `metadata.trace_id`，並跟著 `agent.requests` 的 `payload.request.metadata.trace_id` 傳給 worker；release gate snapshot 也會保存建立當下的 trace id。`BaseEvent.trace_id` 目前由 event helper 另行產生 UUID；後續若導入完整 OpenTelemetry，應把 API response header、Kafka envelope、logs 與 database 的 trace id 對齊。
+
+`v1.2.0` 新增 `execution_plans`，但 Kafka event envelope 尚未直接內嵌完整 plan；worker 會用 `run_id` 從 Postgres 讀取對應 execution plan。
 
 ## 資料生命週期建議
 

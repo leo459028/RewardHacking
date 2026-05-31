@@ -1,13 +1,13 @@
-# Migration 指南 v1.1
+# Migration 指南 v1.2
 
 本專案已導入 Alembic，初始 migration 會建立：
 
-目前 migration baseline：`v1.1.0`
+目前 migration baseline：`v1.2.0`
 
 - `agent_runs`
 - `incidents`
 
-目前 head 會一路套用到 `202605250002`。`v0.5.0` 在原本 `agent_runs`、`incidents` 之外，新增 worker、tool、approval 與 evaluation audit tables。`v0.6.0` 新增 `agent_runs.tenant_id`，既有資料 backfill 為 `default`，並建立 `governance_events` audit table。`v0.7.0` 新增 `tenants` 與 `tenant_api_keys`，並從既有 `agent_runs.tenant_id` backfill tenant 設定。`v0.8.0` 新增 `operations_evidence`、`release_gate_runs` 與 `release_gate_items`，用於保存 release readiness、營運證據與 release gate snapshot。`v1.0.0` 沒有新增資料表或 migration，`safety_regression` 沿用 `operations_evidence.evidence_type` 保存。`v1.1.0` 也不新增 migration；Prompt Guard 的 language、flags 與 signals 保存於既有 `agent_runs.evaluation_summary.prompt_guard`。
+目前 head 會一路套用到 `202605310001`。`v0.5.0` 在原本 `agent_runs`、`incidents` 之外，新增 worker、tool、approval 與 evaluation audit tables。`v0.6.0` 新增 `agent_runs.tenant_id`，既有資料 backfill 為 `default`，並建立 `governance_events` audit table。`v0.7.0` 新增 `tenants` 與 `tenant_api_keys`，並從既有 `agent_runs.tenant_id` backfill tenant 設定。`v0.8.0` 新增 `operations_evidence`、`release_gate_runs` 與 `release_gate_items`，用於保存 release readiness、營運證據與 release gate snapshot。`v1.0.0` 沒有新增資料表或 migration，`safety_regression` 沿用 `operations_evidence.evidence_type` 保存。`v1.1.0` 沒有新增 migration；Prompt Guard 的 language、flags 與 signals 保存於既有 `agent_runs.evaluation_summary.prompt_guard`。`v1.2.0` 新增 `workflow_definitions`、`tool_definitions` 與 `execution_plans`，用於 Control Plane registry 與 run-level execution plan。
 
 Migration 檔案位於：
 
@@ -17,6 +17,7 @@ migrations/versions/202605240001_add_v04_v05_audit_tables.py
 migrations/versions/202605240002_add_v06_tenant_governance.py
 migrations/versions/202605250001_add_v07_tenant_governance_center.py
 migrations/versions/202605250002_add_v08_operations_gate.py
+migrations/versions/202605310001_add_v12_control_plane.py
 ```
 
 ## 常用指令
@@ -94,5 +95,6 @@ alembic upgrade head
 
 - `policy_decisions`
 - `artifacts`
+- `execution_plan_steps`（若後續需要 step-level 查詢或 replay）
 - `users` 管理表與完整 OAuth/SSO RBAC 關聯
 - audit retention / purge migration 策略
