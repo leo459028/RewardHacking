@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
+from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
@@ -93,7 +94,7 @@ def test_pricing_catalog_crud_and_admin_rbac(monkeypatch, session_factory):
             json={"unit_price": 0.002, "metadata": {"source": "patched"}},
         )
         assert patched.status_code == 200
-        assert patched.json()["unit_price"] == 0.002
+        assert Decimal(patched.json()["unit_price"]) == Decimal("0.002")
 
         disabled = client.delete(
             f"/v1/pricing/{item['pricing_id']}",
@@ -130,7 +131,7 @@ def test_submit_records_estimated_usage_cost_and_dashboard_summary(monkeypatch, 
         body = cost.json()
         assert body["run_id"] == run_id
         assert body["tenant_id"] == "default"
-        assert body["estimated_cost"] > 0
+        assert Decimal(body["estimated_cost"]) > 0
         assert body["budget_status"] in {"within_budget", "warning", "exceeded"}
         assert run_detail.status_code == 200
         assert "Cost Summary" in run_detail.text
@@ -163,7 +164,7 @@ def test_worker_completion_records_actual_cost(monkeypatch, session_factory, low
 
         cost = client.get(f"/v1/cost/runs/{run_id}").json()
         usage = client.get(f"/v1/usage-events/runs/{run_id}").json()
-        assert cost["actual_cost"] > 0
+        assert Decimal(cost["actual_cost"]) > 0
         assert "actual" in {event["phase"] for event in usage}
         assert {"worker_seconds", "output_tokens"}.issubset({event["usage_unit"] for event in usage})
 
@@ -227,4 +228,3 @@ def test_replay_and_resume_create_linked_usage_events(monkeypatch, session_facto
         checkpoint_id = resume.json()["checkpoint"]["checkpoint_id"]
         assert any(event["replay_attempt_id"] == replay_id for event in usage)
         assert any(event["checkpoint_id"] == checkpoint_id for event in usage)
-

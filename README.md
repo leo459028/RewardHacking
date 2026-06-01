@@ -1,8 +1,29 @@
 # Agent Reward-Hacking Guardrail
 
+## V1.5.1 Agent FinOps Core / Pricing Import Admin
+
+歷史版本：`v1.5.0`
+
+V1.5.1 在 V1.5 Agent FinOps Core / Cost Ledger 上補齊正式 FinOps schema。這版新增完整 pricing、usage、cost、budget、budget violation 欄位，並加入官方模型價格 seed 匯入流程、dry-run 驗證、版本化 pricing 異動、來源文件 audit 與 Admin Dashboard 管理頁。
+
+新增重點：
+
+- `pricing_catalog` 擴充 provider、billing platform、resource subtype、model family/tier、modality、pricing mode、token type、tier threshold、capabilities、source、effective date、scope、supersede 與 import metadata。
+- `usage_events` 擴充 tenant/org/project/environment/cost center、workflow/run/trace/checkpoint/replay linkage、provider request id、token/image/video/tool/runtime/storage/network 用量與 idempotency metadata。
+- `cost_events` 擴充 pricing snapshot、gross/discount/net/tax/base currency/fx/billing period/invoice/allocation tags，確保歷史成本不會被後續價格異動改寫。
+- `budget_policies` 與 `budget_violations` 補上 soft/hard limit、scope、basis、actions、approval、resolution 與完整 audit 欄位。
+- 新增 `pricing_import_batches`、`pricing_change_logs`、`pricing_source_documents`，保存 dry-run/apply 報表、版本化價格異動與官方來源文件。
+
+新增入口：
+
+- Admin API：`/v1/admin/finops/pricing/*`
+- Dashboard：`/dashboard/admin/finops/pricing`、`/dashboard/admin/finops/pricing/import`、`/dashboard/admin/finops/pricing/sources`
+- CLI：`python scripts/import_pricing_catalog.py --dry-run --file app/seeds/model_pricing_seed.yaml`
+- 完整欄位清單：[`docs/v1.5.1_finops_core.md`](docs/v1.5.1_finops_core.md)
+
 ## V1.5 Agent FinOps Core / Cost Ledger
 
-目前版本：`v1.5.0`
+目前版本：`v1.5.1`
 
 V1.5 延續 V1.4 Checkpoint / Resume / Replay MVP，新增 Agent FinOps Core 成本資料層。Submit、worker completion、resume 與 replay flow 會寫入 deterministic `usage_events` 與 `cost_events`，並以 `pricing_catalog` 計算 estimated / actual cost；`budget_policies` 與 `budget_violations` 用於記錄 run-level budget 超額。
 
@@ -57,7 +78,7 @@ V1.3 延續 V1.2 Control Plane Execution Plan，新增內部 Trace Contract 與 
 
 ## 專案版號
 
-目前版本：`v1.5.0`
+目前版本：`v1.5.1`
 
 `v0.5.0` 是 V0.4 Execution Hardening 與 V0.5 Evaluator + Observability 的整合版。該版本已經有 queue、worker retry/DLQ、Redis run state、approval TTL/event、bounded executor transcript、tool execution audit、evaluation result 與 Dashboard 查詢入口，但還不是完整的 production sandbox、auth 或多租戶 production safety platform。
 
@@ -77,6 +98,7 @@ V1.3 延續 V1.2 Control Plane Execution Plan，新增內部 Trace Contract 與 
 
 `v1.4.0` 新增 Checkpoint / Resume / Replay MVP：submit 時保存 checkpoint，支援 checkpoint 查詢、resume checkpoint 與 dry-run replay attempt。V1.4 的 replay 不呼叫真實外部工具，只重建可審計的 policy、plan 與 step context。
 `v1.5.0` 新增 Agent FinOps Core / Cost Ledger：保存 pricing catalog、usage events、cost events、budget policies 與 budget violations，並新增 FinOps API、Run Detail Cost Summary 與 `/dashboard/costs`。V1.5 只做成本資料層，不做 cost-aware routing、Token Broker、Safe MCP 或外部費率同步。
+`v1.5.1` 擴充 V1.5 的 FinOps schema，新增官方價格 seed dry-run/apply、Admin FinOps API、Admin Dashboard、pricing import batch、pricing change log 與 pricing source document audit。
 
 ## 這個專案想解決什麼問題
 
@@ -104,7 +126,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 
 ## Roadmap 完成後的適用情境
 
-以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v1.5.0` 已全部完成。
+以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v1.5.1` 已全部完成。
 
 1. AI coding agent 在修改程式碼前，檢查是否跳過測試、繞過規則或做破壞性操作。
 2. 內部營運 agent 執行批次任務前，確認工具權限、任務風險與是否需要人工核准。
@@ -145,7 +167,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 
 ## 目前 v1.5 做到哪裡
 
-`v1.5.0` 目前是可部署驗證、可查詢、可審計的 guarded async execution + Tenant Governance Center + Production Readiness Gate baseline，並加入古文/文言式繞語攻擊防護、Control Plane execution plan 骨架、Trace / Replay Readiness、Checkpoint / Resume / Replay MVP，以及 Agent FinOps Core / Cost Ledger。V1.5 會保存 submit/resume checkpoint、dry-run replay attempt、pricing catalog、usage/cost events、budget policies 與 budget violations，並在 Run Detail 顯示 Cost Summary、在 `/dashboard/costs` 顯示 tenant cost summary。
+`v1.5.1` 目前是可部署驗證、可查詢、可審計的 guarded async execution + Tenant Governance Center + Production Readiness Gate baseline，並加入古文/文言式繞語攻擊防護、Control Plane execution plan 骨架、Trace / Replay Readiness、Checkpoint / Resume / Replay MVP，以及 Agent FinOps Core / Pricing Import Admin。V1.5.1 會保存 submit/resume checkpoint、dry-run replay attempt、pricing catalog、usage/cost events、budget policies、budget violations、pricing import batches、pricing change logs 與 pricing source documents，並在 Run Detail 顯示 Cost Summary、在 `/dashboard/costs` 顯示 tenant cost summary、在 `/dashboard/admin/finops/pricing` 管理 pricing catalog。
 
 已完成：
 
@@ -195,7 +217,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - 還沒有完整 OAuth、RBAC、tenant 管理 UI、retention purge、真實 backup/restore 自動化、secret rotation 自動化或真實 OS sandbox。
 - 還沒有完整 OAuth/SSO、user/per-tool quota、Kafka consumer lag alert、完整 OpenTelemetry、真實 LangGraph checkpoint/resume 或真實 MCP Gateway replay execution。
 
-所以目前 `v1.5.0` 適合用來建立 agent guardrail 的 production readiness baseline，驗證 queue/worker retry/DLQ/approval/evaluator/observability/governance/operations/safety regression、古文繞語攻擊防護、control-plane execution plan、trace/replay audit bundle、checkpoint/resume/dry-run replay，以及 FinOps 成本帳本的產品閉環；若要執行真實外部工具、外部 trace exporter 或 cost-aware routing，仍必須另接完整 sandbox、IAM、secret manager、MCP gateway、OTLP/LangSmith-style exporter、Token Broker/Safe MCP 與正式維運流程。
+所以目前 `v1.5.1` 適合用來建立 agent guardrail 的 production readiness baseline，驗證 queue/worker retry/DLQ/approval/evaluator/observability/governance/operations/safety regression、古文繞語攻擊防護、control-plane execution plan、trace/replay audit bundle、checkpoint/resume/dry-run replay、FinOps 成本帳本與 pricing import admin 的產品閉環；若要執行真實外部工具、外部 trace exporter 或 cost-aware routing，仍必須另接完整 sandbox、IAM、secret manager、MCP gateway、OTLP/LangSmith-style exporter、Token Broker/Safe MCP 與正式維運流程。
 
 ## 快速啟動
 

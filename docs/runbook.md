@@ -2,9 +2,9 @@
 
 此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail、Kafka worker、Redis run state、approval queue、worker retry/DLQ、tool execution audit、evaluator/observability summary、tenant governance、production readiness gate、safety regression evidence、古文/文言式 Prompt Guard、Control Plane execution plan、Trace / Replay Readiness、Checkpoint / Resume / Replay MVP 與 Agent FinOps Core / Cost Ledger 已接入 request path。
 
-目前營運基線：`v1.5.0`
+目前營運基線：`v1.5.1`
 
-V1.5 新增 FinOps 成本帳本。若 Run Detail 沒有 `Cost Summary`，先確認 migration head 是否為 `202606010003`、submit flow 是否產生 `usage_events` / `cost_events`，再查 `/v1/cost/runs/{run_id}`。若 `/dashboard/costs` 沒有 budget violations，確認是否已建立 active run-scope budget policy，且該 run 的 estimated + actual cost 是否超過 `limit_amount`。
+V1.5.1 新增 Admin FinOps pricing import 管理並擴充 FinOps schema。若 Run Detail 沒有 `Cost Summary`，先確認 migration head 是否為 `202606010004`、submit flow 是否產生 `usage_events` / `cost_events`，再查 `/v1/cost/runs/{run_id}`。若 `/dashboard/costs` 沒有 budget violations，確認是否已建立 active run-scope budget policy，且該 run 的 estimated + actual cost 是否超過 `hard_limit_amount` 或 `limit_amount`。若 pricing catalog 缺官方模型價格，先到 `/dashboard/admin/finops/pricing/import` 執行 Dry Run，再 Apply Import。
 
 ## 快速檢查
 
@@ -391,3 +391,12 @@ docker compose exec redis redis-cli keys 'tenant:*:quota:*'
 - approval queue count。
 - current：worker job duration、retry/DLQ、approval/evaluator/governance summary。
 - future：Kafka consumer lag、human approval turnaround time-series。
+## V1.5.1 FinOps Runbook 補充
+
+若 pricing catalog 缺官方模型價格，先到 `/dashboard/admin/finops/pricing/import` 對 `app/seeds/model_pricing_seed.yaml` 執行 Dry Run。Dry Run 正常後再 Apply Import，並到 `/dashboard/admin/finops/pricing/sources` 確認 source documents 與 pricing change logs 已建立。
+
+常用排查：
+
+- Dry Run 顯示 `invalid_rows`：檢查 seed 欄位、enum、decimal、source URL 與 effective date。
+- Apply 後成本仍為 0：檢查 `usage_events.provider`、`billing_platform`、`resource_type`、`usage_unit`、`token_type` 與 active pricing key 是否能對上。
+- 調價後歷史成本改變：不應發生。請檢查 `cost_events.pricing_snapshot` 是否有保存當時計算使用的 `unit_price` 與 `pricing_id`。

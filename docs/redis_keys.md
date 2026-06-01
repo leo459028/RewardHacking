@@ -1,6 +1,6 @@
 # Redis Keys
 
-Redis 用於短期 state、cache、approval token、rate limit、circuit breaker 與 worker coordination。`v1.5.0` 目前沿用既有 API/worker flow 的 run state、worker idempotency key、tool circuit breaker、tenant request quota 與 high-risk quota。Operations Gate、Prompt Guard、Control Plane Trace / Replay、Checkpoint、Resume、dry-run Replay 與 FinOps Core 不新增 Redis key；release readiness、safety regression evidence、release gate snapshot、Prompt Guard summary、execution plan、step audit、checkpoint、replay attempt、replay bundle、usage/cost events、pricing catalog、budget policy 與 budget violation 皆以 Postgres audit tables 為準。Resume API 只會把 run state 重新設為 `queued` 並 publish worker event。
+Redis 用於短期 state、cache、approval token、rate limit、circuit breaker 與 worker coordination。`v1.5.1` 目前沿用既有 API/worker flow 的 run state、worker idempotency key、tool circuit breaker、tenant request quota 與 high-risk quota。Operations Gate、Prompt Guard、Control Plane Trace / Replay、Checkpoint、Resume、dry-run Replay 與 FinOps Core 不新增 Redis key；release readiness、safety regression evidence、release gate snapshot、Prompt Guard summary、execution plan、step audit、checkpoint、replay attempt、replay bundle、usage/cost events、pricing catalog、budget policy、budget violation、pricing import batch、pricing change log 與 pricing source document 皆以 Postgres audit tables 為準。Resume API 只會把 run state 重新設為 `queued` 並 publish worker event。
 
 ## Key 命名原則
 

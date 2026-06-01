@@ -1,4 +1,4 @@
-# Roadmap v1.5
+# Roadmap v1.5.1
 
 本 roadmap 將專案從 prototype 推進到可逐步承擔 guardrail 職責的服務。`v0.3.0` 起不再把 Kafka、Redis、Tool Executor、Approval 視為互不相干的線性 phase，而是先建立一條可展示、可查詢、可審計的產品閉環，再把完整 hardening 與 production governance 放到後續版本。
 
@@ -18,7 +18,8 @@
 | `v1.2.0` | 已完成 | Control Plane Execution Plan | 新增 workflow/tool registry、execution plan persistence、Run Detail Execution Plan 與 Control Plane Dashboard，讓 queued run 在 worker 執行前已有可審計計畫。 |
 | `v1.3.0` | 已完成 | Trace / Replay Readiness | 串接 run、execution plan 與 step audit 的 trace id，新增 trace API、replay bundle API、step-level audit、Dashboard Trace / Replay 區塊與 control-plane plan health。 |
 | `v1.4.0` | 已完成 | Checkpoint / Resume / Replay MVP | 新增 submit/resume checkpoint、checkpoint API、resume API、dry-run replay attempt、Run Detail Checkpoint / Resume 與 Control Plane Resumable / Replayable 欄位。 |
-| `v1.5.0` | 目前版本 | Agent FinOps Core / Cost Ledger | 新增 pricing catalog、usage events、cost events、budget policies、budget violations、FinOps API、Run Detail Cost Summary 與 `/dashboard/costs`。 |
+| `v1.5.0` | 已完成 | Agent FinOps Core / Cost Ledger | 新增 pricing catalog、usage events、cost events、budget policies、budget violations、FinOps API、Run Detail Cost Summary 與 `/dashboard/costs`。 |
+| `v1.5.1` | 目前版本 | Agent FinOps Core / Pricing Import Admin | 擴充 FinOps schema，新增官方價格 seed dry-run/apply、Admin FinOps API、Admin Dashboard、pricing import batch、pricing change log 與 source document audit。 |
 | `v1.6+` | 規劃中 | Cost-aware Execution / Safe MCP | 補 cost-aware routing、Token Broker、Safe MCP、model/tool routing、完整 OpenTelemetry、Kafka lag alert、LLM judge、真實 LangGraph checkpoint/resume、真正 replay execution 與更完整評測資料集。 |
 
 ## Milestone：v0.2.0 / Phase 0-2 + Dashboard
@@ -326,3 +327,14 @@
 - 自動 policy tuning。
 - anomaly detection。
 - 多租戶 billing/cost governance。
+## V1.5.1 Agent FinOps Core
+
+`v1.5.1` 將 V1.5 的 FinOps MVP 擴充為可管理的 pricing catalog 與成本 audit 基礎：
+
+- 補齊 `pricing_catalog`、`usage_events`、`cost_events`、`budget_policies`、`budget_violations` 欄位。
+- 新增 `pricing_import_batches`、`pricing_change_logs`、`pricing_source_documents`。
+- 支援 `app/seeds/model_pricing_seed.yaml` 官方價格 seed dry-run 與 apply。
+- 新增 `/v1/admin/finops/pricing/*` Admin API。
+- 新增 `/dashboard/admin/finops/pricing`、`/dashboard/admin/finops/pricing/import`、`/dashboard/admin/finops/pricing/sources`。
+
+仍不包含 cost-aware routing、Token Broker、Safe MCP、即時連外同步供應商價格或自動阻擋執行，這些仍屬後續版本。

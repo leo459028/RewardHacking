@@ -1,6 +1,6 @@
 # 資料模型
 
-目前資料模型版本：`v1.5.0`
+目前資料模型版本：`v1.5.1`
 
 本專案目前使用 SQLAlchemy models 搭配 Alembic migration 管理 Postgres audit tables。API submit 後會將 run 與 incident 寫入資料庫，dashboard 與查詢 API 都從同一份資料讀取。
 
@@ -174,7 +174,7 @@ Tables：`release_gate_runs`、`release_gate_items`
 | 欄位 | 型別 | 說明 |
 | --- | --- | --- |
 | `gate_id` | string | 對外查詢 release gate 的 ID |
-| `release_version` | string | 例如 `v1.5.0` |
+| `release_version` | string | 例如 `v1.5.1` |
 | `status` | string | `pass`、`warn` 或 `fail` |
 | `summary` | text | gate 結果摘要 |
 | `created_by` | string | 建立者 |
@@ -428,3 +428,15 @@ V1.3 新增 `execution_plan_steps`：
 | `started_at` / `finished_at` / `duration_ms` | timestamp / integer | step audit 的時間欄位；尚未執行的 step 可為空。 |
 | `input_summary` / `output_summary` / `error_summary` | text | 給 Dashboard、稽核與 replay bundle 使用的摘要。 |
 | `metadata_payload` | JSON | step-level span/exporter metadata。 |
+## V1.5.1 FinOps Schema 欄位總表
+
+V1.5.1 已把 FinOps schema 擴充到完整 pricing、usage、cost、budget、budget violation、pricing import batch、pricing change log 與 pricing source document 欄位。每個 table 的完整欄位清單已整理在 [`docs/v1.5.1_finops_core.md`](v1.5.1_finops_core.md#schema-欄位總表)，包含：
+
+- `pricing_catalog`
+- `usage_events`
+- `cost_events`
+- `budget_policies`
+- `budget_violations`
+- `pricing_import_batches`
+- `pricing_change_logs`
+- `pricing_source_documents`

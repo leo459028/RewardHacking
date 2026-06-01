@@ -5,9 +5,10 @@ import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
@@ -63,13 +64,19 @@ from app.services.checkpoint import (
     persist_run_checkpoint,
 )
 from app.services.finops import (
+    get_pricing_item,
     list_budget_violations,
     list_pricing_items,
     record_submit_usage,
     run_cost_summary,
     tenant_cost_summary,
+    update_pricing_item,
+    disable_pricing_item,
 )
+from app.models.finops import PricingChangeLog, PricingImportBatch, PricingSourceDocument
 from app.services.orchestrator import OrchestrationResult
+from app.schemas.finops import PricingCatalogUpdateRequest
+from app.services.pricing_import import apply_pricing_seed, dry_run_pricing_seed, load_pricing_seed
 from app.services.run_state import RunStateStore
 from app.workers.producer import make_event
 
@@ -343,6 +350,197 @@ async def dashboard_costs(
     )
 
 
+@router.get("/dashboard/admin/finops/pricing", response_class=HTMLResponse)
+async def dashboard_admin_finops_pricing(
+    request: Request,
+    provider: str | None = None,
+    model: str | None = None,
+    resource_type: str | None = None,
+    pricing_mode: str | None = None,
+    token_type: str | None = None,
+    active_only: bool = False,
+    scope_type: str | None = None,
+    session: AsyncSession = Depends(get_session),
+):
+    pricing = await list_pricing_items(
+        session,
+        active_only=active_only,
+        provider=provider or None,
+        model_name=model or None,
+        resource_type=resource_type or None,
+        pricing_mode=pricing_mode or None,
+        token_type=token_type or None,
+        scope_type=scope_type or None,
+    )
+    return templates.TemplateResponse(
+        request,
+        "admin_finops_pricing.html",
+        {
+            "pricing": pricing,
+            "filters": {
+                "provider": provider or "",
+                "model": model or "",
+                "resource_type": resource_type or "",
+                "pricing_mode": pricing_mode or "",
+                "token_type": token_type or "",
+                "active_only": active_only,
+                "scope_type": scope_type or "",
+            },
+            "active": "admin-finops",
+        },
+    )
+
+
+@router.get("/dashboard/admin/finops/pricing/import", response_class=HTMLResponse)
+async def dashboard_admin_finops_import(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    batches = list(
+        (
+            await session.scalars(
+                select(PricingImportBatch).order_by(PricingImportBatch.created_at.desc())
+            )
+        ).all()
+    )
+    return templates.TemplateResponse(
+        request,
+        "admin_finops_import.html",
+        {
+            "file_path": "app/seeds/model_pricing_seed.yaml",
+            "report": None,
+            "batches": batches,
+            "active": "admin-finops",
+        },
+    )
+
+
+@router.post("/dashboard/admin/finops/pricing/import", response_class=HTMLResponse)
+async def dashboard_admin_finops_import_post(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    form = await request.form()
+    file_path = str(form.get("file_path", "app/seeds/model_pricing_seed.yaml"))
+    mode = str(form.get("mode", "dry_run"))
+    seed = load_pricing_seed(file_path)
+    if mode == "apply":
+        report = await apply_pricing_seed(session, seed, created_by="dashboard")
+    else:
+        report = await dry_run_pricing_seed(session, seed, created_by="dashboard")
+    batches = list(
+        (
+            await session.scalars(
+                select(PricingImportBatch).order_by(PricingImportBatch.created_at.desc())
+            )
+        ).all()
+    )
+    return templates.TemplateResponse(
+        request,
+        "admin_finops_import.html",
+        {
+            "file_path": file_path,
+            "report": report,
+            "batches": batches,
+            "active": "admin-finops",
+        },
+    )
+
+
+@router.get("/dashboard/admin/finops/pricing/sources", response_class=HTMLResponse)
+async def dashboard_admin_finops_sources(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    sources = list(
+        (
+            await session.scalars(
+                select(PricingSourceDocument).order_by(PricingSourceDocument.created_at.desc())
+            )
+        ).all()
+    )
+    changes = list(
+        (
+            await session.scalars(
+                select(PricingChangeLog).order_by(PricingChangeLog.changed_at.desc())
+            )
+        ).all()
+    )
+    return templates.TemplateResponse(
+        request,
+        "admin_finops_sources.html",
+        {
+            "sources": sources,
+            "changes": changes,
+            "active": "admin-finops",
+        },
+    )
+
+
+@router.get("/dashboard/admin/finops/pricing/{pricing_id}", response_class=HTMLResponse)
+async def dashboard_admin_finops_pricing_detail(
+    request: Request,
+    pricing_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    item = await get_pricing_item(session, pricing_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Pricing item not found.")
+    changes = list(
+        (
+            await session.scalars(
+                select(PricingChangeLog)
+                .where(
+                    (PricingChangeLog.pricing_id_old == pricing_id)
+                    | (PricingChangeLog.pricing_id_new == pricing_id)
+                )
+                .order_by(PricingChangeLog.changed_at.desc())
+            )
+        ).all()
+    )
+    return templates.TemplateResponse(
+        request,
+        "admin_finops_pricing_detail.html",
+        {
+            "item": item,
+            "changes": changes,
+            "active": "admin-finops",
+        },
+    )
+
+
+@router.post("/dashboard/admin/finops/pricing/{pricing_id}/edit", response_class=HTMLResponse)
+async def dashboard_admin_finops_pricing_edit(
+    request: Request,
+    pricing_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    form = await request.form()
+    await update_pricing_item(
+        session,
+        pricing_id,
+        PricingCatalogUpdateRequest(
+            unit_price=str(form.get("unit_price", "")),
+            currency=str(form.get("currency", "USD")),
+            effective_from=str(form.get("effective_from", "")) or None,
+            effective_to=str(form.get("effective_to", "")) or None,
+            is_active=str(form.get("is_active", "")) == "on",
+            change_reason=str(form.get("change_reason", "")),
+            updated_by="dashboard",
+        ),
+    )
+    return RedirectResponse(f"/dashboard/admin/finops/pricing/{pricing_id}", status_code=303)
+
+
+@router.post("/dashboard/admin/finops/pricing/{pricing_id}/disable", response_class=HTMLResponse)
+async def dashboard_admin_finops_pricing_disable(
+    pricing_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    await disable_pricing_item(session, pricing_id, updated_by="dashboard")
+    return RedirectResponse(f"/dashboard/admin/finops/pricing/{pricing_id}", status_code=303)
+
+
 @router.get("/dashboard/operations", response_class=HTMLResponse)
 async def dashboard_operations(request: Request, session: AsyncSession = Depends(get_session)):
     readiness = await compute_operations_readiness(session, settings=get_settings())
@@ -394,7 +592,7 @@ async def dashboard_operations_release_gate(
     readiness = await compute_operations_readiness(session, settings=get_settings())
     await persist_release_gate(
         session,
-        release_version=str(form.get("release_version", "v1.5.0")),
+        release_version=str(form.get("release_version", "v1.5.1")),
         created_by=str(form.get("created_by", "dashboard")),
         trace_id=str(getattr(request.state, "trace_id", "")),
         readiness=readiness,

@@ -1,10 +1,10 @@
-# API 文件 v1.5
+# API 文件 v1.5.1
 
 API 由 FastAPI 提供，所有 JSON API route 都掛在 `/v1` prefix 下。啟動後可透過 OpenAPI UI 查看互動式文件：
 
-目前 API 版本：`v1.5.0`
+目前 API 版本：`v1.5.1`
 
-V1.5 新增 Agent FinOps Core / Cost Ledger API，用來查 pricing、usage、cost、budget policy 與 budget violation。這一版只建立 deterministic 成本資料層，不包含 cost-aware routing、Token Broker、Safe MCP 或外部費率同步。
+V1.5.1 延續 Agent FinOps Core / Cost Ledger API，並新增 Admin FinOps pricing 管理、官方價格 seed dry-run/apply、import batch、pricing change log 與 source document audit。這一版仍不包含 cost-aware routing、Token Broker、Safe MCP 或連外自動同步供應商費率。
 
 - `http://localhost:8000/docs`
 - `http://localhost:8000/redoc`
@@ -81,6 +81,9 @@ Dashboard UI 另提供：
 - `/dashboard/governance`
 - `/dashboard/control-plane`
 - `/dashboard/costs`
+- `/dashboard/admin/finops/pricing`
+- `/dashboard/admin/finops/pricing/import`
+- `/dashboard/admin/finops/pricing/sources`
 - `/dashboard/operations`
 - `/dashboard/playground`
 
@@ -253,7 +256,7 @@ RBAC-lite role：
 
 ## Control Plane Trace / Replay / Checkpoint
 
-目前 `v1.5.0` 延續 V1.4 Checkpoint / Resume / Replay 與 V1.3 Trace / Replay Readiness。低風險 request 進入 queue 前會先建立一筆 `execution_plans` 與多筆 `execution_plan_steps`，並在 `evaluation_summary.execution_plan` 保存摘要。Submit flow 也會建立 `run_checkpoints` submit checkpoint，保存 request、policy、plan 摘要與 replay readiness，並額外寫入 V1.5 estimated usage / cost events。若 worker 找不到 run 對應的 execution plan，會 fail closed，將 run 更新為 `awaiting_approval`，並加入 `missing_execution_plan` policy flag。
+目前 `v1.5.1` 延續 V1.4 Checkpoint / Resume / Replay 與 V1.3 Trace / Replay Readiness。低風險 request 進入 queue 前會先建立一筆 `execution_plans` 與多筆 `execution_plan_steps`，並在 `evaluation_summary.execution_plan` 保存摘要。Submit flow 也會建立 `run_checkpoints` submit checkpoint，保存 request、policy、plan 摘要與 replay readiness，並額外寫入 V1.5 estimated usage / cost events。若 worker 找不到 run 對應的 execution plan，會 fail closed，將 run 更新為 `awaiting_approval`，並加入 `missing_execution_plan` policy flag。
 
 `GET /v1/runs/{run_id}/execution-plan` 回傳：
 
@@ -432,7 +435,7 @@ GET /v1/operations/evidence?evidence_type=backup_restore_drill
 
 ```json
 {
-  "release_version": "v1.5.0",
+  "release_version": "v1.5.1",
   "created_by": "release-manager"
 }
 ```
@@ -443,7 +446,7 @@ GET /v1/operations/evidence?evidence_type=backup_restore_drill
 
 ```json
 {
-  "release_version": "v1.5.0",
+  "release_version": "v1.5.1",
   "created_by": "release-manager"
 }
 ```
@@ -546,7 +549,7 @@ GET /v1/governance/summary?tenant_id=default
 正式環境建議後續補上 Kafka consumer lag alert、完整 OpenTelemetry tracing 與自動化 backup/restore drill。
 ## V1.3 Trace / Replay API 補充
 
-目前 API metadata 版本為 `v1.5.0`。V1.3 新增兩個 run subresource，V1.4 再新增三個 checkpoint/replay subresource，V1.5 新增 FinOps pricing/usage/cost/budget subresources，皆延續既有 `X-Trace-Id` 與 tenant scoping 原則：
+目前 API metadata 版本為 `v1.5.1`。V1.3 新增兩個 run subresource，V1.4 再新增三個 checkpoint/replay subresource，V1.5 新增 FinOps pricing/usage/cost/budget subresources，V1.5.1 再新增 Admin FinOps pricing import subresources，皆延續既有 `X-Trace-Id` 與 tenant scoping 原則：
 
 | Method | Path | 說明 |
 | --- | --- | --- |
@@ -570,3 +573,33 @@ RBAC 行為：
 - pricing/budget 寫入需 `admin`。
 - manual usage event 需 `operator` 或 `admin`。
 - FinOps 查詢端點開放 `viewer`、`operator`、`admin`，且 `AUTH_ENABLED=true` 時會套用 tenant scoping。
+## V1.5.1 FinOps Admin API 補充
+
+目前 API metadata 版本已更新為 `1.5.1`。V1.5.1 新增 Admin FinOps pricing 管理與官方價格 seed 匯入 API：
+
+| Method | Path | 權限 | 說明 |
+| --- | --- | --- | --- |
+| `GET` | `/v1/admin/finops/pricing` | `reviewer`、`tenant_admin`、`finops_admin`、`admin`、`super_admin` | 查詢 pricing catalog，支援 provider、model、resource_type、pricing_mode、token_type、scope_type、active_only 篩選。 |
+| `GET` | `/v1/admin/finops/pricing/{pricing_id}` | reviewer 以上 | 查詢單筆 pricing 完整欄位。 |
+| `PATCH` | `/v1/admin/finops/pricing/{pricing_id}` | `finops_admin`、`admin`、`super_admin` | 更新 pricing 管理欄位。 |
+| `POST` | `/v1/admin/finops/pricing/{pricing_id}/disable` | finops admin 以上 | 停用 pricing row。 |
+| `POST` | `/v1/admin/finops/pricing/import/dry-run` | reviewer 以上 | 讀取 seed 檔並驗證，不寫入資料庫。 |
+| `POST` | `/v1/admin/finops/pricing/import/apply` | finops admin 以上 | 套用 seed，寫入 import batch、source documents、pricing rows 與 change logs。 |
+| `GET` | `/v1/admin/finops/pricing/imports` | reviewer 以上 | 查詢匯入批次。 |
+| `GET` | `/v1/admin/finops/pricing/imports/{import_batch_id}` | reviewer 以上 | 查詢單一匯入批次。 |
+| `GET` | `/v1/admin/finops/pricing/sources` | reviewer 以上 | 查詢官方來源文件 audit。 |
+| `GET` | `/v1/admin/finops/pricing/changes` | reviewer 以上 | 查詢版本化 pricing change log。 |
+
+匯入 request body：
+
+```json
+{
+  "file_path": "app/seeds/model_pricing_seed.yaml",
+  "created_by": "release-manager",
+  "base_currency": "USD"
+}
+```
+
+dry-run response 會回傳 `valid_rows`、`new_rows`、`unchanged_rows`、`rows_to_supersede`、`invalid_rows`、`missing_optional_fields`、`duplicate_keys` 與 `unsupported_enum_values`。apply 成功時會額外回傳 `import_batch_id`。
+
+完整 FinOps 欄位表請看 [`docs/v1.5.1_finops_core.md`](v1.5.1_finops_core.md)。
