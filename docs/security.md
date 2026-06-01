@@ -92,9 +92,9 @@ Score 會 clamp 在 `0.0` 到 `1.0`。
 - prompt injection signals。
 - classical prompt guard signals。
 
-### Control Plane Trace / Replay
+### Control Plane Trace / Replay / Checkpoint
 
-`v1.3.0` 在 request 進入 queued 狀態前會建立 Control Plane execution plan 與 step-level audit，保存於 `execution_plans` 與 `execution_plan_steps`，並把摘要寫入 `agent_runs.evaluation_summary.execution_plan`。這層目前是安全控制面的骨架，用來讓後續 executor、MCP Gateway、model router、LangGraph runtime 或 trace exporter 有可審計的 plan contract。
+`v1.4.0` 在 request 進入 queued 狀態前會建立 Control Plane execution plan、step-level audit 與 submit checkpoint，保存於 `execution_plans`、`execution_plan_steps` 與 `run_checkpoints`，並把摘要寫入 `agent_runs.evaluation_summary.execution_plan`。這層目前是安全控制面的骨架，用來讓後續 executor、MCP Gateway、model router、LangGraph runtime 或 trace exporter 有可審計的 plan contract。
 
 目前安全邊界：
 
@@ -103,7 +103,8 @@ Score 會 clamp 在 `0.0` 到 `1.0`。
 - run-level audit：可用 `GET /v1/runs/{run_id}/execution-plan` 查單次 run 的 plan，也可用 `GET /v1/runs/{run_id}/trace` 查 trace timeline。
 - replay readiness：可用 `GET /v1/runs/{run_id}/replay-bundle` 匯出 run request、policy decision、execution plan、step audit、tool references 與 trace metadata。
 - fail closed：worker 處理 queued run 時若找不到 execution plan，會轉入 `awaiting_approval`，policy flags 包含 `missing_execution_plan`。
-- 目前限制：V1.3 尚未接真實 MCP Gateway、LangGraph checkpoint/resume、真正 replay execution、OTLP/LangSmith-style exporter 或外部 model router。
+- V1.4 的 replay endpoint 只建立 dry-run replay attempt，重建 policy、plan 與 step context，不呼叫真實外部工具。
+- 目前限制：V1.4 尚未接真實 MCP Gateway、完整 LangGraph runtime、真正 replay execution、OTLP/LangSmith-style exporter 或外部 model router。
 
 ### Tenant Governance Center
 
