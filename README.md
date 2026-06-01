@@ -1,8 +1,24 @@
 # Agent Reward-Hacking Guardrail
 
+## V1.4 Checkpoint / Resume / Replay MVP
+
+目前版本：`v1.4.0`
+
+V1.4 延續 V1.3 Trace / Replay Readiness，新增可恢復執行的最小閉環。每次 submit 會建立 `run_checkpoints` submit checkpoint，保存 request payload、policy decision、execution plan 摘要、step count 與 replay readiness。
+
+新增查詢入口：
+
+- `GET /v1/runs/{run_id}/checkpoints`：查詢 run 的 checkpoint timeline。
+- `POST /v1/runs/{run_id}/resume`：建立 resume checkpoint，將 run 放回 `queued`，並重新 publish worker event。
+- `POST /v1/runs/{run_id}/replay`：建立 dry-run replay attempt，重建 policy / plan / step context，但不呼叫真實外部工具、不改外部狀態。
+- `/dashboard/runs/{run_id}`：新增 Checkpoint / Resume 區塊與 Replay Attempts 表格。
+- `/dashboard/control-plane`：最新 execution plans 新增 Resumable / Replayable 欄位。
+
+目前限制：V1.4 的 replay 是安全 dry-run，不會重新執行真實工具，也尚未接 LangGraph checkpoint/resume、MCP Gateway、OTLP/LangSmith exporter、外部 object storage 或真實 OS sandbox。
+
 ## V1.3 Trace / Replay Readiness
 
-目前版本：`v1.3.0`
+上一版：`v1.3.0`
 
 V1.3 延續 V1.2 Control Plane Execution Plan，新增內部 Trace Contract 與 Replay Bundle。每次 submit 會沿用 `X-Trace-Id`，將 trace id 寫入 run request metadata、`execution_plans.trace_id` 與 `execution_plan_steps.trace_id`，並保留 `exporter_type`、`external_trace_id`、`span_id`、`parent_span_id` 等 metadata，方便未來銜接 OTLP 或 LangSmith-style exporter。
 
@@ -21,7 +37,7 @@ V1.3 延續 V1.2 Control Plane Execution Plan，新增內部 Trace Contract 與 
 
 ## 專案版號
 
-目前版本：`v1.3.0`
+目前版本：`v1.4.0`
 
 `v0.5.0` 是 V0.4 Execution Hardening 與 V0.5 Evaluator + Observability 的整合版。該版本已經有 queue、worker retry/DLQ、Redis run state、approval TTL/event、bounded executor transcript、tool execution audit、evaluation result 與 Dashboard 查詢入口，但還不是完整的 production sandbox、auth 或多租戶 production safety platform。
 
@@ -36,6 +52,10 @@ V1.3 延續 V1.2 Control Plane Execution Plan，新增內部 Trace Contract 與 
 `v1.1.0` 新增 Classical Chinese Prompt Guard：針對古文、文言文或混合中文包裝的駭客意圖做 deterministic prompt analysis。正常文言文教學與摘要不會被阻擋；若古文內容包含忽略指令、繞過政策、憑證外洩、破壞資料或惡意程式意圖，系統會加入 `classical_*` policy flags、提高風險分數，並進入人工審核或拒絕。Run detail 與 API response 的 `evaluation_summary.prompt_guard` 可查語言、正規化文字、flags 與 signals。
 
 `v1.2.0` 新增 Control Plane 骨架：低風險 request 在進入 worker queue 前，會先產生可查詢的 `execution_plan`，保存 workflow version、model route、selected tools、steps、approval gates 與 policy snapshot。新增 workflow/tool registry API、`/v1/runs/{run_id}/execution-plan` 查詢，以及 `/dashboard/control-plane` 與 Run Detail 的 Execution Plan 區塊。這版仍不宣稱已完成真實 MCP Gateway、LangGraph checkpoint/resume、replay/time travel 或外部模型路由；V1.2 的 model route 是 deterministic control-plane metadata。
+
+`v1.3.0` 新增 Trace / Replay Readiness：把 `X-Trace-Id` 串到 `execution_plans` 與 `execution_plan_steps`，並提供 trace API、replay bundle API、Run Detail 的 Trace / Replay 區塊與 Control Plane Dashboard 的 Trace ID / Step Summary / Plan Health。
+
+`v1.4.0` 新增 Checkpoint / Resume / Replay MVP：submit 時保存 checkpoint，支援 checkpoint 查詢、resume checkpoint 與 dry-run replay attempt。V1.4 的 replay 不呼叫真實外部工具，只重建可審計的 policy、plan 與 step context。
 
 ## 這個專案想解決什麼問題
 
@@ -63,7 +83,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 
 ## Roadmap 完成後的適用情境
 
-以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v1.3.0` 已全部完成。
+以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v1.4.0` 已全部完成。
 
 1. AI coding agent 在修改程式碼前，檢查是否跳過測試、繞過規則或做破壞性操作。
 2. 內部營運 agent 執行批次任務前，確認工具權限、任務風險與是否需要人工核准。
@@ -102,9 +122,9 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - audit trail 可以幫助追蹤問題，但不能替代資料治理與資安制度。
 - 如果 prompt、工具權限或資料權限設計不良，guardrail 也可能被繞過或誤判。
 
-## 目前 v1.3 做到哪裡
+## 目前 v1.4 做到哪裡
 
-`v1.3.0` 目前是可部署驗證、可查詢、可審計的 guarded async execution + Tenant Governance Center + Production Readiness Gate baseline，並加入古文/文言式繞語攻擊防護、Control Plane execution plan 骨架，以及 Trace / Replay Readiness。V1.3 會把 `X-Trace-Id` 串到 `execution_plans` 與 `execution_plan_steps`，並提供 `/v1/runs/{run_id}/trace`、`/v1/runs/{run_id}/replay-bundle`、Run Detail 的 Trace / Replay 區塊與 Control Plane Dashboard 的 Trace ID / Step Summary / Plan Health。
+`v1.4.0` 目前是可部署驗證、可查詢、可審計的 guarded async execution + Tenant Governance Center + Production Readiness Gate baseline，並加入古文/文言式繞語攻擊防護、Control Plane execution plan 骨架、Trace / Replay Readiness，以及 Checkpoint / Resume / Replay MVP。V1.4 會保存 submit/resume checkpoint，提供 `/v1/runs/{run_id}/checkpoints`、`POST /v1/runs/{run_id}/resume`、`POST /v1/runs/{run_id}/replay`，並在 Run Detail 與 Control Plane Dashboard 顯示可恢復與可 dry-run replay 的狀態。
 
 已完成：
 
@@ -142,6 +162,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - 測試已加入 deterministic red-team corpus regression，覆蓋 prompt injection、PII exfiltration、destructive action、tool budget abuse、external network bypass、system/developer instruction reveal、done shortcut 與 not tested。
 - V1.1 測試已加入古文/文言式攻擊 regression，覆蓋正常文言文不阻擋、古文 prompt injection、憑證外洩、破壞意圖、惡意程式意圖、Dashboard Prompt Guard 顯示與 metrics。
 - V1.3 測試已加入 Trace / Replay regression，覆蓋 trace API、replay bundle、step audit persistence、Control Plane Dashboard 與 Run Detail Trace / Replay 顯示；V1.2 Control Plane regression 仍保留。
+- V1.4 測試已加入 Checkpoint / Resume / Replay regression，覆蓋 checkpoint API、resume API、dry-run replay attempt、Run Detail Checkpoint / Resume 與 Control Plane Resumable / Replayable 顯示。
 - API 會回傳 `X-Trace-Id`；submit flow 會把 trace id 保存到 request metadata 與 Kafka event payload。
 
 尚未完成：
@@ -151,9 +172,9 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - 還沒有 Kafka consumer lag alert 與完整 OpenTelemetry tracing；v1.0 先提供 HTTP metrics 與 trace id 基線。
 - LLM-as-judge 目前是可插拔 signal，預設使用 deterministic fake judge 且不作為唯一 hard deny。
 - 還沒有完整 OAuth、RBAC、tenant 管理 UI、retention purge、真實 backup/restore 自動化、secret rotation 自動化或真實 OS sandbox。
-- 還沒有完整 OAuth/SSO、user/per-tool quota、Kafka consumer lag alert 或完整 OpenTelemetry。
+- 還沒有完整 OAuth/SSO、user/per-tool quota、Kafka consumer lag alert、完整 OpenTelemetry、真實 LangGraph checkpoint/resume 或真實 MCP Gateway replay execution。
 
-所以目前 `v1.3.0` 適合用來建立 agent guardrail 的 production readiness baseline，驗證 queue/worker retry/DLQ/approval/evaluator/observability/governance/operations/safety regression、古文繞語攻擊防護、control-plane execution plan 與 trace/replay audit bundle 的產品閉環；若要執行真實外部工具或外部 trace exporter，仍必須另接完整 sandbox、IAM、secret manager、MCP gateway、OTLP/LangSmith-style exporter 與正式維運流程。
+所以目前 `v1.4.0` 適合用來建立 agent guardrail 的 production readiness baseline，驗證 queue/worker retry/DLQ/approval/evaluator/observability/governance/operations/safety regression、古文繞語攻擊防護、control-plane execution plan、trace/replay audit bundle，以及 checkpoint/resume/dry-run replay 的產品閉環；若要執行真實外部工具或外部 trace exporter，仍必須另接完整 sandbox、IAM、secret manager、MCP gateway、OTLP/LangSmith-style exporter 與正式維運流程。
 
 ## 快速啟動
 
@@ -216,7 +237,7 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
 - [Dashboard 使用說明](docs/dashboard.md)
 - [API 文件](docs/api.md)
 - [架構文件](docs/architecture.md)
-- [V1.1 架構圖資](docs/assets/README.md)（目前仍作為歷史圖資；V1.3 新增 Trace / Replay 文字文件、API 與 Dashboard，但尚未新增 v13 圖資）
+- [V1.1 架構圖資](docs/assets/README.md)（目前仍作為歷史圖資；V1.4 新增 Checkpoint / Resume / Replay 文字文件、API 與 Dashboard，但尚未新增 v14 圖資）
 - [部署文件](docs/deployment.md)
 - [Runbook](docs/runbook.md)
 

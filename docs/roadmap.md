@@ -1,4 +1,4 @@
-# Roadmap v1.3
+# Roadmap v1.4
 
 本 roadmap 將專案從 prototype 推進到可逐步承擔 guardrail 職責的服務。`v0.3.0` 起不再把 Kafka、Redis、Tool Executor、Approval 視為互不相干的線性 phase，而是先建立一條可展示、可查詢、可審計的產品閉環，再把完整 hardening 與 production governance 放到後續版本。
 
@@ -16,8 +16,9 @@
 | `v1.0.0` | 已完成 | Production Ready：A + C-lite | 將 release gate 升級為 production readiness blocker，補 safety regression evidence、敏感 read API auth coverage、HTTP metrics、incident counter 與 red-team corpus regression。 |
 | `v1.1.0` | 已完成 | Classical Chinese Prompt Guard | 偵測古文/文言式繞語包裝的 prompt injection、policy bypass、憑證外洩、破壞資料與惡意程式意圖，並在 API、Dashboard、metrics 與測試中可查。 |
 | `v1.2.0` | 已完成 | Control Plane Execution Plan | 新增 workflow/tool registry、execution plan persistence、Run Detail Execution Plan 與 Control Plane Dashboard，讓 queued run 在 worker 執行前已有可審計計畫。 |
-| `v1.3.0` | 目前版本 | Trace / Replay Readiness | 串接 run、execution plan 與 step audit 的 trace id，新增 trace API、replay bundle API、step-level audit、Dashboard Trace / Replay 區塊與 control-plane plan health。 |
-| `v1.4+` | 規劃中 | Production Operations Automation / C-full | 補真實 backup/restore automation、retention purge、secret rotation automation、完整 OpenTelemetry、Kafka lag alert、LLM judge、MCP Gateway、checkpoint/resume、真正 replay execution 與更完整評測資料集。 |
+| `v1.3.0` | 已完成 | Trace / Replay Readiness | 串接 run、execution plan 與 step audit 的 trace id，新增 trace API、replay bundle API、step-level audit、Dashboard Trace / Replay 區塊與 control-plane plan health。 |
+| `v1.4.0` | 目前版本 | Checkpoint / Resume / Replay MVP | 新增 submit/resume checkpoint、checkpoint API、resume API、dry-run replay attempt、Run Detail Checkpoint / Resume 與 Control Plane Resumable / Replayable 欄位。 |
+| `v1.5+` | 規劃中 | Production Operations Automation / C-full | 補真實 backup/restore automation、retention purge、secret rotation automation、完整 OpenTelemetry、Kafka lag alert、LLM judge、MCP Gateway、真實 LangGraph checkpoint/resume、真正 replay execution 與更完整評測資料集。 |
 
 ## Milestone：v0.2.0 / Phase 0-2 + Dashboard
 
@@ -264,6 +265,26 @@
 - OTLP exporter 或 LangSmith-style exporter。
 - LangGraph checkpoint/resume。
 - MCP Gateway。
+
+## Milestone：v1.4.0 / Checkpoint / Resume / Replay MVP
+
+目標：把 V1.3 的 replay bundle 往「可恢復」推進，但仍保持安全 dry-run 邊界，不在本版呼叫真實外部工具或引入完整 LangGraph runtime。
+
+完成項目：
+
+- 新增 `run_checkpoints`，submit 時保存 request、policy、execution plan 摘要、step count 與 replay readiness。
+- 新增 `replay_attempts`，保存 dry-run replay 的 policy、workflow、step count 與限制說明。
+- 新增 `GET /v1/runs/{run_id}/checkpoints`、`POST /v1/runs/{run_id}/resume`、`POST /v1/runs/{run_id}/replay`。
+- `resume` 會建立 resume checkpoint，將 run 放回 `queued`，並重新 publish worker event。
+- Run Detail Dashboard 新增 Checkpoint / Resume 與 Replay Attempts。
+- Control Plane Dashboard 新增 Resumable / Replayable 欄位。
+- 新增 V1.4 regression tests。
+
+本段不包含：
+
+- 真實 LangGraph checkpoint/resume runtime。
+- 真正重放外部工具或外部副作用。
+- MCP Gateway、object storage、OTLP/LangSmith exporter 或完整 OS sandbox。
 
 ## 優先順序
 

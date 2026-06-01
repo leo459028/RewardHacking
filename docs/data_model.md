@@ -172,7 +172,7 @@ Tables：`release_gate_runs`、`release_gate_items`
 | 欄位 | 型別 | 說明 |
 | --- | --- | --- |
 | `gate_id` | string | 對外查詢 release gate 的 ID |
-| `release_version` | string | 例如 `v1.3.0` |
+| `release_version` | string | 例如 `v1.4.0` |
 | `status` | string | `pass`、`warn` 或 `fail` |
 | `summary` | text | gate 結果摘要 |
 | `created_by` | string | 建立者 |
@@ -253,6 +253,41 @@ V1.3 新增 step-level audit，用來讓 Trace / Replay API 與 Dashboard 查詢
 | `input_summary` / `output_summary` / `error_summary` | text | replay bundle 與 Dashboard 用的摘要 |
 | `metadata_payload` | JSON | step metadata 與未來 exporter 欄位 |
 
+### `RunCheckpoint`
+
+Table：`run_checkpoints`
+
+V1.4 新增 checkpoint timeline。Submit flow 會建立 `checkpoint_type=submit` 的 checkpoint；`POST /v1/runs/{run_id}/resume` 會建立 `checkpoint_type=resume` 的 checkpoint，讓 run 的恢復點可以被 API 與 Dashboard 查詢。
+
+| 欄位 | 型別 | 說明 |
+| --- | --- | --- |
+| `checkpoint_id` | string | checkpoint 對外識別 |
+| `run_id` / `tenant_id` / `trace_id` | string | 對應 run、tenant 與 trace |
+| `checkpoint_type` | string | `submit` 或 `resume` |
+| `status` | string | checkpoint 建立當下的 run status |
+| `resume_cursor` | string | 建議恢復位置，例如 `worker_queue` 或 `approval_queue` |
+| `state_payload` | JSON | request、policy、execution plan 摘要、step count、replay readiness 與 resume reason |
+| `created_by` | string | 建立來源，例如 `dashboard`、API key 或 reviewer |
+| `created_at` | timestamp | 建立時間 |
+
+### `ReplayAttempt`
+
+Table：`replay_attempts`
+
+V1.4 新增 dry-run replay attempt。Replay attempt 只重建 policy、workflow 與 step context，不呼叫真實外部工具，也不修改外部狀態。
+
+| 欄位 | 型別 | 說明 |
+| --- | --- | --- |
+| `replay_id` | string | replay attempt 對外識別 |
+| `source_run_id` | string | 原始 run id |
+| `tenant_id` / `trace_id` | string | 對應 tenant 與 trace |
+| `mode` | string | 目前只支援 `dry_run` |
+| `status` | string | replay attempt 狀態，目前成功建立即為 `completed` |
+| `result_payload` | JSON | replay 的 source status、policy snapshot、workflow id、step count 與外部執行標記 |
+| `limitations` | JSON | 明確記錄不呼叫外部工具、不改外部狀態 |
+| `created_by` | string | 建立者 |
+| `created_at` | timestamp | 建立時間 |
+
 ## Event Schemas
 
 所有 event 繼承 `BaseEvent`：
@@ -280,9 +315,9 @@ V1.3 新增 step-level audit，用來讓 Trace / Replay API 與 Dashboard 查詢
 - `worker.failed`
 - `approval.decision`
 
-`v1.3.0` 延續 v1.0 的 HTTP `X-Trace-Id` 基線：trace id 會寫入 submit request 的 `metadata.trace_id`，並同步到 `execution_plans.trace_id`、`execution_plan_steps.trace_id`、trace API 與 replay bundle。`agent.requests` 的 `payload.request.metadata.trace_id` 仍會傳給 worker；release gate snapshot 也會保存建立當下的 trace id。`BaseEvent.trace_id` 目前由 event helper 另行產生 UUID；後續若導入完整 OpenTelemetry，應把 API response header、Kafka envelope、logs 與 database 的 trace id 對齊。
+`v1.4.0` 延續 v1.0 的 HTTP `X-Trace-Id` 基線：trace id 會寫入 submit request 的 `metadata.trace_id`，並同步到 `execution_plans.trace_id`、`execution_plan_steps.trace_id`、`run_checkpoints.trace_id`、`replay_attempts.trace_id`、trace API 與 replay bundle。`agent.requests` 的 `payload.request.metadata.trace_id` 仍會傳給 worker；release gate snapshot 也會保存建立當下的 trace id。`BaseEvent.trace_id` 目前由 event helper 另行產生 UUID；後續若導入完整 OpenTelemetry，應把 API response header、Kafka envelope、logs 與 database 的 trace id 對齊。
 
-`v1.3.0` 新增 `execution_plan_steps`，但 Kafka event envelope 尚未直接內嵌完整 plan、step audit 或 replay bundle；worker 會用 `run_id` 從 Postgres 讀取對應 execution plan。
+`v1.4.0` 延續 `execution_plan_steps`，並新增 `run_checkpoints` 與 `replay_attempts`；Kafka event envelope 尚未直接內嵌完整 plan、step audit、checkpoint 或 replay bundle，worker 會用 `run_id` 從 Postgres 讀取對應 execution plan。
 
 ## 資料生命週期建議
 

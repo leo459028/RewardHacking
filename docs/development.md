@@ -82,9 +82,9 @@ v1.0 的 Operations Gate 橫跨 API、Dashboard、schema、model、migration、s
 
 ## Control Plane / Trace Replay 開發注意
 
-v1.3 的 Control Plane 橫跨 workflow/tool registry、execution plan persistence、step audit、trace/replay API、submit flow、worker fail-closed、Dashboard 與文件。新增或修改相關能力時，請同步檢查：
+v1.4 的 Control Plane 橫跨 workflow/tool registry、execution plan persistence、step audit、trace/replay API、checkpoint/resume API、submit flow、worker fail-closed、Dashboard 與文件。新增或修改相關能力時，請同步檢查：
 
-1. `app/models/control_plane.py`、`app/schemas/control_plane.py`、`migrations/versions/202605310001_add_v12_control_plane.py` 與 `migrations/versions/202606010001_add_v13_trace_replay.py` 是否維持欄位同步。
+1. `app/models/control_plane.py`、`app/schemas/control_plane.py`、`app/models/checkpoint.py`、`app/schemas/checkpoint.py`、`migrations/versions/202605310001_add_v12_control_plane.py`、`migrations/versions/202606010001_add_v13_trace_replay.py` 與 `migrations/versions/202606010002_add_v14_checkpoints_replay.py` 是否維持欄位同步。
 2. `app/services/control_plane.py` 的 builtin workflow/tool registry、`ControlPlanePlanner` 與 DB 讀寫是否符合 API 文件。
 3. `POST /v1/agent/submit-with-details` 是否仍會在 queued run 建立前保存 `execution_plans`，並把摘要寫入 `evaluation_summary.execution_plan`。
 4. `GET /v1/control-plane/workflows`、`POST /v1/control-plane/workflows`、`GET /v1/control-plane/tools`、`POST /v1/control-plane/tools`、`GET /v1/runs/{run_id}/execution-plan`、`GET /v1/runs/{run_id}/trace` 與 `GET /v1/runs/{run_id}/replay-bundle` 是否符合 RBAC 與 response schema。

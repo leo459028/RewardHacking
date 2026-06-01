@@ -234,7 +234,7 @@ class ControlPlanePlanner:
             status=status,
             model_route={
                 "model": "deterministic-control-plane",
-                "routing_reason": f"V1.3 deterministic route for {request.task_type}.",
+                "routing_reason": f"V1.4 deterministic route for {request.task_type}.",
             },
             selected_tools=selected_tools,
             steps=steps,
