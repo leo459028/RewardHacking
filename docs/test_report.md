@@ -4,6 +4,124 @@
 
 請不要只填預期結果；如果某項驗證沒有執行，要清楚寫明原因。例如：純文件修改未啟動 Docker、Docker Desktop 尚未開啟、或本次沒有影響 Dashboard。
 
+## 2026-06-01 - V1.4 文件與程式碼同步審核
+
+- 版本：`v1.4.0`
+- 分支：`codex/v1.4-checkpoint-replay`
+- 變更範圍：同步程式碼、API 文件、Dashboard 文件、部署文件、觀測文件、資料模型、設定、Kafka/Redis 說明、Runbook、測試指南、安全文件與圖資說明，讓目前版本、Alembic head、Dashboard 入口、release gate 預設版本與 V1.4 Checkpoint / Resume / Replay 能力一致。
+- 同步重點：目前版本統一為 `v1.4.0`；Alembic head 統一為 `202606010002`；Operations Dashboard release gate 預設改為 `v1.4.0`；Control Plane `routing_reason` 改為 V1.4；Run Detail trace heading、replay bundle note 與文件中的 checkpoint/replay 限制同步。
+
+### 測試命令與結果
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `pytest -q` | 通過：`62 passed in 10.51s`。 |
+| `ruff check app tests` | 通過：`All checks passed!`。 |
+| `git diff --check` | 通過，沒有 whitespace error。 |
+| `docker compose ps` | 升權後通過，`api`、`worker`、`postgres`、`redis`、`kafka` 皆為 Up，Postgres/Redis/Kafka 為 healthy。一般權限會因 Docker config / daemon pipe 權限不足失敗。 |
+| `docker compose exec -T api alembic current` | 升權後通過，顯示 `202606010002 (head)`。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/healthz` | HTTP 200，回傳 `{"status":"ok"}`。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/readyz` | HTTP 200，回傳 `{"status":"ready"}`。 |
+| `rg` stale scan | 通過，未再找到「目前版本仍為 v1.3」或 `202606010001 (head)` 這類過期現況；剩餘 v1.3 文字皆屬歷史里程碑或 replay-bundle schema 說明。 |
+
+### Dashboard 驗證結果
+
+- 本次同步未新增新的 Dashboard 操作流程；沿用同日 V1.4 Docker Runtime 與 Dashboard 輸入點擊 QA 的 live browser 證據。
+- 與 Dashboard 直接相關的同步項目已由測試與文件核對覆蓋：Operations release gate 預設值為 `v1.4.0`、Run Detail trace heading 為 V1.4、Checkpoint / Resume 與 Replay Attempts 說明已同步到 Dashboard / Testing / Runbook 文件。
+
+### 已知限制
+
+- `AGENTS.md` 在本次工作前已有使用者既有變更，已保留不回復。
+- V1.4 replay 仍是安全 `dry_run`，不呼叫真實外部工具、不修改外部狀態。
+
+## 2026-06-01 - V1.4 Docker Runtime 與 Dashboard 輸入點擊 QA
+
+- 版本：`v1.4.0`
+- 分支：`codex/v1.4-checkpoint-replay`
+- 測試環境：Docker Compose runtime，`api`、`worker`、`postgres`、`redis`、`kafka` 啟動於本機，Dashboard URL 為 `http://localhost:8000/dashboard`。
+- Dashboard 測試 run：`bfe613f1-2870-4d06-b93e-f00950b3ee76`，tenant `qa-v14-browser`，user `browser-v14-user`，task type `analysis`，tools `read_data, summarize`。
+- Resume API 測試 run：`deab5aec-9b29-473c-8a7c-f30f749a1b3f`。
+
+### CLI / Runtime 驗證
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `docker compose up -d --build` | 通過，API / worker image build 完成，Postgres、Redis、Kafka healthy，API 與 worker 啟動。 |
+| `docker compose ps` | 通過，`api`、`worker` 為 Up；`postgres`、`redis`、`kafka` 為 Up / healthy。 |
+| `docker compose exec -T api alembic current` | 通過，顯示 `202606010002 (head)`。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/healthz` | HTTP 200，回傳 `{"status":"ok"}`。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/readyz` | HTTP 200，回傳 `{"status":"ready"}`。 |
+| `GET /v1/runs/bfe613f1-2870-4d06-b93e-f00950b3ee76/checkpoints` | HTTP 200，回傳 submit checkpoint，包含 `checkpoint_type=submit` 與 `resume_cursor=worker_queue`。 |
+| `POST /v1/runs/bfe613f1-2870-4d06-b93e-f00950b3ee76/replay` | HTTP 200，建立 `replay_747122e01b5c487cb46c81b647cbcb13`，`mode=dry_run`、`status=completed`。 |
+| `GET /v1/runs/bfe613f1-2870-4d06-b93e-f00950b3ee76/trace` | HTTP 200，回傳 trace payload，包含 execution plan 與 step audit。 |
+| `GET /v1/runs/bfe613f1-2870-4d06-b93e-f00950b3ee76/replay-bundle` | HTTP 200，回傳 `schema_version=control-plane-replay-bundle/v1.3`。 |
+| `POST /v1/runs/deab5aec-9b29-473c-8a7c-f30f749a1b3f/resume` | HTTP 200，原本 `awaiting_approval` 的 run 變為 `queued`，checkpoint types 為 `submit,resume`。 |
+| `pytest -q` | 通過：`62 passed in 11.38s`。 |
+| `ruff check app tests` | 通過：`All checks passed!`。 |
+| `git diff --check` | 通過，沒有 whitespace error。 |
+
+### Dashboard 輸入與點擊驗證
+
+| 流程 | 實際結果 |
+| --- | --- |
+| 開啟 `/dashboard/playground` | 通過，title 為 `Playground | 測試沙盒`，可見 Playground 表單。 |
+| 表單輸入 | 通過，實際輸入 tenant、user、task type、allowed tools、max tool calls、goal、prompt，並確認 `No external network` checked。 |
+| 點擊 `Submit Run` | 通過，頁面顯示 `queued`、`Risk 0.100` 與 `Open run detail` 連結，建立 run `bfe613f1-2870-4d06-b93e-f00950b3ee76`。 |
+| 點擊 `Open run detail` | 通過，進入 Run Detail；worker 隨後將 run 更新為 `completed`。 |
+| Run Detail Trace / Replay | 通過，頁面顯示 `Trace / Replay`、Replay Bundle 連結與 `Step Audit`，可見 `policy_check`、`tool_execution`、`evaluation`。 |
+| Run Detail Checkpoint / Resume | 通過，頁面顯示 `Checkpoint / Resume`、checkpoints API、resume API、replay API，並有 submit checkpoint row。 |
+| Replay Attempt 顯示 | 通過，建立 dry-run replay 後重新載入 Run Detail，`Replay Attempts` 顯示 `replay_747122e01b5c487cb46c81b647cbcb13`、`dry_run`、`completed`、`browser-full-qa`。 |
+| 點擊側邊欄 `Control Plane` | 通過，進入 `/dashboard/control-plane`，Latest Execution Plans 表格顯示 `RESUMABLE`、`REPLAYABLE` 欄位，測試 run `bfe613f1` 顯示 `yes` / `yes`。 |
+
+### 截圖證據
+
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\01-playground-before.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\02-playground-filled.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\03-playground-result.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\04-run-detail-checkpoint.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\05-run-detail-replay-attempt.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\06-control-plane-resumable.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\07-run-detail-replay-visible.png`
+
+### 已知限制
+
+- Browser 對部分 Dashboard navigation 的 `load` event 等待會 timeout，但 DOM 與 URL 已確認實際頁面切換成功；驗證以 DOM text、URL 與截圖為準。
+- V1.4 replay 仍是安全 `dry_run`，不呼叫真實外部工具、不修改外部狀態。
+
+## 2026-06-01 - V1.4 Checkpoint / Resume / Replay MVP
+
+- 版本：`v1.4.0`
+- 分支：`codex/v1.4-checkpoint-replay`
+- 變更範圍：新增 run checkpoint、resume checkpoint、dry-run replay attempt、checkpoint API、resume API、replay API、Run Detail 的 Checkpoint / Resume 區塊、Control Plane Dashboard 的 Resumable / Replayable 欄位，並同步 README 與 docs。
+- Migration：新增 `202606010002_add_v14_checkpoints_replay.py`，建立 `run_checkpoints` 與 `replay_attempts`。
+
+### 測試命令與結果
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `pytest tests/test_v14_checkpoint_replay.py -q` | 先紅燈：4 failed，原因為 checkpoint/resume/replay API 與 Dashboard 區塊尚未存在；實作後通過：`4 passed in 1.07s`。 |
+| `pytest tests/test_v14_checkpoint_replay.py tests/test_v13_trace_replay.py tests/test_v12_control_plane.py tests/test_api.py -q` | 通過：`21 passed in 4.05s`。 |
+| `pytest -q` | 通過：`62 passed in 10.29s`。 |
+| `ruff check app tests` | 通過：`All checks passed!`。 |
+
+### Dashboard 驗證結果
+
+- `tests/test_v14_checkpoint_replay.py` 以 TestClient 驗證 `/dashboard/runs/{run_id}` HTTP 200，頁面包含 `Checkpoint / Resume`、`/v1/runs/{run_id}/checkpoints`、`/v1/runs/{run_id}/resume`、`/v1/runs/{run_id}/replay` 與 `Replay Attempts`。
+- 同一測試驗證 `/dashboard/control-plane` HTTP 200，頁面包含 `Resumable` 與 `Replayable`。
+- 本次未完成 live browser / localhost 視覺 QA；Dashboard 驗證以 server-rendered HTML assertion 為準。
+
+### Docker 驗證結果
+
+- 嘗試執行 `docker compose up -d --build`。
+- 一般權限結果：失敗，Docker config 與 daemon pipe 權限被拒，訊息包含 `Access is denied` 與 `permission denied while trying to connect to the docker API`。
+- 依規範改用升權請求重跑時，平台回報本輪用量限制而拒絕升權，因此未完成 Docker Compose runtime smoke、container migration、`/v1/healthz`、`/v1/readyz` 或 live Dashboard 驗證。
+
+### 已知限制
+
+- V1.4 replay 是 `dry_run`，只重建可審計 policy / workflow / step context，不呼叫真實外部工具、不改外部狀態。
+- V1.4 checkpoint 是本專案內部資料表與 API 基線，不等同完整 LangGraph checkpoint/resume runtime。
+- 真實 MCP Gateway、object storage、OTLP/LangSmith exporter、完整 OpenTelemetry 與 OS sandbox 仍未接入。
+
 ## 2026-05-31 - v1.2 文件與程式碼同步審核
 
 - 版本：`v1.2.0`

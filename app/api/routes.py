@@ -56,6 +56,13 @@ from app.schemas.control_plane import (
     WorkflowDefinitionCreateRequest,
     WorkflowDefinitionRecord,
 )
+from app.schemas.checkpoint import (
+    ReplayAttemptRecord,
+    ReplayRunRequest,
+    ResumeRunRequest,
+    ResumeRunResponse,
+    RunCheckpointRecord,
+)
 from app.services.events import EventPublisher
 from app.services.auth import (
     AuthContext,
@@ -114,6 +121,14 @@ from app.services.control_plane import (
     step_to_dict,
     tool_to_dict,
     workflow_to_dict,
+)
+from app.services.checkpoint import (
+    checkpoint_to_dict,
+    list_run_checkpoints,
+    persist_replay_attempt,
+    persist_run_checkpoint,
+    replay_attempt_to_dict,
+    resume_run_from_checkpoint,
 )
 from app.services.orchestrator import OrchestrationResult
 from app.workers.producer import make_event
@@ -252,6 +267,22 @@ def _execution_plan_record(plan) -> ExecutionPlanRecord:
 
 def _execution_plan_step_record(step) -> ExecutionPlanStepRecord:
     return ExecutionPlanStepRecord(**step_to_dict(step))
+
+
+def _checkpoint_record(checkpoint) -> RunCheckpointRecord:
+    return RunCheckpointRecord(**checkpoint_to_dict(checkpoint))
+
+
+def _replay_attempt_record(attempt) -> ReplayAttemptRecord:
+    return ReplayAttemptRecord(**replay_attempt_to_dict(attempt))
+
+
+def _resume_cursor_for_status(status: str) -> str:
+    if status == "queued":
+        return "worker_queue"
+    if status == "awaiting_approval":
+        return "approval_queue"
+    return "completed_state"
 
 
 async def _attach_execution_plan(
@@ -680,6 +711,18 @@ async def submit_agent_request(
         result=result,
     )
     await persist_orchestration_result(session, agent_request, result)
+    run = await get_run(session, result.response.run_id)
+    plan = await get_execution_plan_for_run(session, result.response.run_id)
+    if run is not None:
+        await persist_run_checkpoint(
+            session,
+            run=run,
+            plan=plan,
+            steps=await list_execution_plan_steps(session, result.response.run_id),
+            checkpoint_type="submit",
+            resume_cursor=_resume_cursor_for_status(run.status),
+            created_by=_actor(auth_context),
+        )
     await state_store.set_run_state(result.response.run_id, result.response.status)
     if result.response.status == "queued":
         event = make_event(
@@ -787,6 +830,18 @@ async def submit_agent_request_with_details(
         result=result,
     )
     await persist_orchestration_result(session, agent_request, result)
+    run = await get_run(session, result.response.run_id)
+    plan = await get_execution_plan_for_run(session, result.response.run_id)
+    if run is not None:
+        await persist_run_checkpoint(
+            session,
+            run=run,
+            plan=plan,
+            steps=await list_execution_plan_steps(session, result.response.run_id),
+            checkpoint_type="submit",
+            resume_cursor=_resume_cursor_for_status(run.status),
+            created_by=_actor(auth_context),
+        )
     await state_store.set_run_state(result.response.run_id, result.response.status)
     if result.response.status == "queued":
         event = make_event(
@@ -962,9 +1017,82 @@ async def get_run_replay_bundle(
         limitations={
             "automatic_replay": False,
             "external_export": False,
-            "note": "V1.3 provides an auditable replay bundle but does not re-execute the run.",
+            "note": "V1.4 keeps the auditable replay bundle and adds dry-run replay attempts without re-executing real tools.",
         },
     )
+
+
+@router.get("/runs/{run_id}/checkpoints", response_model=list[RunCheckpointRecord])
+async def get_run_checkpoints(
+    run_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    run = await get_run(session, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    _query_tenant(run.tenant_id, auth_context)
+    return [_checkpoint_record(item) for item in await list_run_checkpoints(session, run_id=run_id)]
+
+
+@router.post("/runs/{run_id}/resume", response_model=ResumeRunResponse)
+async def post_run_resume(
+    run_id: str,
+    payload: ResumeRunRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+    event_publisher: EventPublisher = Depends(get_event_publisher),
+):
+    require_role(auth_context, "operator", "admin")
+    run = await get_run(session, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    _query_tenant(run.tenant_id, auth_context)
+    plan = await get_execution_plan_for_run(session, run_id)
+    steps = await list_execution_plan_steps(session, run_id)
+    checkpoint = await resume_run_from_checkpoint(
+        session,
+        run=run,
+        plan=plan,
+        steps=steps,
+        resume_reason=payload.resume_reason,
+        resume_cursor=payload.resume_cursor,
+        created_by=payload.created_by,
+    )
+    await session.refresh(run)
+    await state_store.set_run_state(run.run_id, run.status)
+    event = make_event("agent.requested", run.run_id, {"request": run.request_payload})
+    await event_publisher.publish(get_settings().kafka_request_topic, run.run_id, event)
+    return ResumeRunResponse(run=RunRecord.model_validate(run), checkpoint=_checkpoint_record(checkpoint))
+
+
+@router.post("/runs/{run_id}/replay", response_model=ReplayAttemptRecord)
+async def post_run_replay(
+    run_id: str,
+    payload: ReplayRunRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "operator", "admin")
+    run = await get_run(session, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    _query_tenant(run.tenant_id, auth_context)
+    plan = await get_execution_plan_for_run(session, run_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Execution plan not found.")
+    steps = await list_execution_plan_steps(session, run_id)
+    attempt = await persist_replay_attempt(
+        session,
+        run=run,
+        plan=plan,
+        steps=steps,
+        mode=payload.mode,
+        created_by=payload.created_by,
+    )
+    return _replay_attempt_record(attempt)
 
 
 @router.get("/runs/{run_id}", response_model=RunRecord)

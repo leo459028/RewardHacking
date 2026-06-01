@@ -1,4 +1,8 @@
-# Observability v1.3
+# Observability v1.4
+
+## V1.4 Checkpoint / Replay Observability 補充
+
+V1.4 沿用 V1.3 的 trace metric 與 Postgres audit 查詢，新增 `run_checkpoints` 與 `replay_attempts` 作為 Dashboard 與 API 的可查詢資料來源。Checkpoint / Resume / Replay 目前不新增 Prometheus metric；驗收重點是 Run Detail 可看到 Checkpoint / Resume 與 Replay Attempts，Control Plane 可看到 Resumable / Replayable，API 可查 `/v1/runs/{run_id}/checkpoints`、`POST /v1/runs/{run_id}/resume` 與 `POST /v1/runs/{run_id}/replay`。
 
 ## V1.3 Trace / Replay Observability 補充
 
@@ -8,11 +12,11 @@ V1.3 新增 metric：
 | --- | --- | --- | --- |
 | `agent_control_plane_steps_total` | Counter | `step_type`, `status` | 每次建立 execution plan 時，依 step type 與 status 記錄 step audit row 數量。 |
 
-Trace 現況：HTTP `X-Trace-Id` 會進入 run request metadata、`execution_plans.trace_id`、`execution_plan_steps.trace_id`、`/v1/runs/{run_id}/trace` 與 replay bundle。`trace_metadata` 與 step `metadata` 已保留 `exporter_type=internal`、`external_trace_id`、`span_id`、`parent_span_id`，但 V1.3 尚未把資料實際送到 OTLP 或 LangSmith-style exporter。
+Trace 現況：HTTP `X-Trace-Id` 會進入 run request metadata、`execution_plans.trace_id`、`execution_plan_steps.trace_id`、`run_checkpoints.trace_id`、`replay_attempts.trace_id`、`/v1/runs/{run_id}/trace` 與 replay bundle。`trace_metadata`、step `metadata`、checkpoint snapshot 與 replay result 已保留內部 trace context，但目前尚未把資料實際送到 OTLP 或 LangSmith-style exporter。
 
 本專案目前提供 Prometheus metrics 與 structured logging 的基礎。Dashboard 會從 Postgres audit trail 讀取 runs/incidents/governance events/operations evidence；Prometheus metrics 仍由 `/v1/metrics` 提供。`AUTH_ENABLED=true` 時，`/v1/metrics` 需要 `X-API-Key`，允許 `viewer/operator/admin` 讀取。
 
-目前 observability 基線：`v1.3.0`
+目前 observability 基線：`v1.4.0`
 
 ## Metrics Endpoint
 
@@ -57,6 +61,8 @@ GET /v1/metrics
 - `release_gate_items`
 - `execution_plans`
 - `execution_plan_steps`
+- `run_checkpoints`
+- `replay_attempts`
 
 主要畫面：
 

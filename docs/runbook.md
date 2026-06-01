@@ -1,8 +1,8 @@
-# Runbook v1.3
+# Runbook v1.4
 
-此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail、Kafka worker、Redis run state、approval queue、worker retry/DLQ、tool execution audit、evaluator/observability summary、tenant governance、production readiness gate、safety regression evidence、古文/文言式 Prompt Guard、Control Plane execution plan 與 Trace / Replay Readiness 已接入 request path。
+此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail、Kafka worker、Redis run state、approval queue、worker retry/DLQ、tool execution audit、evaluator/observability summary、tenant governance、production readiness gate、safety regression evidence、古文/文言式 Prompt Guard、Control Plane execution plan、Trace / Replay Readiness 與 Checkpoint / Resume / Replay MVP 已接入 request path。
 
-目前營運基線：`v1.3.0`
+目前營運基線：`v1.4.0`
 
 ## 快速檢查
 
@@ -347,6 +347,8 @@ docker compose up kafka-init
 注意：v1.1 延續 v1.0 的 Operations Gate，這是審計與 readiness 層，不會自動執行 backup/restore、secret rotation、safety regression 或 retention purge。`APP_ENV=prod` 時缺少 fresh safety regression evidence 會讓 release gate fail closed。
 
 v1.2 另新增 Control Plane execution plan。若 worker 發現 queued run 缺少 `execution_plans`，會 fail closed 到 `awaiting_approval`，policy flags 會包含 `missing_execution_plan`；處理時應先查 `/v1/runs/{run_id}/execution-plan` 與 Run Detail 的 Execution Plan 區塊。
+
+v1.4 另新增 Checkpoint / Resume / Replay。若 Run Detail 沒有顯示 checkpoint，先查 `/v1/runs/{run_id}/checkpoints` 與 `run_checkpoints` migration 是否套用到 `202606010002`；若 resume 後 run 沒有回到 worker queue，確認 Redis run state、Kafka `agent.requests` publish 與 worker logs；若 replay attempt 沒出現在 Run Detail，查 `POST /v1/runs/{run_id}/replay` 回應與 `replay_attempts` table。V1.4 replay 是 `dry_run`，不應期待它重新呼叫真實外部工具。
 
 ## 12. Redis 問題
 

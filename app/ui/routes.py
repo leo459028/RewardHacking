@@ -57,6 +57,11 @@ from app.services.control_plane import (
     list_workflow_definitions,
     persist_execution_plan,
 )
+from app.services.checkpoint import (
+    list_replay_attempts,
+    list_run_checkpoints,
+    persist_run_checkpoint,
+)
 from app.services.orchestrator import OrchestrationResult
 from app.services.run_state import RunStateStore
 from app.workers.producer import make_event
@@ -196,6 +201,8 @@ async def dashboard_run_detail(
     tool_executions = await list_tool_executions(session, run_id=run_id)
     execution_plan = await get_execution_plan_for_run(session, run_id)
     execution_plan_steps = await list_execution_plan_steps(session, run_id)
+    checkpoints = await list_run_checkpoints(session, run_id=run_id)
+    replay_attempts = await list_replay_attempts(session, run_id=run_id)
     return templates.TemplateResponse(
         request,
         "run_detail.html",
@@ -206,6 +213,8 @@ async def dashboard_run_detail(
             "tool_executions": tool_executions,
             "execution_plan": execution_plan,
             "execution_plan_steps": execution_plan_steps,
+            "checkpoints": checkpoints,
+            "replay_attempts": replay_attempts,
             "active": "runs",
         },
     )
@@ -353,7 +362,7 @@ async def dashboard_operations_release_gate(
     readiness = await compute_operations_readiness(session, settings=get_settings())
     await persist_release_gate(
         session,
-        release_version=str(form.get("release_version", "v1.1.0")),
+        release_version=str(form.get("release_version", "v1.4.0")),
         created_by=str(form.get("created_by", "dashboard")),
         trace_id=str(getattr(request.state, "trace_id", "")),
         readiness=readiness,
@@ -449,6 +458,18 @@ async def submit_playground(
             result=result,
         )
         await persist_orchestration_result(session, agent_request, result)
+        run = await get_run(session, result.response.run_id)
+        plan = await get_execution_plan_for_run(session, result.response.run_id)
+        if run is not None:
+            await persist_run_checkpoint(
+                session,
+                run=run,
+                plan=plan,
+                steps=await list_execution_plan_steps(session, result.response.run_id),
+                checkpoint_type="submit",
+                resume_cursor="worker_queue" if run.status == "queued" else "approval_queue",
+                created_by="dashboard",
+            )
         await state_store.set_run_state(result.response.run_id, result.response.status)
         if result.response.status == "queued":
             event = make_event(
