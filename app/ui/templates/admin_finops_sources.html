@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Admin FinOps | Source Audit{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Source Audit</h1>
+    <div class="title-note">Pricing source documents and versioned changes</div>
+    <div class="muted">Each applied seed stores source metadata and immutable create/supersede logs.</div>
+  </div>
+  <div class="inline-form">
+    <a class="button secondary" href="/dashboard/admin/finops/pricing">Catalog</a>
+    <a class="button secondary" href="/dashboard/admin/finops/pricing/import">Import</a>
+  </div>
+</div>
+
+<section class="panel">
+  <h2>Source Documents</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Provider</th>
+        <th>Source</th>
+        <th>Type</th>
+        <th>Checked</th>
+        <th>Confidence</th>
+        <th>Hash</th>
+        <th>Created</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for source in sources %}
+      <tr>
+        <td>{{ source.provider }}</td>
+        <td><a href="{{ source.source_url }}">{{ source.source_url }}</a><br><span class="muted">{{ source.notes }}</span></td>
+        <td>{{ source.source_type }}</td>
+        <td>{{ source.checked_at }}</td>
+        <td>{{ source.confidence }}</td>
+        <td>{{ source.content_hash }}</td>
+        <td>{{ source.created_at }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="muted">No source documents yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Pricing Change Log</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Change</th>
+        <th>Type</th>
+        <th>Old Pricing</th>
+        <th>New Pricing</th>
+        <th>Price</th>
+        <th>Reason</th>
+        <th>Source</th>
+        <th>Changed</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for change in changes %}
+      <tr>
+        <td>{{ change.change_id }}<br><span class="muted">{{ change.import_batch_id }}</span></td>
+        <td>{{ change.change_type }}</td>
+        <td>{{ change.pricing_id_old or "-" }}</td>
+        <td>{{ change.pricing_id_new or "-" }}</td>
+        <td>{{ change.old_unit_price or "-" }} -> {{ change.new_unit_price or "-" }} {{ change.currency }}</td>
+        <td>{{ change.change_reason }}</td>
+        <td><a href="{{ change.source_url }}">{{ change.source_url }}</a></td>
+        <td>{{ change.changed_by }}<br><span class="muted">{{ change.changed_at }}</span></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="muted">No pricing changes yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

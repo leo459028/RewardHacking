@@ -147,3 +147,10 @@ Dashboard 可用 `DASHBOARD_AUTH_ENABLED=true` 開啟 Basic Auth。這是 v0.6 M
 - 確認 `DEFAULT_RISK_THRESHOLD` 在 `0.0` 到 `1.0`。
 - 確認 topic names 非空。
 - 在 `APP_ENV=prod` 時禁止使用預設密碼。
+## V1.5.1 FinOps 匯入設定
+
+V1.5.1 不新增環境變數。官方價格 seed 預設放在 `app/seeds/model_pricing_seed.yaml`，可透過 Admin API、Dashboard 或 CLI 匯入。YAML 解析依賴 `PyYAML>=6.0.2`，若本機尚未安裝，請更新專案 dependencies 後再執行 CLI 或 API 匯入。
+
+```bash
+python scripts/import_pricing_catalog.py --dry-run --file app/seeds/model_pricing_seed.yaml
+```

@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Admin FinOps | Pricing Import{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Pricing Import</h1>
+    <div class="title-note">Official model pricing seed</div>
+    <div class="muted">Dry-run first, then apply versioned pricing rows with audit records.</div>
+  </div>
+  <div class="inline-form">
+    <a class="button secondary" href="/dashboard/admin/finops/pricing">Catalog</a>
+    <a class="button secondary" href="/dashboard/admin/finops/pricing/sources">Source Audit</a>
+  </div>
+</div>
+
+<section class="panel">
+  <h2>Seed File</h2>
+  <form method="post" action="/dashboard/admin/finops/pricing/import" class="form-grid">
+    <label>File Path
+      <input name="file_path" value="{{ file_path }}" placeholder="app/seeds/model_pricing_seed.yaml">
+    </label>
+    <label>&nbsp;
+      <button class="button secondary" type="submit" name="mode" value="dry_run">Dry Run</button>
+    </label>
+    <label>&nbsp;
+      <button class="button" type="submit" name="mode" value="apply">Apply Import</button>
+    </label>
+  </form>
+</section>
+
+{% if report %}
+<section class="grid stats">
+  <div class="stat"><div class="stat-label">Mode</div><div class="stat-value">{{ report.import_mode }}</div></div>
+  <div class="stat"><div class="stat-label">Status</div><div class="stat-value">{{ report.status }}</div></div>
+  <div class="stat"><div class="stat-label">Valid Rows</div><div class="stat-value">{{ report.valid_rows }}</div></div>
+  <div class="stat"><div class="stat-label">New Rows</div><div class="stat-value">{{ report.new_rows }}</div></div>
+  <div class="stat"><div class="stat-label">Unchanged</div><div class="stat-value">{{ report.unchanged_rows }}</div></div>
+  <div class="stat"><div class="stat-label">Supersede</div><div class="stat-value">{{ report.rows_to_supersede }}</div></div>
+</section>
+
+<section class="panel">
+  <h2>Import Report</h2>
+  <table>
+    <tbody>
+      <tr><th>Import Batch</th><td>{{ report.import_batch_id or "-" }}</td></tr>
+      <tr><th>Source File</th><td>{{ report.source_file_name }}</td></tr>
+      <tr><th>Source Hash</th><td>{{ report.source_file_hash }}</td></tr>
+      <tr><th>Invalid Rows</th><td>{{ report.invalid_rows|length }}</td></tr>
+      <tr><th>Warnings</th><td>{{ report.warnings|length }}</td></tr>
+      <tr><th>Missing Optional Fields</th><td>{{ report.missing_optional_fields|length }}</td></tr>
+      <tr><th>Duplicate Keys</th><td>{{ report.duplicate_keys|length }}</td></tr>
+      <tr><th>Unsupported Enums</th><td>{{ report.unsupported_enum_values|length }}</td></tr>
+    </tbody>
+  </table>
+  <pre>{{ report.to_dict()|json_pretty }}</pre>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>Import History</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Batch</th>
+        <th>Mode</th>
+        <th>Status</th>
+        <th>Rows</th>
+        <th>Source</th>
+        <th>Created</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for batch in batches %}
+      <tr>
+        <td>{{ batch.import_batch_id }}</td>
+        <td>{{ batch.import_mode }}</td>
+        <td>{{ batch.status }}</td>
+        <td>
+          valid={{ batch.summary.get("valid_rows", "-") }},
+          new={{ batch.summary.get("new_rows", "-") }},
+          supersede={{ batch.summary.get("rows_to_supersede", "-") }}
+        </td>
+        <td>{{ batch.source_file_name }}<br><span class="muted">{{ batch.source_file_hash }}</span></td>
+        <td>{{ batch.created_by }}<br><span class="muted">{{ batch.created_at }}</span></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">No import batches yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Admin FinOps | Pricing Detail{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>{{ item.model_name or item.resource_type }}</h1>
+    <div class="title-note">{{ item.provider }} / {{ item.resource_type }} / {{ item.token_type }}</div>
+    <div class="muted">{{ item.pricing_id }}</div>
+  </div>
+  <div class="inline-form">
+    <a class="button secondary" href="/dashboard/admin/finops/pricing">Catalog</a>
+    <a class="button secondary" href="/dashboard/admin/finops/pricing/import">Import</a>
+  </div>
+</div>
+
+<section class="detail-grid">
+  <div class="panel">
+    <h2>Basic Info</h2>
+    <table>
+      <tbody>
+        <tr><th>Provider</th><td>{{ item.provider_display_name or item.provider }}</td></tr>
+        <tr><th>Billing</th><td>{{ item.billing_platform }} / {{ item.provider_region }} / {{ item.billing_region }}</td></tr>
+        <tr><th>Model</th><td>{{ item.model_name }} {{ item.model_version }}</td></tr>
+        <tr><th>Family</th><td>{{ item.model_family }} / {{ item.model_tier }}</td></tr>
+        <tr><th>Resource</th><td>{{ item.resource_type }} / {{ item.resource_subtype }}</td></tr>
+        <tr><th>Modality</th><td>{{ item.modality }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="panel">
+    <h2>Pricing</h2>
+    <table>
+      <tbody>
+        <tr><th>Mode</th><td>{{ item.pricing_mode }} / {{ item.service_tier }}</td></tr>
+        <tr><th>Token Type</th><td>{{ item.token_type }}</td></tr>
+        <tr><th>Unit</th><td>{{ item.price_unit }}</td></tr>
+        <tr><th>Unit Price</th><td>{{ item.unit_price }} {{ item.currency }}</td></tr>
+        <tr><th>Discount / Multiplier</th><td>{{ item.discount_rate }} / {{ item.multiplier }}</td></tr>
+        <tr><th>Tax Included</th><td>{{ item.tax_included }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="detail-grid">
+  <div class="panel">
+    <h2>Conditions</h2>
+    <table>
+      <tbody>
+        <tr><th>Input Threshold</th><td>{{ item.input_threshold_tokens_min or "-" }} to {{ item.input_threshold_tokens_max or "-" }}</td></tr>
+        <tr><th>Context / Output</th><td>{{ item.context_window_tokens or "-" }} / {{ item.max_output_tokens or "-" }}</td></tr>
+        <tr><th>Cache TTL</th><td>{{ item.cache_ttl_seconds or "-" }}</td></tr>
+        <tr><th>Capabilities</th><td>cache={{ item.supports_cache }}, batch={{ item.supports_batch }}, tools={{ item.supports_tools }}, thinking={{ item.supports_thinking }}, streaming={{ item.supports_streaming }}, json={{ item.supports_json_mode }}, multimodal={{ item.supports_multimodal }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="panel">
+    <h2>Source And Effective Dates</h2>
+    <table>
+      <tbody>
+        <tr><th>Source</th><td><a href="{{ item.source_url }}">{{ item.source_url }}</a></td></tr>
+        <tr><th>Source Checked</th><td>{{ item.source_checked_at }} / {{ item.source_confidence }}</td></tr>
+        <tr><th>Pricing Version</th><td>{{ item.pricing_version }}</td></tr>
+        <tr><th>Effective</th><td>{{ item.effective_from }} to {{ item.effective_to or "open" }}</td></tr>
+        <tr><th>Scope</th><td>{{ item.scope_type }} {{ item.scope_id }}</td></tr>
+        <tr><th>Supersedes</th><td>{{ item.supersedes_pricing_id or "-" }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Simple Edit</h2>
+  <form method="post" action="/dashboard/admin/finops/pricing/{{ item.pricing_id }}/edit" class="form-grid">
+    <label>Unit Price
+      <input name="unit_price" value="{{ item.unit_price }}">
+    </label>
+    <label>Currency
+      <input name="currency" value="{{ item.currency }}">
+    </label>
+    <label>Effective From
+      <input name="effective_from" value="{{ item.effective_from }}">
+    </label>
+    <label>Effective To
+      <input name="effective_to" value="{{ item.effective_to or '' }}">
+    </label>
+    <label>Change Reason
+      <input name="change_reason" value="{{ item.change_reason }}">
+    </label>
+    <label class="checkline">
+      <input type="checkbox" name="is_active" {% if item.is_active %}checked{% endif %}>
+      Active
+    </label>
+    <label>&nbsp;
+      <button class="button" type="submit">Save</button>
+    </label>
+  </form>
+  <form method="post" action="/dashboard/admin/finops/pricing/{{ item.pricing_id }}/disable" style="margin-top:12px;">
+    <button class="button danger" type="submit">Disable</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Change Log</h2>
+  <table>
+    <thead><tr><th>Change</th><th>Type</th><th>Old</th><th>New</th><th>Reason</th><th>Changed</th></tr></thead>
+    <tbody>
+    {% for change in changes %}
+      <tr>
+        <td>{{ change.change_id }}</td>
+        <td>{{ change.change_type }}</td>
+        <td>{{ change.pricing_id_old or "-" }}<br>{{ change.old_unit_price or "" }}</td>
+        <td>{{ change.pricing_id_new or "-" }}<br>{{ change.new_unit_price or "" }}</td>
+        <td>{{ change.change_reason }}</td>
+        <td>{{ change.changed_by }}<br><span class="muted">{{ change.changed_at }}</span></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">No change log rows yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

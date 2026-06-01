@@ -27,7 +27,7 @@ Trace 現況：HTTP `X-Trace-Id` 會進入 run request metadata、`execution_pla
 
 本專案目前提供 Prometheus metrics 與 structured logging 的基礎。Dashboard 會從 Postgres audit trail 讀取 runs/incidents/governance events/operations evidence；Prometheus metrics 仍由 `/v1/metrics` 提供。`AUTH_ENABLED=true` 時，`/v1/metrics` 需要 `X-API-Key`，允許 `viewer/operator/admin` 讀取。
 
-目前 observability 基線：`v1.5.0`
+目前 observability 基線：`v1.5.1`
 
 ## Metrics Endpoint
 

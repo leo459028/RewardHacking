@@ -1,6 +1,6 @@
 # Kafka Topics
 
-Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execution、evaluation 與 incident processing。`v1.5.0` 目前 API 會在低風險 request 建立 `queued` run、Control Plane execution plan、step audit、submit checkpoint 與 estimated FinOps cost events 後 publish `agent.requests`；Resume API 也會在建立 resume checkpoint 與 checkpoint usage event 後重新 publish `agent.requests`。worker 仍用 `run_id` 從 Postgres 讀取 request、execution plan 與 step audit，並在 completion 後寫入 actual usage/cost events。Trace / Replay / Checkpoint / FinOps 的完整資料以 Postgres audit tables 與 API endpoint 為準，不直接塞進 Kafka payload。Kafka consumer lag alert 與完整 OpenTelemetry trace propagation 尚未納入本版。
+Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execution、evaluation 與 incident processing。`v1.5.1` 目前 API 會在低風險 request 建立 `queued` run、Control Plane execution plan、step audit、submit checkpoint 與 estimated FinOps cost events 後 publish `agent.requests`；Resume API 也會在建立 resume checkpoint 與 checkpoint usage event 後重新 publish `agent.requests`。worker 仍用 `run_id` 從 Postgres 讀取 request、execution plan 與 step audit，並在 completion 後寫入 actual usage/cost events。Trace / Replay / Checkpoint / FinOps 的完整資料以 Postgres audit tables 與 API endpoint 為準；V1.5.1 pricing import batch、pricing change log 與 source document audit 也保存在 Postgres，不直接塞進 Kafka payload。Kafka consumer lag alert 與完整 OpenTelemetry trace propagation 尚未納入本版。
 
 ## Topic 清單
 
