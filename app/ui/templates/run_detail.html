@@ -65,7 +65,7 @@
 
 {% if execution_plan %}
 <section class="panel">
-  <h2>Trace / Replay <span class="heading-note">V1.3 trace contract</span></h2>
+  <h2>Trace / Replay <span class="heading-note">V1.4 trace contract</span></h2>
   <p><strong>Trace ID</strong> {{ execution_plan.trace_id or run.request_payload.get("metadata", {}).get("trace_id", "") }}</p>
   <p><strong>Replay Bundle</strong> <a href="/v1/runs/{{ run.run_id }}/replay-bundle">/v1/runs/{{ run.run_id }}/replay-bundle</a></p>
   <pre>{{ execution_plan.trace_metadata|json_pretty }}</pre>
@@ -90,6 +90,45 @@
   </table>
 </section>
 {% endif %}
+
+<section class="panel">
+  <h2>Checkpoint / Resume <span class="heading-note">V1.4 recoverable execution</span></h2>
+  <p><strong>Checkpoints API</strong> <a href="/v1/runs/{{ run.run_id }}/checkpoints">/v1/runs/{{ run.run_id }}/checkpoints</a></p>
+  <p><strong>Resume API</strong> <code>POST /v1/runs/{{ run.run_id }}/resume</code></p>
+  <p><strong>Replay API</strong> <code>POST /v1/runs/{{ run.run_id }}/replay</code></p>
+  <table>
+    <thead><tr><th>Checkpoint</th><th>Type</th><th>Status</th><th>Cursor</th><th>Created By</th></tr></thead>
+    <tbody>
+    {% for checkpoint in checkpoints %}
+      <tr>
+        <td>{{ checkpoint.checkpoint_id }}</td>
+        <td>{{ checkpoint.checkpoint_type }}</td>
+        <td><span class="status {{ checkpoint.status }}">{{ checkpoint.status }}</span></td>
+        <td>{{ checkpoint.resume_cursor }}</td>
+        <td>{{ checkpoint.created_by }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="muted">No checkpoints recorded.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <h3>Replay Attempts</h3>
+  <table>
+    <thead><tr><th>Replay</th><th>Mode</th><th>Status</th><th>Created By</th></tr></thead>
+    <tbody>
+    {% for attempt in replay_attempts %}
+      <tr>
+        <td>{{ attempt.replay_id }}</td>
+        <td>{{ attempt.mode }}</td>
+        <td><span class="status {{ attempt.status }}">{{ attempt.status }}</span></td>
+        <td>{{ attempt.created_by }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="muted">No replay attempts recorded.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
 
 <section class="detail-grid">
   <div class="panel">
