@@ -1,6 +1,6 @@
 # V1.1 架構圖資（目前歷史圖資）
 
-本目錄保留舊版 `*-v1.png` 圖資，並新增 `*-v11.png` 作為 V1.1 文件與簡報使用的新版架構圖。V1.4 目前新增的是 Checkpoint / Resume / Replay 文字文件、API 與 Dashboard，尚未新增 `*-v14.png` 圖資；因此 `*-v11.png` 保留為歷史圖資與簡報輔助素材。V1.1 圖資使用 GPT-Image2 / 內建影像生成重新製作為中英雙語標註版本，強調 Classical Chinese Prompt Guard、`evaluation_summary.prompt_guard`、`agent_prompt_guard_flags_total{flag}`、Dashboard Prompt Guard panel，以及 V1.0 原有 production readiness baseline 的延續。
+本目錄保留舊版 `*-v1.png` 圖資，並新增 `*-v11.png` 作為 V1.1 文件與簡報使用的新版架構圖。V1.5 目前新增的是 Agent FinOps Core / Cost Ledger 文字文件、API 與 Dashboard，尚未新增 `*-v15.png` 圖資；因此 `*-v11.png` 保留為歷史圖資與簡報輔助素材。V1.1 圖資使用 GPT-Image2 / 內建影像生成重新製作為中英雙語標註版本，強調 Classical Chinese Prompt Guard、`evaluation_summary.prompt_guard`、`agent_prompt_guard_flags_total{flag}`、Dashboard Prompt Guard panel，以及 V1.0 原有 production readiness baseline 的延續。
 
 ## V1.1 圖資清單
 
@@ -21,7 +21,7 @@
 
 ## 使用建議
 
-- 需要圖片時可引用 `*-v11.png`，但 V1.4 Checkpoint / Resume / Replay 能力應以文字文件為準。
+- 需要圖片時可引用 `*-v11.png`，但 V1.5 Agent FinOps Core / Cost Ledger 與 V1.4 Checkpoint / Resume / Replay 能力應以文字文件為準。
 - 舊的 `*-v1.png` 保留作為歷史圖資，不再作為目前版本主圖。
 - `*-v11.png` 採中英雙語標註；中文用於閱讀脈絡，英文保留 route、metric、table、flag 與程式碼欄位對照。
 - 若後續版本修改資料流、schema、metrics 或 Dashboard 頁面，請新增下一組版本化檔名，不要覆蓋既有圖資。

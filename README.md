@@ -1,8 +1,28 @@
 # Agent Reward-Hacking Guardrail
 
+## V1.5 Agent FinOps Core / Cost Ledger
+
+目前版本：`v1.5.0`
+
+V1.5 延續 V1.4 Checkpoint / Resume / Replay MVP，新增 Agent FinOps Core 成本資料層。Submit、worker completion、resume 與 replay flow 會寫入 deterministic `usage_events` 與 `cost_events`，並以 `pricing_catalog` 計算 estimated / actual cost；`budget_policies` 與 `budget_violations` 用於記錄 run-level budget 超額。
+
+新增 API：
+- `GET/POST/PATCH/DELETE /v1/pricing`
+- `POST /v1/usage-events`
+- `GET /v1/usage-events/runs/{run_id}` 與 `/v1/usage-events/tenants/{tenant_id}`
+- `GET /v1/cost/runs/{run_id}`、`/v1/cost/tenants/{tenant_id}`、`/v1/cost/workflows/{workflow_id}`、`/v1/cost/models`
+- `GET/POST/PATCH /v1/budgets`
+- `GET /v1/budget-violations`
+
+新增 Dashboard：
+- `/dashboard/runs/{run_id}` 顯示 `Cost Summary`，可查 estimated cost、actual cost、delta、budget status 與 resource breakdown。
+- `/dashboard/costs` 顯示 Tenant Cost Summary、Top Runs、Top Models / Workflows、Budget Violations 與 Pricing Catalog 小版。
+
+目前限制：V1.5 只做成本帳本與可查詢資料層，不做 cost-aware routing、Token Broker、Safe MCP、OTLP/LangSmith exporter 或真實外部模型/工具費率同步。這些留到 V1.6 或後續版本。
+
 ## V1.4 Checkpoint / Resume / Replay MVP
 
-目前版本：`v1.4.0`
+歷史版本：`v1.4.0`
 
 V1.4 延續 V1.3 Trace / Replay Readiness，新增可恢復執行的最小閉環。每次 submit 會建立 `run_checkpoints` submit checkpoint，保存 request payload、policy decision、execution plan 摘要、step count 與 replay readiness。
 
@@ -37,7 +57,7 @@ V1.3 延續 V1.2 Control Plane Execution Plan，新增內部 Trace Contract 與 
 
 ## 專案版號
 
-目前版本：`v1.4.0`
+目前版本：`v1.5.0`
 
 `v0.5.0` 是 V0.4 Execution Hardening 與 V0.5 Evaluator + Observability 的整合版。該版本已經有 queue、worker retry/DLQ、Redis run state、approval TTL/event、bounded executor transcript、tool execution audit、evaluation result 與 Dashboard 查詢入口，但還不是完整的 production sandbox、auth 或多租戶 production safety platform。
 
@@ -56,6 +76,7 @@ V1.3 延續 V1.2 Control Plane Execution Plan，新增內部 Trace Contract 與 
 `v1.3.0` 新增 Trace / Replay Readiness：把 `X-Trace-Id` 串到 `execution_plans` 與 `execution_plan_steps`，並提供 trace API、replay bundle API、Run Detail 的 Trace / Replay 區塊與 Control Plane Dashboard 的 Trace ID / Step Summary / Plan Health。
 
 `v1.4.0` 新增 Checkpoint / Resume / Replay MVP：submit 時保存 checkpoint，支援 checkpoint 查詢、resume checkpoint 與 dry-run replay attempt。V1.4 的 replay 不呼叫真實外部工具，只重建可審計的 policy、plan 與 step context。
+`v1.5.0` 新增 Agent FinOps Core / Cost Ledger：保存 pricing catalog、usage events、cost events、budget policies 與 budget violations，並新增 FinOps API、Run Detail Cost Summary 與 `/dashboard/costs`。V1.5 只做成本資料層，不做 cost-aware routing、Token Broker、Safe MCP 或外部費率同步。
 
 ## 這個專案想解決什麼問題
 
@@ -83,7 +104,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 
 ## Roadmap 完成後的適用情境
 
-以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v1.4.0` 已全部完成。
+以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v1.5.0` 已全部完成。
 
 1. AI coding agent 在修改程式碼前，檢查是否跳過測試、繞過規則或做破壞性操作。
 2. 內部營運 agent 執行批次任務前，確認工具權限、任務風險與是否需要人工核准。
@@ -122,9 +143,9 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - audit trail 可以幫助追蹤問題，但不能替代資料治理與資安制度。
 - 如果 prompt、工具權限或資料權限設計不良，guardrail 也可能被繞過或誤判。
 
-## 目前 v1.4 做到哪裡
+## 目前 v1.5 做到哪裡
 
-`v1.4.0` 目前是可部署驗證、可查詢、可審計的 guarded async execution + Tenant Governance Center + Production Readiness Gate baseline，並加入古文/文言式繞語攻擊防護、Control Plane execution plan 骨架、Trace / Replay Readiness，以及 Checkpoint / Resume / Replay MVP。V1.4 會保存 submit/resume checkpoint，提供 `/v1/runs/{run_id}/checkpoints`、`POST /v1/runs/{run_id}/resume`、`POST /v1/runs/{run_id}/replay`，並在 Run Detail 與 Control Plane Dashboard 顯示可恢復與可 dry-run replay 的狀態。
+`v1.5.0` 目前是可部署驗證、可查詢、可審計的 guarded async execution + Tenant Governance Center + Production Readiness Gate baseline，並加入古文/文言式繞語攻擊防護、Control Plane execution plan 骨架、Trace / Replay Readiness、Checkpoint / Resume / Replay MVP，以及 Agent FinOps Core / Cost Ledger。V1.5 會保存 submit/resume checkpoint、dry-run replay attempt、pricing catalog、usage/cost events、budget policies 與 budget violations，並在 Run Detail 顯示 Cost Summary、在 `/dashboard/costs` 顯示 tenant cost summary。
 
 已完成：
 
@@ -174,7 +195,7 @@ AI agent 不是只會「回答問題」，它可能還會讀資料、改程式�
 - 還沒有完整 OAuth、RBAC、tenant 管理 UI、retention purge、真實 backup/restore 自動化、secret rotation 自動化或真實 OS sandbox。
 - 還沒有完整 OAuth/SSO、user/per-tool quota、Kafka consumer lag alert、完整 OpenTelemetry、真實 LangGraph checkpoint/resume 或真實 MCP Gateway replay execution。
 
-所以目前 `v1.4.0` 適合用來建立 agent guardrail 的 production readiness baseline，驗證 queue/worker retry/DLQ/approval/evaluator/observability/governance/operations/safety regression、古文繞語攻擊防護、control-plane execution plan、trace/replay audit bundle，以及 checkpoint/resume/dry-run replay 的產品閉環；若要執行真實外部工具或外部 trace exporter，仍必須另接完整 sandbox、IAM、secret manager、MCP gateway、OTLP/LangSmith-style exporter 與正式維運流程。
+所以目前 `v1.5.0` 適合用來建立 agent guardrail 的 production readiness baseline，驗證 queue/worker retry/DLQ/approval/evaluator/observability/governance/operations/safety regression、古文繞語攻擊防護、control-plane execution plan、trace/replay audit bundle、checkpoint/resume/dry-run replay，以及 FinOps 成本帳本的產品閉環；若要執行真實外部工具、外部 trace exporter 或 cost-aware routing，仍必須另接完整 sandbox、IAM、secret manager、MCP gateway、OTLP/LangSmith-style exporter、Token Broker/Safe MCP 與正式維運流程。
 
 ## 快速啟動
 
@@ -237,7 +258,7 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
 - [Dashboard 使用說明](docs/dashboard.md)
 - [API 文件](docs/api.md)
 - [架構文件](docs/architecture.md)
-- [V1.1 架構圖資](docs/assets/README.md)（目前仍作為歷史圖資；V1.4 新增 Checkpoint / Resume / Replay 文字文件、API 與 Dashboard，但尚未新增 v14 圖資）
+- [V1.1 架構圖資](docs/assets/README.md)（目前仍作為歷史圖資；V1.5 的 FinOps 能力已同步到文字文件、API 與 Dashboard，但尚未新增 v15 圖資）
 - [部署文件](docs/deployment.md)
 - [Runbook](docs/runbook.md)
 

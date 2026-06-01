@@ -1,13 +1,13 @@
-# Migration 指南 v1.4
+# Migration 指南 v1.5
 
 本專案已導入 Alembic，初始 migration 會建立：
 
-目前 migration baseline：`v1.4.0`
+目前 migration baseline：`v1.5.0`
 
 - `agent_runs`
 - `incidents`
 
-目前 head 會一路套用到 `202606010002`。`v0.5.0` 在原本 `agent_runs`、`incidents` 之外，新增 worker、tool、approval 與 evaluation audit tables。`v0.6.0` 新增 `agent_runs.tenant_id`，既有資料 backfill 為 `default`，並建立 `governance_events` audit table。`v0.7.0` 新增 `tenants` 與 `tenant_api_keys`，並從既有 `agent_runs.tenant_id` backfill tenant 設定。`v0.8.0` 新增 `operations_evidence`、`release_gate_runs` 與 `release_gate_items`，用於保存 release readiness、營運證據與 release gate snapshot。`v1.0.0` 沒有新增資料表或 migration，`safety_regression` 沿用 `operations_evidence.evidence_type` 保存。`v1.1.0` 沒有新增 migration；Prompt Guard 的 language、flags 與 signals 保存於既有 `agent_runs.evaluation_summary.prompt_guard`。`v1.2.0` 新增 `workflow_definitions`、`tool_definitions` 與 `execution_plans`，用於 Control Plane registry 與 run-level execution plan。`v1.3.0` 新增 `execution_plans.trace_id`、`execution_plans.trace_metadata` 與 `execution_plan_steps`，用於 Trace / Replay Readiness。`v1.4.0` 新增 `run_checkpoints` 與 `replay_attempts`，用於 Checkpoint / Resume / Replay MVP。
+目前 head 會一路套用到 `202606010003`。`v0.5.0` 在原本 `agent_runs`、`incidents` 之外，新增 worker、tool、approval 與 evaluation audit tables。`v0.6.0` 新增 `agent_runs.tenant_id`，既有資料 backfill 為 `default`，並建立 `governance_events` audit table。`v0.7.0` 新增 `tenants` 與 `tenant_api_keys`，並從既有 `agent_runs.tenant_id` backfill tenant 設定。`v0.8.0` 新增 `operations_evidence`、`release_gate_runs` 與 `release_gate_items`，用於保存 release readiness、營運證據與 release gate snapshot。`v1.0.0` 沒有新增資料表或 migration，`safety_regression` 沿用 `operations_evidence.evidence_type` 保存。`v1.1.0` 沒有新增 migration；Prompt Guard 的 language、flags 與 signals 保存於既有 `agent_runs.evaluation_summary.prompt_guard`。`v1.2.0` 新增 `workflow_definitions`、`tool_definitions` 與 `execution_plans`，用於 Control Plane registry 與 run-level execution plan。`v1.3.0` 新增 `execution_plans.trace_id`、`execution_plans.trace_metadata` 與 `execution_plan_steps`，用於 Trace / Replay Readiness。`v1.4.0` 新增 `run_checkpoints` 與 `replay_attempts`，用於 Checkpoint / Resume / Replay MVP。`v1.5.0` 新增 `pricing_catalog`、`usage_events`、`cost_events`、`budget_policies` 與 `budget_violations`，用於 FinOps 成本帳本。
 
 Migration 檔案位於：
 
@@ -20,6 +20,7 @@ migrations/versions/202605250002_add_v08_operations_gate.py
 migrations/versions/202605310001_add_v12_control_plane.py
 migrations/versions/202606010001_add_v13_trace_replay.py
 migrations/versions/202606010002_add_v14_checkpoints_replay.py
+migrations/versions/202606010003_add_v15_finops_core.py
 ```
 
 ## 常用指令
@@ -27,6 +28,25 @@ migrations/versions/202606010002_add_v14_checkpoints_replay.py
 套用 migration：
 
 ```bash
+alembic upgrade head
+```
+
+## V1.5 Migration
+
+使用的 migration：
+- `202606010003_add_v15_finops_core.py`
+
+變更內容：
+- 新增 `pricing_catalog`，保存 deterministic pricing catalog。
+- 新增 `usage_events`，保存 submit、worker completion、resume、replay 與 manual usage records。
+- 新增 `cost_events`，保存 estimated / actual cost ledger。
+- 新增 `budget_policies`，保存 tenant/run/workflow/model budget policy metadata；V1.5 實作 run scope 檢查。
+- 新增 `budget_violations`，保存 run budget exceeded 與 missing pricing rule 等可查詢事件。
+
+驗證命令：
+```bash
+alembic upgrade head
+alembic downgrade -1
 alembic upgrade head
 ```
 

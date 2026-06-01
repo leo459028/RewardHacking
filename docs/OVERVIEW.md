@@ -1,10 +1,10 @@
-# 專案文件總覽 v1.4
+# 專案文件總覽 v1.5
 
 本目錄收錄 Agent Reward-Hacking Guardrail 的繁體中文文件。專有名詞保留英文，方便與程式碼、API schema、infra component 對照。
 
 ## 版本
 
-目前版本：`v1.4.0`
+目前版本：`v1.5.0`
 
 `v0.6.0` 對應 Tenant Governance MVP。此版本保留 v0.5 的 queued submit、Kafka request event、worker consumer、Redis run state / idempotency / circuit breaker、approval API、bounded executor transcript、worker retry/DLQ、approval TTL/event、tool execution audit、evaluation result、內建 Dashboard worker/observability 頁，並新增 `tenant_id` audit、API key auth、Dashboard Basic Auth、tenant quota、governance events、governance summary API 與 Governance Dashboard。
 
@@ -21,6 +21,7 @@
 `v1.3.0` 對應 Trace / Replay Readiness。此版本把 V1.2 的 execution plan 串上 `X-Trace-Id`，新增 `execution_plan_steps` step-level audit、`/v1/runs/{run_id}/trace`、`/v1/runs/{run_id}/replay-bundle`，並在 Run Detail 與 Control Plane Dashboard 顯示 Trace / Replay 資訊。V1.3 先提供內部 trace contract 與 replay bundle，不實作真正自動重放、OTLP exporter、LangSmith-style exporter、LangGraph checkpoint/resume 或 MCP Gateway。
 
 `v1.4.0` 對應 Checkpoint / Resume / Replay MVP。此版本新增 `run_checkpoints`、`replay_attempts`、`/v1/runs/{run_id}/checkpoints`、`POST /v1/runs/{run_id}/resume`、`POST /v1/runs/{run_id}/replay`，並在 Run Detail 與 Control Plane Dashboard 顯示 checkpoint、resume 與 dry-run replay 狀態。V1.4 仍不呼叫真實外部工具，也不等同完整 LangGraph checkpoint/resume。
+`v1.5.0` 對應 Agent FinOps Core / Cost Ledger。此版本新增 `pricing_catalog`、`usage_events`、`cost_events`、`budget_policies`、`budget_violations`、FinOps API、Run Detail Cost Summary 與 `/dashboard/costs`。V1.5 只做成本資料層，不做 cost-aware routing、Token Broker、Safe MCP 或外部費率同步。
 
 ## 專案定位
 
@@ -59,11 +60,11 @@
 | [安全設計](security.md) | Threat model、guardrail 原則、production hardening |
 | [Runbook](runbook.md) | 常見事故處理、診斷步驟與營運 KPI |
 | [Roadmap](roadmap.md) | 從 skeleton 到 production 的分階段路線 |
-| [V1.1 架構圖資](assets/README.md) | `docs/assets/*-v11.png`，歷史架構圖、流程圖、資料模型、Dashboard、metrics 與 threat model；V1.4 文件已補 Checkpoint / Resume / Replay 文字說明，尚未新增 v14 圖資 |
+| [V1.1 架構圖資](assets/README.md) | `docs/assets/*-v11.png`，歷史架構圖、流程圖、資料模型、Dashboard、metrics 與 threat model；V1.5 文件已補 FinOps Core 文字說明，尚未新增 v15 圖資 |
 
 ## V1.1 架構圖資
 
-新版圖資保存在 `docs/assets/*-v11.png`，舊版 `*-v1.png` 已保留作為歷史圖資。V1.4 目前尚未新增 `*-v14.png` 圖資，因此若需要圖片仍可引用 V1.1 圖資，但文字文件已以 V1.4 Checkpoint / Resume / Replay MVP 為準。
+新版圖資保存在 `docs/assets/*-v11.png`，舊版 `*-v1.png` 已保留作為歷史圖資。V1.5 目前尚未新增 `*-v15.png` 圖資，因此若需要圖片仍可引用 V1.1 圖資，但文字文件已以 V1.5 Agent FinOps Core / Cost Ledger 為準。
 
 ![V1.1 Architecture](assets/architecture-ad-marketing-v11.png)
 

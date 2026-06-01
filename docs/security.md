@@ -2,6 +2,8 @@
 
 本專案的安全目標是降低 agent reward hacking 與 unsafe over-optimization 的風險。它不保證任務一定安全，而是建立多層 guardrail，讓高風險任務更容易被拒絕、審核、追蹤與回溯。
 
+V1.5 新增 FinOps 成本帳本，安全邊界是「記錄與查詢」而非「成本驅動執行控制」。Budget violation 目前不會阻擋 run、不會改變 model/tool routing，也不會替代 tenant quota、approval gate 或 policy engine。後續若導入 cost-aware routing、Token Broker 或 Safe MCP，需另外做 fail-closed 設計與 abuse case review。
+
 ## Threat Model
 
 主要威脅：
