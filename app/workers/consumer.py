@@ -28,6 +28,7 @@ from app.services.audit_log import (
 from app.services.control_plane import get_execution_plan_for_run
 from app.services.events import EventPublisher, KafkaEventPublisher
 from app.services.evaluator import Evaluator
+from app.services.finops import record_actual_usage
 from app.services.orchestrator import AgentOrchestrator, OrchestrationResult
 from app.services.policy_engine import PolicyEngine
 from app.services.run_state import RedisRunStateStore, RunStateStore
@@ -168,6 +169,7 @@ async def process_run_by_id(
             result = _retry_result(run_id, f"Worker retry scheduled: {failure_reason}")
 
     updated = await update_orchestration_result(session, run, request, result)
+    await record_actual_usage(session, run=updated, plan=plan)
     if failure_reason:
         attempt_status = "dlq" if updated.status == "failed" else "retry_scheduled"
         if attempt_status == "retry_scheduled":

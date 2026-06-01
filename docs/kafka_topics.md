@@ -1,6 +1,6 @@
 # Kafka Topics
 
-Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execution、evaluation 與 incident processing。`v1.4.0` 目前 API 會在低風險 request 建立 `queued` run、Control Plane execution plan、step audit 與 submit checkpoint 後 publish `agent.requests`；Resume API 也會在建立 resume checkpoint 後重新 publish `agent.requests`。worker 仍用 `run_id` 從 Postgres 讀取 request、execution plan 與 step audit。Trace / Replay / Checkpoint 的完整資料以 Postgres audit tables 與 API replay/checkpoint endpoint 為準，不直接塞進 Kafka payload。Kafka consumer lag alert 與完整 OpenTelemetry trace propagation 尚未納入本版。
+Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execution、evaluation 與 incident processing。`v1.5.0` 目前 API 會在低風險 request 建立 `queued` run、Control Plane execution plan、step audit、submit checkpoint 與 estimated FinOps cost events 後 publish `agent.requests`；Resume API 也會在建立 resume checkpoint 與 checkpoint usage event 後重新 publish `agent.requests`。worker 仍用 `run_id` 從 Postgres 讀取 request、execution plan 與 step audit，並在 completion 後寫入 actual usage/cost events。Trace / Replay / Checkpoint / FinOps 的完整資料以 Postgres audit tables 與 API endpoint 為準，不直接塞進 Kafka payload。Kafka consumer lag alert 與完整 OpenTelemetry trace propagation 尚未納入本版。
 
 ## Topic 清單
 
@@ -27,7 +27,7 @@ Kafka 在此專案中扮演 event bus，用來解耦 API ingress、worker execut
 }
 ```
 
-注意：`v1.4.0` 延續 v1.0 的 HTTP `X-Trace-Id` 基線，會保存到 `payload.request.metadata.trace_id`，並同步到 `execution_plans.trace_id`、`execution_plan_steps.trace_id` 與 checkpoint snapshot。Event envelope 的 `trace_id` 目前仍由 `make_event()` 另外產生 UUID，尚未和 HTTP trace id 完全對齊；release gate snapshot 會保存建立當下的 HTTP trace id；後續導入 OpenTelemetry 時應讓 API response header、Kafka envelope、logs 與 database 使用同一條 trace。
+注意：`v1.5.0` 延續 v1.0 的 HTTP `X-Trace-Id` 基線，會保存到 `payload.request.metadata.trace_id`，並同步到 `execution_plans.trace_id`、`execution_plan_steps.trace_id`、checkpoint snapshot、usage events 與 cost events。Event envelope 的 `trace_id` 目前仍由 `make_event()` 另外產生 UUID，尚未和 HTTP trace id 完全對齊；release gate snapshot 會保存建立當下的 HTTP trace id；後續導入 OpenTelemetry 時應讓 API response header、Kafka envelope、logs 與 database 使用同一條 trace。
 
 V1.3 的 Kafka request payload 不直接包含完整 execution plan、step audit 或 replay bundle；worker 以 `run_id` 查詢 `execution_plans`。若查不到 plan，worker 會 fail closed 到 `awaiting_approval`，並加入 `missing_execution_plan` flag。
 

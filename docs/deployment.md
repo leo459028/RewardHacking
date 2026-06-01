@@ -1,10 +1,10 @@
-# 部署文件 v1.4
+# 部署文件 v1.5
 
-本專案提供 Dockerfile 與 Docker Compose，適合本機開發、demo、CI smoke test。`v1.4.0` 已包含 API、worker、tenant-aware audit、DB-backed API key、RBAC-lite、Dashboard Basic Auth、Redis tenant quota、Governance Dashboard、Control Plane execution plan、Trace / Replay Readiness、Checkpoint / Resume / Replay MVP、Production Readiness Gate、safety regression evidence、敏感 read API auth coverage、HTTP metrics、incident counter 與 Classical Chinese Prompt Guard。正式環境部署前仍需補上完整 OAuth/SSO、secret 管理、完整 OpenTelemetry、真實 sandbox、真實 MCP Gateway、完整 LangGraph runtime、完整 worker lifecycle 與安全控制。
+本專案提供 Dockerfile 與 Docker Compose，適合本機開發、demo、CI smoke test。`v1.5.0` 已包含 API、worker、tenant-aware audit、DB-backed API key、RBAC-lite、Dashboard Basic Auth、Redis tenant quota、Governance Dashboard、Control Plane execution plan、Trace / Replay Readiness、Checkpoint / Resume / Replay MVP、Agent FinOps Core / Cost Ledger、Production Readiness Gate、safety regression evidence、敏感 read API auth coverage、HTTP metrics、incident counter 與 Classical Chinese Prompt Guard。正式環境部署前仍需補上完整 OAuth/SSO、secret 管理、完整 OpenTelemetry、真實 sandbox、真實 MCP Gateway、完整 LangGraph runtime、完整 worker lifecycle 與安全控制。
 
-目前部署版本：`v1.4.0`
+目前部署版本：`v1.5.0`
 
-V1.4 在部署面不新增外部服務；Checkpoint / Resume / Replay 使用既有 FastAPI、Postgres、Kafka worker queue、Dashboard 與 metrics pipeline。部署時需套用 Alembic head `202606010002`，除了 V1.3 的 `execution_plan_steps` 與 trace 欄位，也會建立 `run_checkpoints` 與 `replay_attempts`。
+V1.5 在部署面不新增外部服務；FinOps Core 使用既有 FastAPI、Postgres、Kafka worker queue、Dashboard 與 metrics pipeline。部署時需套用 Alembic head `202606010003`，除了 V1.4 的 `run_checkpoints` 與 `replay_attempts`，也會建立 `pricing_catalog`、`usage_events`、`cost_events`、`budget_policies` 與 `budget_violations`。
 
 ## 本機 Docker Compose
 

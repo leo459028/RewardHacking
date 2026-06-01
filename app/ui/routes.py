@@ -62,6 +62,13 @@ from app.services.checkpoint import (
     list_run_checkpoints,
     persist_run_checkpoint,
 )
+from app.services.finops import (
+    list_budget_violations,
+    list_pricing_items,
+    record_submit_usage,
+    run_cost_summary,
+    tenant_cost_summary,
+)
 from app.services.orchestrator import OrchestrationResult
 from app.services.run_state import RunStateStore
 from app.workers.producer import make_event
@@ -203,6 +210,7 @@ async def dashboard_run_detail(
     execution_plan_steps = await list_execution_plan_steps(session, run_id)
     checkpoints = await list_run_checkpoints(session, run_id=run_id)
     replay_attempts = await list_replay_attempts(session, run_id=run_id)
+    cost_summary = await run_cost_summary(session, run_id=run_id)
     return templates.TemplateResponse(
         request,
         "run_detail.html",
@@ -215,6 +223,7 @@ async def dashboard_run_detail(
             "execution_plan_steps": execution_plan_steps,
             "checkpoints": checkpoints,
             "replay_attempts": replay_attempts,
+            "cost_summary": cost_summary,
             "active": "runs",
         },
     )
@@ -311,6 +320,29 @@ async def dashboard_governance(
     )
 
 
+@router.get("/dashboard/costs", response_class=HTMLResponse)
+async def dashboard_costs(
+    request: Request,
+    tenant_id: str | None = None,
+    session: AsyncSession = Depends(get_session),
+):
+    selected_tenant = tenant_id or "default"
+    summary = await tenant_cost_summary(session, tenant_id=selected_tenant)
+    pricing = await list_pricing_items(session)
+    violations = await list_budget_violations(session, tenant_id=selected_tenant, limit=25)
+    return templates.TemplateResponse(
+        request,
+        "costs.html",
+        {
+            "summary": summary,
+            "pricing": pricing,
+            "violations": violations,
+            "tenant_id": selected_tenant,
+            "active": "costs",
+        },
+    )
+
+
 @router.get("/dashboard/operations", response_class=HTMLResponse)
 async def dashboard_operations(request: Request, session: AsyncSession = Depends(get_session)):
     readiness = await compute_operations_readiness(session, settings=get_settings())
@@ -362,7 +394,7 @@ async def dashboard_operations_release_gate(
     readiness = await compute_operations_readiness(session, settings=get_settings())
     await persist_release_gate(
         session,
-        release_version=str(form.get("release_version", "v1.4.0")),
+        release_version=str(form.get("release_version", "v1.5.0")),
         created_by=str(form.get("created_by", "dashboard")),
         trace_id=str(getattr(request.state, "trace_id", "")),
         readiness=readiness,
@@ -470,6 +502,7 @@ async def submit_playground(
                 resume_cursor="worker_queue" if run.status == "queued" else "approval_queue",
                 created_by="dashboard",
             )
+            await record_submit_usage(session, run=run, plan=plan)
         await state_store.set_run_state(result.response.run_id, result.response.status)
         if result.response.status == "queued":
             event = make_event(

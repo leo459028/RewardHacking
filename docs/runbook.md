@@ -1,8 +1,10 @@
-# Runbook v1.4
+# Runbook v1.5
 
-此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail、Kafka worker、Redis run state、approval queue、worker retry/DLQ、tool execution audit、evaluator/observability summary、tenant governance、production readiness gate、safety regression evidence、古文/文言式 Prompt Guard、Control Plane execution plan、Trace / Replay Readiness 與 Checkpoint / Resume / Replay MVP 已接入 request path。
+此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail、Kafka worker、Redis run state、approval queue、worker retry/DLQ、tool execution audit、evaluator/observability summary、tenant governance、production readiness gate、safety regression evidence、古文/文言式 Prompt Guard、Control Plane execution plan、Trace / Replay Readiness、Checkpoint / Resume / Replay MVP 與 Agent FinOps Core / Cost Ledger 已接入 request path。
 
-目前營運基線：`v1.4.0`
+目前營運基線：`v1.5.0`
+
+V1.5 新增 FinOps 成本帳本。若 Run Detail 沒有 `Cost Summary`，先確認 migration head 是否為 `202606010003`、submit flow 是否產生 `usage_events` / `cost_events`，再查 `/v1/cost/runs/{run_id}`。若 `/dashboard/costs` 沒有 budget violations，確認是否已建立 active run-scope budget policy，且該 run 的 estimated + actual cost 是否超過 `limit_amount`。
 
 ## 快速檢查
 
