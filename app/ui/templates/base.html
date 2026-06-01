@@ -123,6 +123,8 @@
     .button.secondary { background: #344054; }
     .button.danger { background: var(--danger); }
     .button:hover { background: var(--brand-dark); }
+    .inline-form { align-items: end; display: flex; gap: 10px; flex-wrap: wrap; }
+    .inline-form input { min-width: 220px; }
     .filters, .form-grid { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
     label { color: var(--muted); display: grid; font-size: 12px; font-weight: 700; gap: 6px; }
     input, select, textarea {
@@ -138,6 +140,8 @@
     .checks { align-items: center; display: grid; gap: 10px; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 14px 0; }
     .checks label { align-items: center; display: flex; gap: 7px; }
     .checks input { min-height: auto; width: auto; }
+    .checkline { align-items: center; display: flex; gap: 8px; padding-top: 24px; }
+    .checkline input { min-height: auto; width: auto; }
     pre {
       background: #111827;
       border-radius: 8px;
@@ -170,6 +174,7 @@
         <a class="{{ 'active' if active == 'governance' else '' }}" href="/dashboard/governance">Governance</a>
         <a class="{{ 'active' if active == 'control-plane' else '' }}" href="/dashboard/control-plane">Control Plane</a>
         <a class="{{ 'active' if active == 'costs' else '' }}" href="/dashboard/costs">Costs</a>
+        <a class="{{ 'active' if active == 'admin-finops' else '' }}" href="/dashboard/admin/finops/pricing">Admin FinOps</a>
         <a class="{{ 'active' if active == 'operations' else '' }}" href="/dashboard/operations">Operations</a>
         <a class="{{ 'active' if active == 'playground' else '' }}" href="/dashboard/playground">Playground</a>
         <a href="/docs">OpenAPI</a>

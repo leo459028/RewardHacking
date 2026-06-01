@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Admin FinOps | Pricing Catalog{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Pricing Catalog</h1>
+    <div class="title-note">Dashboard > Admin > FinOps</div>
+    <div class="muted">Versioned model, tool, runtime, storage, image, audio and video pricing.</div>
+  </div>
+  <div class="inline-form">
+    <a class="button secondary" href="/dashboard/admin/finops/pricing/import">Import</a>
+    <a class="button secondary" href="/dashboard/admin/finops/pricing/sources">Source Audit</a>
+  </div>
+</div>
+
+<section class="panel">
+  <form method="get" action="/dashboard/admin/finops/pricing" class="filters">
+    <label>Provider
+      <input name="provider" value="{{ filters.provider }}" placeholder="openai">
+    </label>
+    <label>Model
+      <input name="model" value="{{ filters.model }}" placeholder="gpt">
+    </label>
+    <label>Resource
+      <input name="resource_type" value="{{ filters.resource_type }}" placeholder="model">
+    </label>
+    <label>Pricing Mode
+      <input name="pricing_mode" value="{{ filters.pricing_mode }}" placeholder="standard">
+    </label>
+    <label>Token Type
+      <input name="token_type" value="{{ filters.token_type }}" placeholder="input">
+    </label>
+    <label>Scope
+      <input name="scope_type" value="{{ filters.scope_type }}" placeholder="system_default">
+    </label>
+    <label class="checkline">
+      <input type="checkbox" name="active_only" value="true" {% if filters.active_only %}checked{% endif %}>
+      Active only
+    </label>
+    <label>&nbsp;
+      <button class="button" type="submit">Filter</button>
+    </label>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Catalog Rows</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Provider</th>
+        <th>Model</th>
+        <th>Resource</th>
+        <th>Mode</th>
+        <th>Token</th>
+        <th>Unit Price</th>
+        <th>Effective</th>
+        <th>Source</th>
+        <th>Scope</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for item in pricing %}
+      <tr>
+        <td>{{ item.provider }}</td>
+        <td><a href="/dashboard/admin/finops/pricing/{{ item.pricing_id }}">{{ item.model_name or "generic" }}</a><br><span class="muted">{{ item.model_tier }}</span></td>
+        <td>{{ item.resource_type }}<br><span class="muted">{{ item.resource_subtype }}</span></td>
+        <td>{{ item.pricing_mode }}</td>
+        <td>{{ item.token_type }}</td>
+        <td>{{ item.unit_price }} {{ item.currency }}<br><span class="muted">{{ item.price_unit }}</span></td>
+        <td>{{ item.effective_from }}<br><span class="muted">{{ item.effective_to or "open" }}</span></td>
+        <td><a href="{{ item.source_url }}">{{ item.source_type }}</a><br><span class="muted">{{ item.source_checked_at }}</span></td>
+        <td>{{ item.scope_type }}</td>
+        <td>{{ "active" if item.is_active else "inactive" }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="10" class="muted">No pricing rows found.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

@@ -96,7 +96,7 @@ v1.4 的 Control Plane 橫跨 workflow/tool registry、execution plan persistenc
 
 v1.5 的 FinOps Core 橫跨 pricing/usage/cost/budget 資料表、submit/worker/resume/replay flow、API、Run Detail 與 `/dashboard/costs`。新增或修改相關能力時，請同步檢查：
 
-1. `app/models/finops.py`、`app/schemas/finops.py`、`app/services/finops.py` 與 `migrations/versions/202606010003_add_v15_finops_core.py` 是否維持欄位同步。
+1. `app/models/finops.py`、`app/schemas/finops.py`、`app/services/finops.py`、`app/services/pricing_import.py`、`migrations/versions/202606010003_add_v15_finops_core.py` 與 `migrations/versions/202606010004_expand_v151_finops_core.py` 是否維持欄位同步。
 2. `app/api/routes.py` 的 FinOps RBAC 與 tenant scoping 是否與既有 auth 規則一致。
 3. `app/ui/routes.py`、`app/ui/templates/run_detail.html`、`app/ui/templates/costs.html` 與 `app/ui/templates/base.html` 是否顯示目前 cost summary 與 cost dashboard。
 4. `tests/test_v15_finops_core.py`、README、API 文件、Dashboard 文件、資料模型、migration 文件、測試指南與 `docs/test_report.md` 是否同步。

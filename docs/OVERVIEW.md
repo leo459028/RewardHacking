@@ -1,10 +1,10 @@
-# 專案文件總覽 v1.5
+# 專案文件總覽 v1.5.1
 
 本目錄收錄 Agent Reward-Hacking Guardrail 的繁體中文文件。專有名詞保留英文，方便與程式碼、API schema、infra component 對照。
 
 ## 版本
 
-目前版本：`v1.5.0`
+目前版本：`v1.5.1`
 
 `v0.6.0` 對應 Tenant Governance MVP。此版本保留 v0.5 的 queued submit、Kafka request event、worker consumer、Redis run state / idempotency / circuit breaker、approval API、bounded executor transcript、worker retry/DLQ、approval TTL/event、tool execution audit、evaluation result、內建 Dashboard worker/observability 頁，並新增 `tenant_id` audit、API key auth、Dashboard Basic Auth、tenant quota、governance events、governance summary API 與 Governance Dashboard。
 
@@ -22,6 +22,8 @@
 
 `v1.4.0` 對應 Checkpoint / Resume / Replay MVP。此版本新增 `run_checkpoints`、`replay_attempts`、`/v1/runs/{run_id}/checkpoints`、`POST /v1/runs/{run_id}/resume`、`POST /v1/runs/{run_id}/replay`，並在 Run Detail 與 Control Plane Dashboard 顯示 checkpoint、resume 與 dry-run replay 狀態。V1.4 仍不呼叫真實外部工具，也不等同完整 LangGraph checkpoint/resume。
 `v1.5.0` 對應 Agent FinOps Core / Cost Ledger。此版本新增 `pricing_catalog`、`usage_events`、`cost_events`、`budget_policies`、`budget_violations`、FinOps API、Run Detail Cost Summary 與 `/dashboard/costs`。V1.5 只做成本資料層，不做 cost-aware routing、Token Broker、Safe MCP 或外部費率同步。
+
+`v1.5.1` 對應 Agent FinOps Core / Pricing Import Admin。此版本擴充 pricing、usage、cost、budget 與 violation schema，新增官方模型價格 seed、dry-run/apply 匯入、Admin API、Admin FinOps Dashboard、pricing import batch、pricing change log 與 pricing source document audit。
 
 ## 專案定位
 
@@ -153,3 +155,6 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
 3. 若要啟動或部署，讀 [設定文件](configuration.md) 與 [部署文件](deployment.md)。
 4. 若要接手開發，讀 [開發指南](development.md)、[測試指南](testing_guide.md) 與 [Roadmap](roadmap.md)。
 5. 若要營運服務，讀 [Runbook](runbook.md)、[Observability](observability.md)、[Kafka Topics](kafka_topics.md)、[Redis Keys](redis_keys.md)。
+## V1.5.1 文件入口
+
+V1.5.1 的主要變更是 Agent FinOps Core schema 擴充、官方模型價格 seed 匯入、Admin API、Admin Dashboard、版本化異動與來源 audit。完整規格與欄位清單請看 [`v1.5.1_finops_core.md`](v1.5.1_finops_core.md)。

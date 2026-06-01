@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from prometheus_client import generate_latest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import JSONResponse, Response
 
@@ -71,7 +71,12 @@ from app.schemas.finops import (
     CostEventRecord,
     PricingCatalogCreateRequest,
     PricingCatalogRecord,
+    PricingChangeLogRecord,
+    PricingImportBatchRecord,
+    PricingImportReportResponse,
+    PricingImportRequest,
     PricingCatalogUpdateRequest,
+    PricingSourceDocumentRecord,
     RunCostSummaryResponse,
     TenantCostSummaryResponse,
     UsageEventCreateRequest,
@@ -150,6 +155,7 @@ from app.services.finops import (
     create_budget_policy,
     create_pricing_item,
     disable_pricing_item,
+    get_pricing_item,
     list_budget_policies,
     list_budget_violations,
     list_pricing_items,
@@ -168,6 +174,8 @@ from app.services.finops import (
     violation_to_dict,
     workflow_cost_summary,
 )
+from app.models.finops import PricingChangeLog, PricingImportBatch, PricingSourceDocument
+from app.services.pricing_import import apply_pricing_seed, dry_run_pricing_seed, load_pricing_seed
 from app.services.orchestrator import OrchestrationResult
 from app.workers.producer import make_event
 
@@ -215,6 +223,20 @@ def _actor(auth_context: AuthContext) -> str:
     if auth_context.enabled:
         return f"tenant:{auth_context.tenant_id or 'default'}"
     return "dashboard"
+
+
+def _require_finops_admin(auth_context: AuthContext) -> None:
+    if not auth_context.enabled:
+        return
+    if auth_context.role not in {"super_admin", "finops_admin", "admin"}:
+        raise auth_error(403, "insufficient_role", "FinOps admin role is required for this operation.")
+
+
+def _require_finops_reviewer(auth_context: AuthContext) -> None:
+    if not auth_context.enabled:
+        return
+    if auth_context.role not in {"super_admin", "finops_admin", "tenant_admin", "reviewer", "admin"}:
+        raise auth_error(403, "insufficient_role", "FinOps reviewer role is required for this operation.")
 
 
 def _trace_id(request: Request) -> str:
@@ -335,16 +357,75 @@ def _violation_record(item) -> BudgetViolationRecord:
     return BudgetViolationRecord(**violation_to_dict(item))
 
 
+def _pricing_import_batch_record(item) -> PricingImportBatchRecord:
+    return PricingImportBatchRecord(
+        import_batch_id=item.import_batch_id,
+        source_file_name=item.source_file_name,
+        source_file_hash=item.source_file_hash,
+        import_mode=item.import_mode,
+        status=item.status,
+        created_by=item.created_by,
+        created_at=item.created_at,
+        applied_at=item.applied_at,
+        summary=item.summary,
+        error_details=item.error_details,
+    )
+
+
+def _pricing_change_record(item) -> PricingChangeLogRecord:
+    return PricingChangeLogRecord(
+        change_id=item.change_id,
+        pricing_id_old=item.pricing_id_old,
+        pricing_id_new=item.pricing_id_new,
+        change_type=item.change_type,
+        old_unit_price=item.old_unit_price,
+        new_unit_price=item.new_unit_price,
+        currency=item.currency,
+        change_reason=item.change_reason,
+        source_url=item.source_url,
+        changed_by=item.changed_by,
+        changed_at=item.changed_at,
+        import_batch_id=item.import_batch_id,
+    )
+
+
+def _pricing_source_record(item) -> PricingSourceDocumentRecord:
+    return PricingSourceDocumentRecord(
+        source_id=item.source_id,
+        provider=item.provider,
+        source_url=item.source_url,
+        source_type=item.source_type,
+        checked_at=item.checked_at,
+        content_hash=item.content_hash,
+        confidence=item.confidence,
+        notes=item.notes,
+        created_at=item.created_at,
+    )
+
+
 def _run_cost_response(summary) -> RunCostSummaryResponse:
     return RunCostSummaryResponse(
         run_id=summary.run_id,
         tenant_id=summary.tenant_id,
+        base_currency=summary.base_currency,
         estimated_cost=summary.estimated_cost,
         actual_cost=summary.actual_cost,
         cost_delta=summary.cost_delta,
+        cost_delta_percent=summary.cost_delta_percent,
         currency=summary.currency,
         budget_status=summary.budget_status,
+        budget_policy_id=summary.budget_policy_id,
+        budget_remaining=summary.budget_remaining,
+        provider_breakdown=summary.provider_breakdown,
+        model_breakdown=summary.model_breakdown,
+        tool_breakdown=summary.tool_breakdown,
+        step_breakdown=summary.step_breakdown,
+        cost_type_breakdown=summary.cost_type_breakdown,
+        resource_breakdown=summary.resource_breakdown,
         breakdown=summary.breakdown,
+        replay_cost=summary.replay_cost,
+        resume_incremental_cost=summary.resume_incremental_cost,
+        failed_retry_cost=summary.failed_retry_cost,
         usage_events=[_usage_record(item) for item in summary.usage_events],
         cost_events=[_cost_record(item) for item in summary.cost_events],
     )
@@ -357,9 +438,19 @@ def _tenant_cost_response(summary) -> TenantCostSummaryResponse:
         month_to_date_cost=summary.month_to_date_cost,
         budget_used_percent=summary.budget_used_percent,
         violation_count=summary.violation_count,
+        provider_breakdown=summary.provider_breakdown,
+        resource_type_breakdown=summary.resource_type_breakdown,
+        environment_breakdown=summary.environment_breakdown,
+        project_breakdown=summary.project_breakdown,
         top_runs=summary.top_runs,
         top_models=summary.top_models,
         top_workflows=summary.top_workflows,
+        top_tools=summary.top_tools,
+        top_users=summary.top_users,
+        failed_run_cost=summary.failed_run_cost,
+        replay_cost=summary.replay_cost,
+        cache_savings=summary.cache_savings,
+        batch_savings=summary.batch_savings,
     )
 
 
@@ -660,8 +751,18 @@ async def post_tenant_api_key(
     session: AsyncSession = Depends(get_session),
 ):
     require_role(auth_context, "admin")
-    if payload.role not in {"viewer", "operator", "admin"}:
-        raise auth_error(422, "invalid_role", "Role must be viewer, operator, or admin.")
+    allowed_roles = {
+        "viewer",
+        "operator",
+        "admin",
+        "super_admin",
+        "finops_admin",
+        "tenant_admin",
+        "reviewer",
+        "end_user",
+    }
+    if payload.role not in allowed_roles:
+        raise auth_error(422, "invalid_role", "Role must be a supported RBAC role.")
     tenant = await get_tenant(session, tenant_id)
     if tenant is None:
         raise HTTPException(status_code=404, detail="Tenant not found.")
@@ -752,6 +853,146 @@ async def delete_pricing_catalog_item(
 ):
     require_role(auth_context, "admin")
     item = await disable_pricing_item(session, pricing_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Pricing item not found.")
+    return _pricing_record(item)
+
+
+@router.get("/admin/finops/pricing", response_model=list[PricingCatalogRecord])
+async def admin_get_pricing_catalog(
+    provider: str | None = None,
+    model: str | None = None,
+    resource_type: str | None = None,
+    pricing_mode: str | None = None,
+    token_type: str | None = None,
+    scope_type: str | None = None,
+    active_only: bool = False,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    _require_finops_reviewer(auth_context)
+    return [
+        _pricing_record(item)
+        for item in await list_pricing_items(
+            session,
+            active_only=active_only,
+            provider=provider,
+            model_name=model,
+            resource_type=resource_type,
+            pricing_mode=pricing_mode,
+            token_type=token_type,
+            scope_type=scope_type,
+        )
+    ]
+
+
+@router.post("/admin/finops/pricing/import/dry-run", response_model=PricingImportReportResponse)
+async def admin_dry_run_pricing_import(
+    payload: PricingImportRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    _require_finops_reviewer(auth_context)
+    seed = load_pricing_seed(payload.file_path)
+    report = await dry_run_pricing_seed(session, seed, created_by=payload.created_by or _actor(auth_context))
+    return PricingImportReportResponse(**report.to_dict())
+
+
+@router.post("/admin/finops/pricing/import/apply", response_model=PricingImportReportResponse)
+async def admin_apply_pricing_import(
+    payload: PricingImportRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    _require_finops_admin(auth_context)
+    seed = load_pricing_seed(payload.file_path)
+    report = await apply_pricing_seed(
+        session,
+        seed,
+        created_by=payload.created_by or _actor(auth_context),
+        base_currency=payload.base_currency,
+    )
+    return PricingImportReportResponse(**report.to_dict())
+
+
+@router.get("/admin/finops/pricing/imports", response_model=list[PricingImportBatchRecord])
+async def admin_list_pricing_imports(
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    _require_finops_reviewer(auth_context)
+    rows = list((await session.scalars(select(PricingImportBatch).order_by(PricingImportBatch.created_at.desc()))).all())
+    return [_pricing_import_batch_record(item) for item in rows]
+
+
+@router.get("/admin/finops/pricing/imports/{import_batch_id}", response_model=PricingImportBatchRecord)
+async def admin_get_pricing_import(
+    import_batch_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    _require_finops_reviewer(auth_context)
+    item = await session.scalar(select(PricingImportBatch).where(PricingImportBatch.import_batch_id == import_batch_id))
+    if item is None:
+        raise HTTPException(status_code=404, detail="Pricing import batch not found.")
+    return _pricing_import_batch_record(item)
+
+
+@router.get("/admin/finops/pricing/sources", response_model=list[PricingSourceDocumentRecord])
+async def admin_list_pricing_sources(
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    _require_finops_reviewer(auth_context)
+    rows = list((await session.scalars(select(PricingSourceDocument).order_by(PricingSourceDocument.created_at.desc()))).all())
+    return [_pricing_source_record(item) for item in rows]
+
+
+@router.get("/admin/finops/pricing/changes", response_model=list[PricingChangeLogRecord])
+async def admin_list_pricing_changes(
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    _require_finops_reviewer(auth_context)
+    rows = list((await session.scalars(select(PricingChangeLog).order_by(PricingChangeLog.changed_at.desc()))).all())
+    return [_pricing_change_record(item) for item in rows]
+
+
+@router.get("/admin/finops/pricing/{pricing_id}", response_model=PricingCatalogRecord)
+async def admin_get_pricing_item(
+    pricing_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    _require_finops_reviewer(auth_context)
+    item = await get_pricing_item(session, pricing_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Pricing item not found.")
+    return _pricing_record(item)
+
+
+@router.patch("/admin/finops/pricing/{pricing_id}", response_model=PricingCatalogRecord)
+async def admin_patch_pricing_item(
+    pricing_id: str,
+    payload: PricingCatalogUpdateRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    _require_finops_admin(auth_context)
+    item = await update_pricing_item(session, pricing_id, payload)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Pricing item not found.")
+    return _pricing_record(item)
+
+
+@router.post("/admin/finops/pricing/{pricing_id}/disable", response_model=PricingCatalogRecord)
+async def admin_disable_pricing_item(
+    pricing_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    _require_finops_admin(auth_context)
+    item = await disable_pricing_item(session, pricing_id, updated_by=_actor(auth_context))
     if item is None:
         raise HTTPException(status_code=404, detail="Pricing item not found.")
     return _pricing_record(item)
