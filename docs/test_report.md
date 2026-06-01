@@ -1,5 +1,116 @@
 # 測試紀錄
 
+## 2026-06-02 - 文件與程式碼同步收斂
+
+- 版本：`v1.5.1`
+- 變更範圍：同步 README 與 docs 的目前版本、migration head、Dashboard / API 入口、Operations release gate 預設版本、Admin FinOps pricing import 說明，以及 `docs/test_report.md` 重複標題與重複 V1.5.1 紀錄位置。
+- UI / Dashboard 驗證入口：`/dashboard/operations`、`/dashboard/admin/finops/pricing/import`。
+
+### 測試命令與結果
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `pytest tests/test_v15_finops_core.py tests/test_v151_finops_core.py -q` | 通過，`12 passed, 85 warnings in 5.56s`；warnings 為 Pydantic V2 `json_encoders` deprecation。 |
+| `pytest -q` | 通過，`74 passed, 85 warnings in 24.31s`；warnings 同上。 |
+| `ruff check app tests scripts` | 通過，`All checks passed!`。 |
+| `git diff --check` | 通過，沒有 whitespace error。 |
+| `python scripts\import_pricing_catalog.py --dry-run --file app\seeds\model_pricing_seed.yaml --created-by docs-sync-20260602` | 通過，`status=validated`、`valid_rows=149`、`new_rows=0`、`unchanged_rows=148`、`rows_to_supersede=1`、`invalid_rows=[]`、`duplicate_keys=[]`、`unsupported_enum_values=[]`；`missing_optional_fields` 為官方 seed 的選填欄位未填。 |
+| `alembic current` | 通過，本機 Postgres 顯示 `202606010004 (head)`。 |
+| `rg` 目前版本掃描 | 通過，未再找到把目前版本或目前 Dashboard/API/Data Model/Deployment/Runbook 基線標成 `v1.5.0` 的文件；剩餘 `v1.5.0` 與 `202606010003` 都是歷史版本、migration 檔名或舊測試紀錄。 |
+
+### Docker / Runtime 驗證
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `docker compose ps` | sandbox 內第一次因 Docker config / daemon pipe 權限不足失敗；升權後通過，api、worker、postgres、redis、kafka 皆為 Up，postgres、redis、kafka healthy。 |
+| `docker compose exec -T api alembic current` | sandbox 內第一次因 Docker 權限不足失敗；升權後通過，顯示 `202606010004 (head)`。 |
+| `docker compose up -d --build` | 通過，重建 api / worker image，重新建立並啟動 api / worker container。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/healthz` | HTTP 200，回傳 `{"status":"ok"}`。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/readyz` | HTTP 200，回傳 `{"status":"ready"}`。 |
+
+### Dashboard 驗證
+
+| 流程 | 實際結果 |
+| --- | --- |
+| Browser 檢查 `/dashboard/operations` | 初次檢查發現 runtime 仍載入舊 image，release gate 預設值仍為 `v1.5.0`；已重建 Docker image 後重跑。 |
+| 重建後 Browser 檢查 `/dashboard/operations` | 通過，頁面 title 為 `Operations \| 營運中心`，release version input value 為 `v1.5.1`。 |
+| Browser 檢查 `/dashboard/admin/finops/pricing/import` | 通過，頁面 title 為 `Admin FinOps \| Pricing Import`，可見 `Pricing Import`、`Dry Run`、`Apply Import`。 |
+| Browser console | 通過，重建後 Dashboard 檢查的 error / warn 數量為 0。 |
+
+### 限制與已知事項
+
+- 本次同步只修正版本、文件、Dashboard 預設值與說明入口，未新增新的產品行為。
+- Docker 驗證需要升權讀取 Docker daemon；一般 sandbox 權限會被 Docker config / pipe 擋下。
+- Pydantic V2 `json_encoders` deprecation warning 仍存在，屬既有序列化寫法，未影響本次同步與測試。
+
+## 2026-06-02 - 完整測試與 Dashboard 輸入/點擊 QA
+
+- 版本：v1.5.1
+- 測試範圍：後端 pytest 全量測試、ruff、whitespace 檢查、Docker Compose runtime、Alembic migration、health/ready、pricing seed dry-run、Dashboard 表單輸入與點擊流程。
+- Dashboard 測試網址：`http://localhost:8000`
+- Dashboard 測試資料：
+  - tenant：`qa-dashboard-full-20260602`
+  - run：`18431496-5860-4e91-b35f-0cbfe5a4ca4e`
+  - pricing detail：`/dashboard/admin/finops/pricing/price_218377a4e47149df9f821cbe9c7d8d9b`
+
+### 自動化測試與靜態檢查
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `pytest -q` | 通過，`74 passed, 85 warnings in 32.48s`；warnings 為 Pydantic V2 `json_encoders` deprecation。 |
+| `ruff check app tests scripts` | 通過，`All checks passed!` |
+| `git diff --check` | 通過，沒有 whitespace error。 |
+| `python scripts\import_pricing_catalog.py --dry-run --file app\seeds\model_pricing_seed.yaml --created-by qa-dashboard-full-20260602` | 通過，`status=validated`、`valid_rows=149`、`new_rows=149`、`invalid_rows=[]`、`duplicate_keys=[]`、`unsupported_enum_values=[]`；`missing_optional_fields` 為 seed 中可選欄位未填。 |
+
+### Docker / Runtime 驗證
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `docker compose up -d --build` | 通過，api / worker image build 使用 cache 後完成，api、worker、postgres、redis、kafka 啟動。 |
+| `docker compose ps` | 通過，`rewardhacking-api-1`、`rewardhacking-worker-1`、`rewardhacking-postgres-1`、`rewardhacking-redis-1`、`rewardhacking-kafka-1` 皆為 Up；Postgres / Redis / Kafka 為 healthy。 |
+| `docker compose exec -T api alembic upgrade head` | 通過，container 內 migration 可執行，無 pending error。 |
+| `docker compose exec -T api alembic current` | 通過，顯示 `202606010004 (head)`。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/healthz` | HTTP 200，回傳 `{"status":"ok"}`。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/readyz` | HTTP 200，回傳 `{"status":"ready"}`。 |
+
+### Dashboard 輸入 / 點擊測試
+
+| 流程 | 實際結果 |
+| --- | --- |
+| 開啟 `/dashboard/playground` | 通過，title 為 `Playground \| 測試沙盒`，頁面非空白。 |
+| Playground 表單輸入 | 通過，輸入 tenant、user、task type、allowed tools、max tool calls、goal、prompt，並勾選 `No external network`。 |
+| 點擊 `Submit Run` | 通過，頁面出現 Result 與 `Open run detail`，產生 run `18431496-5860-4e91-b35f-0cbfe5a4ca4e`。 |
+| 點擊 `Open run detail` | 通過，進入 `/dashboard/runs/18431496-5860-4e91-b35f-0cbfe5a4ca4e`，頁面顯示 `Cost Summary`、`Trace / Replay`、`Checkpoint / Resume`。 |
+| `/dashboard/costs` tenant filter | 通過，輸入 `qa-dashboard-full-20260602` 後提交，URL 變為 `/dashboard/costs?tenant_id=qa-dashboard-full-20260602`，頁面顯示 `Tenant Cost Summary` 且可看到測試 run id。 |
+| `/dashboard/admin/finops/pricing/import` Dry Run | 通過，輸入 `app/seeds/model_pricing_seed.yaml` 並點擊 Dry Run，頁面顯示 `dry_run`、`validated`、`149`。 |
+| `/dashboard/admin/finops/pricing/import` Apply Import | 通過，點擊 Apply Import 後頁面顯示 `apply`、`applied` 與 `Import History`。 |
+| `/dashboard/admin/finops/pricing` filter | 通過，輸入 provider=`openai`、model=`gpt`、resource=`model`、勾選 active only 後用 Enter 提交，頁面顯示 `Catalog Rows`，可點擊 pricing detail link；此次 filter 後取得 161 個 detail links。 |
+| Pricing detail edit/save | 通過，進入 pricing detail 後修改 `unit_price` 與 `change_reason` 並點擊 Save，頁面保留 `Basic Info`、`Pricing`、`Change Log`；表單值反映提交後的 reason 與 price 正規化值 `0E-8`。 |
+| 手機 viewport smoke | 通過，設定 390x844 後開啟 `/dashboard/playground`，頁面非空白、可見 `Playground`，console error/warn 為 0；測完已還原 1280x720。 |
+| Browser console | 通過，桌面流程與手機 smoke 最終 `error` / `warn` 皆為 0。 |
+
+### 截圖證據
+
+截圖存於本機暫存目錄：
+
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\01-playground-empty.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\02-playground-filled.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\03-playground-result.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\04-run-detail.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\05-costs-filtered.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\06-pricing-dry-run.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\07-pricing-apply.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\08-catalog-filtered.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\09-pricing-detail-saved.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\10-pricing-detail-actual-price-saved.png`
+- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\11-mobile-playground-smoke.png`
+
+### 限制與已知問題
+
+- Dashboard 的 Catalog `Filter` 按鈕在 in-app browser 自動化座標點擊時發生一次座標轉換命中失敗；改用同一表單內輸入框按 Enter 提交後流程通過。頁面本身可提交，console 沒有錯誤。
+- Pricing detail 的 `unit_price` 提交 `0.000000001` 後頁面正規化顯示為 `0E-8`，符合目前 Decimal/資料庫精度行為；本次只記錄現況，未修改程式。
+- Dashboard QA 會在 Docker Postgres 內留下測試 run、pricing import batch、pricing change log / pricing row 更新等測試資料。
+
 ## 2026-06-01 - V1.5 文件與程式碼同步審核
 
 - 版本：`v1.5.0`
@@ -1455,7 +1566,6 @@ print('\n'.join(sorted(routes)))"
 
 -
 ```
-# 測試紀錄
 
 ## 2026-05-24 - Dashboard 全頁面雙語標題與中文標註
 

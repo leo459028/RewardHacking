@@ -54,6 +54,12 @@ def generate_api_key() -> str:
 def require_role(auth_context: AuthContext, *roles: str) -> None:
     if not auth_context.enabled:
         return
+    if auth_context.role in roles:
+        return
+    if auth_context.role == "super_admin" and "admin" in roles:
+        return
+    if auth_context.role in {"reviewer", "tenant_admin", "finops_admin"} and "viewer" in roles:
+        return
     if auth_context.role not in roles:
         raise auth_error(403, "insufficient_role", "API key role is not allowed for this operation.")
 
