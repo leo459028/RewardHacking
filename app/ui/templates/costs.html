@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Costs | FinOps{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Costs</h1>
+    <div class="title-note">Tenant Cost Summary</div>
+    <div class="muted">V1.5 Agent FinOps Core / Cost Ledger</div>
+  </div>
+  <form method="get" action="/dashboard/costs" class="inline-form">
+    <input name="tenant_id" value="{{ tenant_id }}" placeholder="tenant_id">
+    <button class="button" type="submit">Filter</button>
+  </form>
+</div>
+
+<section class="grid stats">
+  <div class="stat"><div class="stat-label">Tenant</div><div class="stat-value">{{ summary.tenant_id }}</div></div>
+  <div class="stat"><div class="stat-label">Today</div><div class="stat-value">{{ "%.8f"|format(summary.today_cost) }} USD</div></div>
+  <div class="stat"><div class="stat-label">Month To Date</div><div class="stat-value">{{ "%.8f"|format(summary.month_to_date_cost) }} USD</div></div>
+  <div class="stat"><div class="stat-label">Budget Used</div><div class="stat-value">{{ "%.2f"|format(summary.budget_used_percent) }}%</div></div>
+  <div class="stat"><div class="stat-label">Violations</div><div class="stat-value">{{ summary.violation_count }}</div></div>
+</section>
+
+<section class="detail-grid">
+  <div class="panel">
+    <h2>Top Runs</h2>
+    <table>
+      <thead><tr><th>Run</th><th>Cost</th></tr></thead>
+      <tbody>
+      {% for item in summary.top_runs %}
+        <tr><td><a href="/dashboard/runs/{{ item.run_id }}">{{ item.run_id }}</a></td><td>{{ "%.8f"|format(item.cost) }} USD</td></tr>
+      {% else %}
+        <tr><td colspan="2" class="muted">No cost events recorded.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="panel">
+    <h2>Models / Workflows</h2>
+    <h3>Models</h3>
+    <table>
+      <thead><tr><th>Model</th><th>Cost</th></tr></thead>
+      <tbody>
+      {% for item in summary.top_models %}
+        <tr><td>{{ item.model_name }}</td><td>{{ "%.8f"|format(item.cost) }} USD</td></tr>
+      {% else %}
+        <tr><td colspan="2" class="muted">No model usage recorded.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <h3>Workflows</h3>
+    <table>
+      <thead><tr><th>Workflow</th><th>Cost</th></tr></thead>
+      <tbody>
+      {% for item in summary.top_workflows %}
+        <tr><td>{{ item.workflow_id }}</td><td>{{ "%.8f"|format(item.cost) }} USD</td></tr>
+      {% else %}
+        <tr><td colspan="2" class="muted">No workflow cost recorded.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Budget Violations</h2>
+  <table>
+    <thead><tr><th>Violation</th><th>Run</th><th>Type</th><th>Decision</th><th>Actual</th><th>Limit</th></tr></thead>
+    <tbody>
+    {% for item in violations %}
+      <tr>
+        <td>{{ item.violation_id }}</td>
+        <td><a href="/dashboard/runs/{{ item.run_id }}">{{ item.run_id }}</a></td>
+        <td>{{ item.violation_type }}</td>
+        <td>{{ item.decision }}</td>
+        <td>{{ "%.8f"|format(item.actual_amount) }} {{ item.currency }}</td>
+        <td>{{ "%.8f"|format(item.limit_amount) }} {{ item.currency }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">No budget violations for this tenant.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Pricing Catalog</h2>
+  <table>
+    <thead><tr><th>Provider</th><th>Resource</th><th>Model</th><th>Unit</th><th>Price</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for item in pricing %}
+      <tr>
+        <td>{{ item.provider }}</td>
+        <td>{{ item.resource_type }}</td>
+        <td>{{ item.model_name or "generic" }}</td>
+        <td>{{ item.price_unit }}</td>
+        <td>{{ "%.8f"|format(item.unit_price) }} {{ item.currency }}</td>
+        <td>{{ "active" if item.is_active else "inactive" }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">No pricing records.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

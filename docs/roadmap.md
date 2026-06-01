@@ -1,4 +1,4 @@
-# Roadmap v1.4
+# Roadmap v1.5
 
 本 roadmap 將專案從 prototype 推進到可逐步承擔 guardrail 職責的服務。`v0.3.0` 起不再把 Kafka、Redis、Tool Executor、Approval 視為互不相干的線性 phase，而是先建立一條可展示、可查詢、可審計的產品閉環，再把完整 hardening 與 production governance 放到後續版本。
 
@@ -17,8 +17,9 @@
 | `v1.1.0` | 已完成 | Classical Chinese Prompt Guard | 偵測古文/文言式繞語包裝的 prompt injection、policy bypass、憑證外洩、破壞資料與惡意程式意圖，並在 API、Dashboard、metrics 與測試中可查。 |
 | `v1.2.0` | 已完成 | Control Plane Execution Plan | 新增 workflow/tool registry、execution plan persistence、Run Detail Execution Plan 與 Control Plane Dashboard，讓 queued run 在 worker 執行前已有可審計計畫。 |
 | `v1.3.0` | 已完成 | Trace / Replay Readiness | 串接 run、execution plan 與 step audit 的 trace id，新增 trace API、replay bundle API、step-level audit、Dashboard Trace / Replay 區塊與 control-plane plan health。 |
-| `v1.4.0` | 目前版本 | Checkpoint / Resume / Replay MVP | 新增 submit/resume checkpoint、checkpoint API、resume API、dry-run replay attempt、Run Detail Checkpoint / Resume 與 Control Plane Resumable / Replayable 欄位。 |
-| `v1.5+` | 規劃中 | Production Operations Automation / C-full | 補真實 backup/restore automation、retention purge、secret rotation automation、完整 OpenTelemetry、Kafka lag alert、LLM judge、MCP Gateway、真實 LangGraph checkpoint/resume、真正 replay execution 與更完整評測資料集。 |
+| `v1.4.0` | 已完成 | Checkpoint / Resume / Replay MVP | 新增 submit/resume checkpoint、checkpoint API、resume API、dry-run replay attempt、Run Detail Checkpoint / Resume 與 Control Plane Resumable / Replayable 欄位。 |
+| `v1.5.0` | 目前版本 | Agent FinOps Core / Cost Ledger | 新增 pricing catalog、usage events、cost events、budget policies、budget violations、FinOps API、Run Detail Cost Summary 與 `/dashboard/costs`。 |
+| `v1.6+` | 規劃中 | Cost-aware Execution / Safe MCP | 補 cost-aware routing、Token Broker、Safe MCP、model/tool routing、完整 OpenTelemetry、Kafka lag alert、LLM judge、真實 LangGraph checkpoint/resume、真正 replay execution 與更完整評測資料集。 |
 
 ## Milestone：v0.2.0 / Phase 0-2 + Dashboard
 
@@ -285,6 +286,25 @@
 - 真實 LangGraph checkpoint/resume runtime。
 - 真正重放外部工具或外部副作用。
 - MCP Gateway、object storage、OTLP/LangSmith exporter 或完整 OS sandbox。
+
+## Milestone：v1.5.0 / Agent FinOps Core / Cost Ledger
+
+目標：
+- 在不引入 cost-aware routing、Token Broker、Safe MCP 或外部費率同步的前提下，先建立可審計的成本資料層。
+
+已完成：
+- 新增 `pricing_catalog`、`usage_events`、`cost_events`、`budget_policies`、`budget_violations`。
+- Submit flow 寫入 estimated usage / cost events。
+- Worker completion 寫入 actual usage / cost events。
+- Resume 與 replay flow 寫入 checkpoint / replay usage events。
+- 新增 FinOps API：pricing、usage events、run/tenant/workflow/model cost、budget policies、budget violations。
+- Run Detail 新增 `Cost Summary`；新增 `/dashboard/costs`。
+- 新增 `tests/test_v15_finops_core.py` 並納入 regression。
+
+目前限制：
+- V1.5 只記錄 budget violation，不阻擋執行，也不改變 model/tool routing。
+- Pricing 目前是 deterministic internal catalog，不從外部供應商同步。
+- Tenant/workflow/model monthly budget aggregation 已保留資料模型與 summary 基礎，V1.5 的自動 violation check 先以 run scope 為主。
 
 ## 優先順序
 

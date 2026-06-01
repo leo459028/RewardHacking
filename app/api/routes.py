@@ -63,6 +63,20 @@ from app.schemas.checkpoint import (
     ResumeRunResponse,
     RunCheckpointRecord,
 )
+from app.schemas.finops import (
+    BudgetPolicyCreateRequest,
+    BudgetPolicyRecord,
+    BudgetPolicyUpdateRequest,
+    BudgetViolationRecord,
+    CostEventRecord,
+    PricingCatalogCreateRequest,
+    PricingCatalogRecord,
+    PricingCatalogUpdateRequest,
+    RunCostSummaryResponse,
+    TenantCostSummaryResponse,
+    UsageEventCreateRequest,
+    UsageEventRecord,
+)
 from app.services.events import EventPublisher
 from app.services.auth import (
     AuthContext,
@@ -129,6 +143,30 @@ from app.services.checkpoint import (
     persist_run_checkpoint,
     replay_attempt_to_dict,
     resume_run_from_checkpoint,
+)
+from app.services.finops import (
+    budget_to_dict,
+    cost_to_dict,
+    create_budget_policy,
+    create_pricing_item,
+    disable_pricing_item,
+    list_budget_policies,
+    list_budget_violations,
+    list_pricing_items,
+    list_usage_events,
+    model_cost_ranking,
+    pricing_to_dict,
+    record_checkpoint_usage,
+    record_replay_usage,
+    record_submit_usage,
+    record_usage_event,
+    run_cost_summary,
+    tenant_cost_summary,
+    update_budget_policy,
+    update_pricing_item,
+    usage_to_dict,
+    violation_to_dict,
+    workflow_cost_summary,
 )
 from app.services.orchestrator import OrchestrationResult
 from app.workers.producer import make_event
@@ -275,6 +313,54 @@ def _checkpoint_record(checkpoint) -> RunCheckpointRecord:
 
 def _replay_attempt_record(attempt) -> ReplayAttemptRecord:
     return ReplayAttemptRecord(**replay_attempt_to_dict(attempt))
+
+
+def _pricing_record(item) -> PricingCatalogRecord:
+    return PricingCatalogRecord(**pricing_to_dict(item))
+
+
+def _usage_record(item) -> UsageEventRecord:
+    return UsageEventRecord(**usage_to_dict(item))
+
+
+def _cost_record(item) -> CostEventRecord:
+    return CostEventRecord(**cost_to_dict(item))
+
+
+def _budget_record(item) -> BudgetPolicyRecord:
+    return BudgetPolicyRecord(**budget_to_dict(item))
+
+
+def _violation_record(item) -> BudgetViolationRecord:
+    return BudgetViolationRecord(**violation_to_dict(item))
+
+
+def _run_cost_response(summary) -> RunCostSummaryResponse:
+    return RunCostSummaryResponse(
+        run_id=summary.run_id,
+        tenant_id=summary.tenant_id,
+        estimated_cost=summary.estimated_cost,
+        actual_cost=summary.actual_cost,
+        cost_delta=summary.cost_delta,
+        currency=summary.currency,
+        budget_status=summary.budget_status,
+        breakdown=summary.breakdown,
+        usage_events=[_usage_record(item) for item in summary.usage_events],
+        cost_events=[_cost_record(item) for item in summary.cost_events],
+    )
+
+
+def _tenant_cost_response(summary) -> TenantCostSummaryResponse:
+    return TenantCostSummaryResponse(
+        tenant_id=summary.tenant_id,
+        today_cost=summary.today_cost,
+        month_to_date_cost=summary.month_to_date_cost,
+        budget_used_percent=summary.budget_used_percent,
+        violation_count=summary.violation_count,
+        top_runs=summary.top_runs,
+        top_models=summary.top_models,
+        top_workflows=summary.top_workflows,
+    )
 
 
 def _resume_cursor_for_status(status: str) -> str:
@@ -624,6 +710,200 @@ async def post_revoke_tenant_api_key(
     return api_key
 
 
+@router.get("/pricing", response_model=list[PricingCatalogRecord])
+async def get_pricing_catalog(
+    active_only: bool = False,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    return [_pricing_record(item) for item in await list_pricing_items(session, active_only=active_only)]
+
+
+@router.post("/pricing", response_model=PricingCatalogRecord)
+async def post_pricing_catalog_item(
+    payload: PricingCatalogCreateRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin")
+    return _pricing_record(await create_pricing_item(session, payload))
+
+
+@router.patch("/pricing/{pricing_id}", response_model=PricingCatalogRecord)
+async def patch_pricing_catalog_item(
+    pricing_id: str,
+    payload: PricingCatalogUpdateRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin")
+    item = await update_pricing_item(session, pricing_id, payload)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Pricing item not found.")
+    return _pricing_record(item)
+
+
+@router.delete("/pricing/{pricing_id}", response_model=PricingCatalogRecord)
+async def delete_pricing_catalog_item(
+    pricing_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin")
+    item = await disable_pricing_item(session, pricing_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Pricing item not found.")
+    return _pricing_record(item)
+
+
+@router.post("/usage-events", response_model=UsageEventRecord)
+async def post_usage_event(
+    payload: UsageEventCreateRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "operator", "admin")
+    tenant_id = _query_tenant(payload.tenant_id or "default", auth_context) or payload.tenant_id or "default"
+    payload = payload.model_copy(update={"tenant_id": tenant_id})
+    return _usage_record(await record_usage_event(session, payload))
+
+
+@router.get("/usage-events/runs/{run_id}", response_model=list[UsageEventRecord])
+async def get_run_usage_events(
+    run_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    run = await get_run(session, run_id)
+    if run is not None:
+        _query_tenant(run.tenant_id, auth_context)
+    events = await list_usage_events(session, run_id=run_id)
+    if run is None and events:
+        _query_tenant(events[0].tenant_id, auth_context)
+    return [_usage_record(item) for item in events]
+
+
+@router.get("/usage-events/tenants/{tenant_id}", response_model=list[UsageEventRecord])
+async def get_tenant_usage_events(
+    tenant_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    tenant_id = _query_tenant(tenant_id, auth_context) or tenant_id
+    return [_usage_record(item) for item in await list_usage_events(session, tenant_id=tenant_id)]
+
+
+@router.get("/cost/runs/{run_id}", response_model=RunCostSummaryResponse)
+async def get_run_cost(
+    run_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    run = await get_run(session, run_id)
+    if run is not None:
+        _query_tenant(run.tenant_id, auth_context)
+    summary = await run_cost_summary(session, run_id=run_id)
+    if run is None and not summary.cost_events:
+        raise HTTPException(status_code=404, detail="Run cost not found.")
+    if run is None and summary.tenant_id:
+        _query_tenant(summary.tenant_id, auth_context)
+    return _run_cost_response(summary)
+
+
+@router.get("/cost/tenants/{tenant_id}", response_model=TenantCostSummaryResponse)
+async def get_tenant_cost(
+    tenant_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    tenant_id = _query_tenant(tenant_id, auth_context) or tenant_id
+    return _tenant_cost_response(await tenant_cost_summary(session, tenant_id=tenant_id))
+
+
+@router.get("/cost/workflows/{workflow_id}")
+async def get_workflow_cost(
+    workflow_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    tenant_id = _query_tenant(None, auth_context)
+    return await workflow_cost_summary(session, workflow_id=workflow_id, tenant_id=tenant_id)
+
+
+@router.get("/cost/models")
+async def get_model_costs(
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    tenant_id = _query_tenant(None, auth_context)
+    return await model_cost_ranking(session, tenant_id=tenant_id)
+
+
+@router.get("/budgets", response_model=list[BudgetPolicyRecord])
+async def get_budget_policies(
+    tenant_id: str | None = None,
+    active_only: bool = False,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    tenant_id = _query_tenant(tenant_id, auth_context)
+    return [
+        _budget_record(item)
+        for item in await list_budget_policies(session, tenant_id=tenant_id, active_only=active_only)
+    ]
+
+
+@router.post("/budgets", response_model=BudgetPolicyRecord)
+async def post_budget_policy(
+    payload: BudgetPolicyCreateRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin")
+    tenant_id = _query_tenant(payload.tenant_id or "default", auth_context) or payload.tenant_id or "default"
+    payload = payload.model_copy(update={"tenant_id": tenant_id})
+    return _budget_record(await create_budget_policy(session, payload))
+
+
+@router.patch("/budgets/{budget_id}", response_model=BudgetPolicyRecord)
+async def patch_budget_policy(
+    budget_id: str,
+    payload: BudgetPolicyUpdateRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin")
+    item = await update_budget_policy(session, budget_id, payload)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Budget policy not found.")
+    _query_tenant(item.tenant_id, auth_context)
+    return _budget_record(item)
+
+
+@router.get("/budget-violations", response_model=list[BudgetViolationRecord])
+async def get_budget_violations(
+    tenant_id: str | None = None,
+    run_id: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    tenant_id = _query_tenant(tenant_id, auth_context)
+    return [
+        _violation_record(item)
+        for item in await list_budget_violations(session, tenant_id=tenant_id, run_id=run_id, limit=limit)
+    ]
+
+
 @router.post("/agent/submit", response_model=AgentResponse)
 async def submit_agent_request(
     request: Request,
@@ -723,6 +1003,7 @@ async def submit_agent_request(
             resume_cursor=_resume_cursor_for_status(run.status),
             created_by=_actor(auth_context),
         )
+        await record_submit_usage(session, run=run, plan=plan)
     await state_store.set_run_state(result.response.run_id, result.response.status)
     if result.response.status == "queued":
         event = make_event(
@@ -842,6 +1123,7 @@ async def submit_agent_request_with_details(
             resume_cursor=_resume_cursor_for_status(run.status),
             created_by=_actor(auth_context),
         )
+        await record_submit_usage(session, run=run, plan=plan)
     await state_store.set_run_state(result.response.run_id, result.response.status)
     if result.response.status == "queued":
         event = make_event(
@@ -1062,6 +1344,7 @@ async def post_run_resume(
         created_by=payload.created_by,
     )
     await session.refresh(run)
+    await record_checkpoint_usage(session, run=run, plan=plan, checkpoint=checkpoint)
     await state_store.set_run_state(run.run_id, run.status)
     event = make_event("agent.requested", run.run_id, {"request": run.request_payload})
     await event_publisher.publish(get_settings().kafka_request_topic, run.run_id, event)
@@ -1092,6 +1375,7 @@ async def post_run_replay(
         mode=payload.mode,
         created_by=payload.created_by,
     )
+    await record_replay_usage(session, run=run, plan=plan, attempt=attempt)
     return _replay_attempt_record(attempt)
 
 

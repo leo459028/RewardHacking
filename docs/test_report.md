@@ -1,5 +1,128 @@
 # 測試紀錄
 
+## 2026-06-01 - V1.5 文件與程式碼同步審核
+
+- 版本：`v1.5.0`
+- 分支：`codex/v1.5-finops-core`
+- 同步範圍：README、API 文件、資料模型、Kafka topics、Runbook、文件總覽與圖資說明，對齊目前程式碼中的 V1.5 FinOps Core、Control Plane routing reason、release gate 預設版本、Alembic head 與 Dashboard 成本入口。
+
+### 同步項目
+
+| 項目 | 實際結果 |
+| --- | --- |
+| README 版本脈絡 | 已將 V1.4 小節標為歷史版本，保留脈絡並避免與目前 `v1.5.0` 衝突。 |
+| Control Plane API 範例 | 已將 `routing_reason` 範例同步為 `V1.5 deterministic route for analysis.`，對齊 `app/services/control_plane.py`。 |
+| Data Model | 已將 release gate 範例版本改為 `v1.5.0`，並確認 FinOps tables、重要欄位與 `budget_violations.actual_amount` 說明對齊程式碼。 |
+| Kafka Topics / Runbook | 已補上 submit/resume/worker completion 寫入 usage/cost events 的 V1.5 行為。 |
+| 圖資說明 | 已標示目前仍使用 V1.1 歷史圖資，V1.5 FinOps 以文字文件、API 與 Dashboard 為準，尚未新增 `*-v15.png`。 |
+| stale scan | `rg` 未找到仍把 V1.4 誤標為目前版本、`V1.4 deterministic route`、`*-v14` 或「V1.4 文件已補」等過期字樣。 |
+
+### 驗證命令
+
+| 指令 | 實際結果 |
+| --- | --- |
+| `pytest tests/test_v15_finops_core.py -q` | 通過，`5 passed in 1.91s` |
+| `ruff check app tests` | 通過，`All checks passed!` |
+| `git diff --check` | 通過，沒有 whitespace error |
+
+### Dashboard / Docker 狀態
+
+- 本次同步沒有新增 Dashboard 行為；沿用同日 V1.5 完整 Dashboard 成本 QA 的輸入、點擊、budget violation 與 console health 驗證。
+- Docker Compose 服務仍維持執行，可直接開 `/dashboard/costs?tenant_id=qa-v15-full-20260601` 人工檢查成本頁。
+
+## 2026-06-01 - V1.5 完整測試 / Dashboard 成本輸入點擊 QA
+
+- 版本：`v1.5.0`
+- 分支：`codex/v1.5-finops-core`
+- 測試範圍：FinOps Core API、migration 往返、完整 pytest、ruff、Docker runtime smoke、Dashboard Playground 輸入與點擊、Run Detail `Cost Summary`、Costs Dashboard tenant 篩選、低額 budget policy 觸發成本違規。
+
+### 自動化測試
+
+| 指令 | 實際結果 |
+| --- | --- |
+| `pytest tests/test_v15_finops_core.py -q` | 通過，`5 passed in 2.32s` |
+| `pytest tests/test_v14_checkpoint_replay.py tests/test_v13_trace_replay.py tests/test_v12_control_plane.py tests/test_api.py -q` | 通過，`21 passed in 7.49s` |
+| `pytest -q` | 通過，`67 passed in 17.61s` |
+| `ruff check app tests` | 通過，`All checks passed!` |
+| `git diff --check` | 通過，沒有 whitespace error |
+| `alembic upgrade head` | 通過，本機資料庫已在 head |
+| `alembic downgrade -1` | 通過，從 `202606010003` 降回 `202606010002` |
+| `alembic upgrade head` | 通過，重新升到 `202606010003` |
+
+### Docker / API Runtime
+
+| 指令 | 實際結果 |
+| --- | --- |
+| `docker compose ps` | 通過，`api`、`worker`、`postgres`、`redis`、`kafka` 皆為 Up，Postgres / Redis / Kafka 為 healthy |
+| `docker compose exec -T api alembic upgrade head` | 通過，container 內 Alembic 沒有 pending migration |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/healthz` | HTTP 200，回傳 `{"status":"ok"}` |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/readyz` | HTTP 200，回傳 `{"status":"ready"}` |
+
+### Dashboard 輸入、點擊與成本測試
+
+| 流程 | 實際結果 |
+| --- | --- |
+| `/dashboard/playground` 填入 tenant / user / goal / prompt / allowed tools / max tool calls，點擊 `Submit Run` | 通過，建立低風險 run `df23a3e1-67a5-46b4-a727-e5daded0b5f7` |
+| 點擊 `Open run detail` 進入 `/dashboard/runs/{run_id}` | 通過，Run Detail 顯示 `Cost Summary`、`Estimated`、`Actual` |
+| 從側邊欄點擊 `Costs`，在 tenant filter 輸入 `qa-v15-full-20260601` 並點擊 `Filter` | 通過，Costs Dashboard 顯示 `Tenant Cost Summary`、`Top Runs`、`Budget Violations`、`Pricing Catalog`，且 Top Runs 包含 run `df23a3e1-67a5-46b4-a727-e5daded0b5f7` |
+| 透過 `/v1/budgets` 建立低額 run budget policy | 通過，建立 `budget_f4d301c8f8e5476e8f5b1be8c8cdc11c`，`limit_amount=0.000001` |
+| 再次從 `/dashboard/playground` 填表並點擊 `Submit Run` | 通過，建立 budget 測試 run `de457c7e-983e-4034-a07a-7123cdf3a096` |
+| 查詢 `/v1/budget-violations?run_id=de457c7e-983e-4034-a07a-7123cdf3a096` | 通過，回傳 1 筆 violation：`bv_c79b567690084b7b9869e1e4f8b3e971`，`violation_type=run_budget_exceeded` |
+| 回到 `/dashboard/costs`，輸入同一個 tenant 並點擊 `Filter` | 通過，頁面顯示 `run_budget_exceeded`，且能看到 budget 測試 run `de457c7e-983e-4034-a07a-7123cdf3a096` |
+| Browser console | 通過，error / warn 數量為 0 |
+
+### 限制與備註
+
+- 目前 Costs Dashboard 是查詢型頁面，尚未提供建立 budget policy 的表單；本次為了完整驗證 budget violation，使用 `/v1/budgets` API 建立低額 policy，再回 Dashboard 驗證查詢與顯示。
+- 本次 Browser QA 已截取 Run Detail 與 Costs 頁面畫面做視覺確認；Browser 執行環境無法直接寫入截圖檔，所以此報告以 run id、API 查詢結果、DOM 文字驗證與 console health 作為可追溯證據。
+- Docker Compose 服務在測試後仍維持執行，方便後續人工驗證 Dashboard。
+
+## 2026-06-01 - V1.5 Agent FinOps Core / Cost Ledger
+
+- 版本：`v1.5.0`
+- 分支：`codex/v1.5-finops-core`
+- 變更範圍：新增 FinOps 成本資料層，包含 `pricing_catalog`、`usage_events`、`cost_events`、`budget_policies`、`budget_violations`、FinOps API、Run Detail `Cost Summary`、`/dashboard/costs`，以及 submit / worker completion / resume / replay 的 deterministic usage/cost event 寫入。
+- Alembic head：`202606010003_add_v15_finops_core.py`
+
+### 自動化測試
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `pytest tests/test_v15_finops_core.py -q` | 通過，`5 passed in 2.00s`。先前 TDD 紅燈為 5 failed，原因是 FinOps routes 尚未實作；實作後已轉綠。 |
+| `pytest tests/test_v14_checkpoint_replay.py tests/test_v13_trace_replay.py tests/test_v12_control_plane.py tests/test_api.py -q` | 通過，`21 passed in 7.05s`。 |
+| `pytest -q` | 通過，`67 passed in 17.77s`。 |
+| `ruff check app tests` | 通過，`All checks passed!`。 |
+| `git diff --check` | 通過，無 whitespace error。 |
+| `alembic upgrade head` | 通過，本機 Postgres 從 `202606010002` 升級到 `202606010003`。 |
+| `alembic downgrade -1` | 通過，本機 Postgres 從 `202606010003` 回退到 `202606010002`。 |
+| `alembic upgrade head` | 通過，本機 Postgres 再升級到 `202606010003`。 |
+
+### Docker 驗證
+
+| 命令 | 實際結果 |
+| --- | --- |
+| `docker compose up -d --build` | 初次在 sandbox 內因 Docker config / daemon pipe 權限失敗；核准後重跑通過，API、worker image rebuild 成功，Postgres、Redis、Kafka、API、worker 啟動。 |
+| `docker compose exec -T api alembic upgrade head` | 通過，container 內 Alembic head 可套用，無 pending migration error。 |
+| `docker compose ps` | 通過，`api`、`worker`、`postgres`、`redis`、`kafka` 皆為 Up；Postgres/Redis/Kafka 顯示 healthy。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/healthz` | HTTP 200，回傳 `{"status":"ok"}`。 |
+| `Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/readyz` | HTTP 200，回傳 `{"status":"ready"}`。 |
+
+### Dashboard 驗證
+
+| 驗證項目 | 實際結果 |
+| --- | --- |
+| `/dashboard/playground` 建立低風險 run | 通過，建立 run `6f5db65b-21c2-4f3e-b5f0-e8e87f7b0bf6`，頁面顯示 `Open run detail`。 |
+| `/dashboard/runs/{run_id}` Cost Summary | 通過，Run Detail 顯示 `Cost Summary`、`Estimated`、`Actual`、`Budget`。 |
+| `/dashboard/costs` 成本總覽 | 通過，頁面顯示 `Tenant Cost Summary`、`Top Runs`、`Budget Violations`、`Pricing Catalog`，且可看到該 run id。 |
+| 超額 budget policy | 通過，建立 `budget_601f98fda815422692e43461f940e236`，再建立 run `ad46e230-79c3-4dec-aa58-3236c5f33e73` 後，`/v1/budget-violations?run_id=...` 回傳 1 筆 `run_budget_exceeded`。 |
+| `/dashboard/costs` budget violation 顯示 | 通過，頁面顯示 `run_budget_exceeded` 與 run `ad46e230-79c3-4dec-aa58-3236c5f33e73`。 |
+
+### 已知限制
+
+- V1.5 只做成本帳本資料層；budget violation 只記錄與查詢，不會阻擋 run，也不會改變 model/tool routing。
+- Pricing 目前是 deterministic internal catalog，不從外部供應商同步。
+- V1.6 才規劃 cost-aware execution、Token Broker、Safe MCP、model/tool routing 與更完整成本治理自動化。
+
 這份文件用來記錄本專案每次完成實作或文件同步後，實際執行過的測試與驗證結果。
 
 請不要只填預期結果；如果某項驗證沒有執行，要清楚寫明原因。例如：純文件修改未啟動 Docker、Docker Desktop 尚未開啟、或本次沒有影響 Dashboard。

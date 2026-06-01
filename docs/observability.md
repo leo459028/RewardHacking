@@ -1,4 +1,15 @@
-# Observability v1.4
+# Observability v1.5
+
+## V1.5 FinOps Observability 補充
+
+V1.5 新增成本帳本查詢，但不新增 Prometheus metric。FinOps 的可觀測性來源是 Postgres audit tables 與 Dashboard/API：
+- `usage_events`：submit、worker completion、resume、replay 與 manual usage records。
+- `cost_events`：estimated / actual cost ledger。
+- `budget_violations`：run budget exceeded 或 missing pricing rule 等事件。
+- `/v1/cost/runs/{run_id}`、`/v1/cost/tenants/{tenant_id}`、`/v1/budget-violations`：API 查詢入口。
+- `/dashboard/runs/{run_id}` 的 `Cost Summary` 與 `/dashboard/costs`：Dashboard 查詢入口。
+
+目前限制：V1.5 不做 cost-driven alerting、外部 billing exporter、OTLP span cost annotation 或 cost-aware routing。
 
 ## V1.4 Checkpoint / Replay Observability 補充
 
@@ -16,7 +27,7 @@ Trace 現況：HTTP `X-Trace-Id` 會進入 run request metadata、`execution_pla
 
 本專案目前提供 Prometheus metrics 與 structured logging 的基礎。Dashboard 會從 Postgres audit trail 讀取 runs/incidents/governance events/operations evidence；Prometheus metrics 仍由 `/v1/metrics` 提供。`AUTH_ENABLED=true` 時，`/v1/metrics` 需要 `X-API-Key`，允許 `viewer/operator/admin` 讀取。
 
-目前 observability 基線：`v1.4.0`
+目前 observability 基線：`v1.5.0`
 
 ## Metrics Endpoint
 
@@ -63,6 +74,11 @@ GET /v1/metrics
 - `execution_plan_steps`
 - `run_checkpoints`
 - `replay_attempts`
+- `pricing_catalog`
+- `usage_events`
+- `cost_events`
+- `budget_policies`
+- `budget_violations`
 
 主要畫面：
 

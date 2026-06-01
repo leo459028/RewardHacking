@@ -1,5 +1,7 @@
 # 資料模型
 
+目前資料模型版本：`v1.5.0`
+
 本專案目前使用 SQLAlchemy models 搭配 Alembic migration 管理 Postgres audit tables。API submit 後會將 run 與 incident 寫入資料庫，dashboard 與查詢 API 都從同一份資料讀取。
 
 ## SQLAlchemy Models
@@ -172,7 +174,7 @@ Tables：`release_gate_runs`、`release_gate_items`
 | 欄位 | 型別 | 說明 |
 | --- | --- | --- |
 | `gate_id` | string | 對外查詢 release gate 的 ID |
-| `release_version` | string | 例如 `v1.4.0` |
+| `release_version` | string | 例如 `v1.5.0` |
 | `status` | string | `pass`、`warn` 或 `fail` |
 | `summary` | text | gate 結果摘要 |
 | `created_by` | string | 建立者 |
@@ -287,6 +289,72 @@ V1.4 新增 dry-run replay attempt。Replay attempt 只重建 policy、workflow 
 | `limitations` | JSON | 明確記錄不呼叫外部工具、不改外部狀態 |
 | `created_by` | string | 建立者 |
 | `created_at` | timestamp | 建立時間 |
+
+### `PricingCatalog`
+
+Table：`pricing_catalog`
+
+V1.5 新增 deterministic pricing catalog，用來把 usage event 換算成 cost event。內建 default pricing 由 service 首次記帳時寫入，包含 model input/output tokens、tool call、worker seconds、artifact MB、checkpoint write 與 replay attempt。
+
+| 欄位 | 型別 | 說明 |
+| --- | --- | --- |
+| `pricing_id` | string | pricing record id |
+| `provider` | string | 目前預設 `internal` |
+| `resource_type` | string | `model`、`tool`、`compute`、`storage`、`checkpoint`、`replay` |
+| `model_name` | string | model 名稱；generic pricing 會留空 |
+| `price_unit` | string | `input_tokens`、`output_tokens`、`tool_call`、`worker_seconds` 等 |
+| `unit_price` | numeric | 單位價格 |
+| `currency` | string | 目前預設 `USD` |
+| `is_active` | boolean | 軟停用用欄位 |
+| `metadata_payload` | JSON | pricing 來源與備註 |
+
+### `UsageEvent`
+
+Table：`usage_events`
+
+V1.5 成本帳本的原始用量事件。Submit 會寫 estimated usage；worker completion 會寫 actual usage；resume 與 replay 會寫 checkpoint / replay usage。
+
+| 欄位 | 型別 | 說明 |
+| --- | --- | --- |
+| `usage_id` | string | usage event id |
+| `tenant_id` / `user_id` / `run_id` / `trace_id` | string | 成本歸屬與追蹤欄位 |
+| `workflow_id` / `step_id` | string | 對應 execution plan / step |
+| `checkpoint_id` / `replay_attempt_id` | string | resume 或 replay linkage |
+| `provider` / `model_name` | string | provider 與 model metadata |
+| `resource_type` | string | 成本資源類型 |
+| `usage_unit` | string | pricing lookup 使用的單位 |
+| `quantity` | numeric | deterministic 用量 |
+| `phase` | string | `estimated`、`actual`、`resume`、`replay`、`manual` |
+| `metadata_payload` | JSON | 來源與細節 |
+
+### `CostEvent`
+
+Table：`cost_events`
+
+每筆 usage event 會依 pricing catalog 產生一筆 cost event。Estimated phase 會寫 `estimated_cost`，actual phase 會寫 `actual_cost`。
+
+| 欄位 | 型別 | 說明 |
+| --- | --- | --- |
+| `cost_id` | string | cost event id |
+| `usage_event_id` | string | 對應 usage event |
+| `pricing_catalog_id` | string | 使用的 pricing record |
+| `tenant_id` / `run_id` / `trace_id` / `workflow_id` | string | 成本歸屬 |
+| `resource_type` / `model_name` | string | 成本資源 metadata |
+| `estimated_cost` / `actual_cost` | numeric | estimated 與 actual 成本 |
+| `currency` | string | 幣別 |
+| `allocation_tags` | JSON | tenant/workflow allocation tags |
+| `calculation_method` | string | 目前與 usage `phase` 對齊 |
+
+### `BudgetPolicy` / `BudgetViolation`
+
+Tables：`budget_policies`、`budget_violations`
+
+V1.5 先支援 run-level budget policy。當同一 run 的 estimated + actual cost 超過 active run budget 時，系統會建立 `budget_violations`。目前 violation 只記錄與查詢，不會阻擋 run 或改變 routing。
+
+| Table | 重要欄位 | 說明 |
+| --- | --- | --- |
+| `budget_policies` | `budget_id`、`tenant_id`、`scope`、`period`、`limit_amount`、`actions`、`is_active` | 定義 tenant/run/workflow/model budget；V1.5 實作 run scope 檢查 |
+| `budget_violations` | `violation_id`、`budget_id`、`tenant_id`、`run_id`、`violation_type`、`actual_amount`、`limit_amount`、`decision` | 保存超額事件，`violation_type=run_budget_exceeded` |
 
 ## Event Schemas
 
