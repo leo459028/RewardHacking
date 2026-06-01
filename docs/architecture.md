@@ -1,12 +1,14 @@
-# 架構文件 v1.4
+# 架構文件 v1.5
 
 本專案目前是 Agent Reward-Hacking Guardrail 的 guarded async execution hardening 版本。核心流程是 FastAPI API 接收 agent request、進行 prompt sanitation / Prompt Guard analysis、risk scoring 與 policy decision；低風險任務寫入 Postgres audit trail、標記為 `queued`，並 publish Kafka request event；worker 重新讀取 run、重跑 policy、執行 bounded executor、evaluate 結果並寫回 audit trail。高風險或 destructive 任務會進入 `awaiting_approval`，由 Dashboard 或 API 進行審核。
 
-目前架構版本：`v1.4.0`
+目前架構版本：`v1.5.0`
 
 V1.3 延續 V1.2 Control Plane Execution Plan，新增 Trace / Replay Readiness。API submit 會沿用 `X-Trace-Id`，並把同一個 trace id 關聯到 run request metadata、`execution_plans.trace_id` 與 `execution_plan_steps.trace_id`。Run Detail Dashboard 可直接查看 Trace / Replay、Replay Bundle 入口與 Step Audit；Control Plane Dashboard 也會顯示 Trace ID、Step Summary 與 Plan Health。
 
 V1.4 在 V1.3 的 trace/replay bundle 上新增 Checkpoint / Resume / Replay MVP。Submit flow 會保存 run checkpoint；resume API 會建立 resume checkpoint 並把 run 放回 worker queue；replay API 會建立 dry-run replay attempt，重建 policy、workflow 與 step context，但不呼叫真實外部工具。
+
+V1.5 新增 Agent FinOps Core / Cost Ledger。Submit、worker completion、resume 與 replay flow 會寫入 deterministic usage/cost events；pricing catalog、budget policies 與 budget violations 都保存於 Postgres，並透過 `/v1/cost/*`、`/v1/budget-violations`、Run Detail Cost Summary 與 `/dashboard/costs` 查詢。V1.5 不做 cost-aware routing、Token Broker、Safe MCP 或外部費率同步。
 
 ## V1.1 架構圖資
 
@@ -176,6 +178,8 @@ sequenceDiagram
 - `ExecutionPlanStep`：保存 V1.3 step-level audit，支援 trace timeline、Replay Bundle 與 Dashboard Step Audit。
 - `RunCheckpoint`：保存 V1.4 submit/resume checkpoint，包含 request、policy、execution plan 摘要、step count 與 resume cursor。
 - `ReplayAttempt`：保存 V1.4 dry-run replay attempt，記錄 replay mode、結果摘要與不執行外部工具的限制。
+- `PricingCatalog` / `UsageEvent` / `CostEvent`：保存 V1.5 pricing、usage 與 estimated/actual cost ledger。
+- `BudgetPolicy` / `BudgetViolation`：保存 V1.5 budget policy 與 run budget exceeded 等可查詢事件。
 
 ### `app/workers`
 

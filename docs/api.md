@@ -1,8 +1,10 @@
-# API 文件 v1.4
+# API 文件 v1.5
 
 API 由 FastAPI 提供，所有 JSON API route 都掛在 `/v1` prefix 下。啟動後可透過 OpenAPI UI 查看互動式文件：
 
-目前 API 版本：`v1.4.0`
+目前 API 版本：`v1.5.0`
+
+V1.5 新增 Agent FinOps Core / Cost Ledger API，用來查 pricing、usage、cost、budget policy 與 budget violation。這一版只建立 deterministic 成本資料層，不包含 cost-aware routing、Token Broker、Safe MCP 或外部費率同步。
 
 - `http://localhost:8000/docs`
 - `http://localhost:8000/redoc`
@@ -28,6 +30,21 @@ API 由 FastAPI 提供，所有 JSON API route 都掛在 `/v1` prefix 下。啟�
 | `GET` | `/v1/runs/{run_id}/checkpoints` | 查詢單一 run 的 checkpoint timeline |
 | `POST` | `/v1/runs/{run_id}/resume` | 建立 resume checkpoint，將 run 放回 worker queue |
 | `POST` | `/v1/runs/{run_id}/replay` | 建立 dry-run replay attempt，不呼叫真實外部工具 |
+| `GET` | `/v1/pricing` | 查詢 pricing catalog，支援 `active_only` |
+| `POST` | `/v1/pricing` | 建立 pricing catalog item，需 `admin` role |
+| `PATCH` | `/v1/pricing/{pricing_id}` | 更新 pricing catalog item，需 `admin` role |
+| `DELETE` | `/v1/pricing/{pricing_id}` | 軟停用 pricing catalog item，需 `admin` role |
+| `POST` | `/v1/usage-events` | 手動寫入 usage event 並自動計算 cost event，需 `operator` 或 `admin` role |
+| `GET` | `/v1/usage-events/runs/{run_id}` | 查詢單一 run 的 usage events |
+| `GET` | `/v1/usage-events/tenants/{tenant_id}` | 查詢 tenant usage events |
+| `GET` | `/v1/cost/runs/{run_id}` | 查詢 run-level estimated / actual cost summary |
+| `GET` | `/v1/cost/tenants/{tenant_id}` | 查詢 tenant cost summary、top runs/models/workflows |
+| `GET` | `/v1/cost/workflows/{workflow_id}` | 查詢 workflow total cost |
+| `GET` | `/v1/cost/models` | 查詢 model cost ranking |
+| `GET` | `/v1/budgets` | 查詢 budget policies，支援 `tenant_id` 與 `active_only` |
+| `POST` | `/v1/budgets` | 建立 budget policy，需 `admin` role |
+| `PATCH` | `/v1/budgets/{budget_id}` | 更新 budget policy，需 `admin` role |
+| `GET` | `/v1/budget-violations` | 查詢 budget violations，支援 `tenant_id`、`run_id` 與 `limit` |
 | `GET` | `/v1/runs/{run_id}/incidents` | 查詢單一 run 的 incidents |
 | `GET` | `/v1/incidents` | 查詢 incidents |
 | `GET` | `/v1/approvals` | 查詢 awaiting approval 的 runs |
@@ -63,6 +80,7 @@ Dashboard UI 另提供：
 - `/dashboard/observability`
 - `/dashboard/governance`
 - `/dashboard/control-plane`
+- `/dashboard/costs`
 - `/dashboard/operations`
 - `/dashboard/playground`
 
@@ -96,6 +114,21 @@ Dashboard UI 另提供：
 - `GET /v1/runs/{run_id}/checkpoints`
 - `POST /v1/runs/{run_id}/resume`
 - `POST /v1/runs/{run_id}/replay`
+- `GET /v1/pricing`
+- `POST /v1/pricing`
+- `PATCH /v1/pricing/{pricing_id}`
+- `DELETE /v1/pricing/{pricing_id}`
+- `POST /v1/usage-events`
+- `GET /v1/usage-events/runs/{run_id}`
+- `GET /v1/usage-events/tenants/{tenant_id}`
+- `GET /v1/cost/runs/{run_id}`
+- `GET /v1/cost/tenants/{tenant_id}`
+- `GET /v1/cost/workflows/{workflow_id}`
+- `GET /v1/cost/models`
+- `GET /v1/budgets`
+- `POST /v1/budgets`
+- `PATCH /v1/budgets/{budget_id}`
+- `GET /v1/budget-violations`
 - `GET /v1/operations/readiness`
 - `GET /v1/operations/evidence`
 - `POST /v1/operations/evidence`
@@ -220,7 +253,7 @@ RBAC-lite role：
 
 ## Control Plane Trace / Replay / Checkpoint
 
-`v1.4.0` 延續 V1.3 Trace / Replay Readiness。低風險 request 進入 queue 前會先建立一筆 `execution_plans` 與多筆 `execution_plan_steps`，並在 `evaluation_summary.execution_plan` 保存摘要。Submit flow 也會建立 `run_checkpoints` submit checkpoint，保存 request、policy、plan 摘要與 replay readiness。若 worker 找不到 run 對應的 execution plan，會 fail closed，將 run 更新為 `awaiting_approval`，並加入 `missing_execution_plan` policy flag。
+目前 `v1.5.0` 延續 V1.4 Checkpoint / Resume / Replay 與 V1.3 Trace / Replay Readiness。低風險 request 進入 queue 前會先建立一筆 `execution_plans` 與多筆 `execution_plan_steps`，並在 `evaluation_summary.execution_plan` 保存摘要。Submit flow 也會建立 `run_checkpoints` submit checkpoint，保存 request、policy、plan 摘要與 replay readiness，並額外寫入 V1.5 estimated usage / cost events。若 worker 找不到 run 對應的 execution plan，會 fail closed，將 run 更新為 `awaiting_approval`，並加入 `missing_execution_plan` policy flag。
 
 `GET /v1/runs/{run_id}/execution-plan` 回傳：
 
@@ -234,7 +267,7 @@ RBAC-lite role：
   "status": "planned",
   "model_route": {
     "model": "deterministic-control-plane",
-    "routing_reason": "V1.4 deterministic route for analysis."
+    "routing_reason": "V1.5 deterministic route for analysis."
   },
   "selected_tools": [
     {
@@ -256,7 +289,7 @@ RBAC-lite role：
 }
 ```
 
-V1.4 的 `model_route` 是可審計 metadata，不會呼叫外部模型。真實 model router、MCP Gateway、LangGraph checkpoint/resume、replay/time travel 與外部 trace exporter 不在本版範圍。
+V1.5 的 `model_route` 仍是可審計 metadata，不會呼叫外部模型，也不會依成本改變 routing。真實 model router、cost-aware routing、MCP Gateway、LangGraph checkpoint/resume、replay/time travel 與外部 trace exporter 不在本版範圍。
 
 `GET /v1/runs/{run_id}/checkpoints` 回傳 checkpoint timeline。Submit checkpoint 的 `checkpoint_type` 為 `submit`；resume API 建立的 checkpoint 為 `resume`。
 
@@ -399,7 +432,7 @@ GET /v1/operations/evidence?evidence_type=backup_restore_drill
 
 ```json
 {
-  "release_version": "v1.4.0",
+  "release_version": "v1.5.0",
   "created_by": "release-manager"
 }
 ```
@@ -410,7 +443,7 @@ GET /v1/operations/evidence?evidence_type=backup_restore_drill
 
 ```json
 {
-  "release_version": "v1.4.0",
+  "release_version": "v1.5.0",
   "created_by": "release-manager"
 }
 ```
@@ -513,7 +546,7 @@ GET /v1/governance/summary?tenant_id=default
 正式環境建議後續補上 Kafka consumer lag alert、完整 OpenTelemetry tracing 與自動化 backup/restore drill。
 ## V1.3 Trace / Replay API 補充
 
-目前 API metadata 版本為 `v1.4.0`。V1.3 新增兩個 run subresource，V1.4 再新增三個 checkpoint/replay subresource，皆延續既有 `X-Trace-Id`：
+目前 API metadata 版本為 `v1.5.0`。V1.3 新增兩個 run subresource，V1.4 再新增三個 checkpoint/replay subresource，V1.5 新增 FinOps pricing/usage/cost/budget subresources，皆延續既有 `X-Trace-Id` 與 tenant scoping 原則：
 
 | Method | Path | 說明 |
 | --- | --- | --- |
@@ -526,3 +559,14 @@ GET /v1/governance/summary?tenant_id=default
 `GET /v1/runs/{run_id}/trace` 回傳 `trace_id`、`trace_metadata`、`run`、`execution_plan` 與 `steps`。每個 step 會包含 `step_type`、`status`、`started_at`、`finished_at`、`duration_ms`、`input_summary`、`output_summary`、`error_summary` 與 `metadata`。
 
 `GET /v1/runs/{run_id}/replay-bundle` 會包含 `schema_version=control-plane-replay-bundle/v1.3`、`trace_context`、`run.request_payload`、`policy_decision`、`execution_plan`、`step_audit`、`tool_references` 與 `limitations`。目前 `limitations.automatic_replay=false`，代表 replay bundle 只輸出可審計 bundle，不會重新執行 run；V1.4 的 `POST /v1/runs/{run_id}/replay` 會另外保存 dry-run replay attempt。
+
+## V1.5 FinOps API 補充
+
+Submit flow 會自動建立 estimated usage / cost events；worker completion 會補 actual usage / cost events；resume 與 replay 會寫入 checkpoint/replay 對應 usage events。`GET /v1/cost/runs/{run_id}` 回傳 run-level cost summary，包含 `estimated_cost`、`actual_cost`、`cost_delta`、`budget_status`、resource breakdown、usage events 與 cost events。
+
+`POST /v1/budgets` 目前支援 run-level budget policy。當同一 run 的 estimated + actual cost 超過 active run budget 時，系統會建立 `budget_violations`，`GET /v1/budget-violations?tenant_id=default&run_id=...` 可查。V1.5 只記錄 violation，不會阻擋執行或改變 routing。
+
+RBAC 行為：
+- pricing/budget 寫入需 `admin`。
+- manual usage event 需 `operator` 或 `admin`。
+- FinOps 查詢端點開放 `viewer`、`operator`、`admin`，且 `AUTH_ENABLED=true` 時會套用 tenant scoping。

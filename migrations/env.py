@@ -14,6 +14,7 @@ from app.models.base import Base
 from app.models.checkpoint import ReplayAttempt, RunCheckpoint  # noqa: F401
 from app.models.control_plane import ExecutionPlan, ExecutionPlanStep, ToolDefinition, WorkflowDefinition  # noqa: F401
 from app.models.evaluation_result import EvaluationResultRecord  # noqa: F401
+from app.models.finops import BudgetPolicy, BudgetViolation, CostEvent, PricingCatalog, UsageEvent  # noqa: F401
 from app.models.incident import Incident  # noqa: F401
 from app.models.operations import OperationsEvidence, ReleaseGateItem, ReleaseGateRun  # noqa: F401
 from app.models.tenant import Tenant, TenantApiKey  # noqa: F401

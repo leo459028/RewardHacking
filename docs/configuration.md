@@ -96,6 +96,8 @@ Redis 與 Kafka 已在 `v0.3.0` request path 中使用，但 `/v1/readyz` 目前
 
 `v1.4.0` 的 Trace / Replay / Checkpoint 能力不需要新增環境變數。Builtin workflow/tool registry 由程式內建，DB-managed registry、`execution_plans`、`execution_plan_steps`、`run_checkpoints` 與 `replay_attempts` 保存於 Postgres；V1.4 的 `model_route`、trace metadata、checkpoint snapshot 與 dry-run replay attempt 都是 deterministic/internal metadata，不會呼叫外部模型、外部工具或 exporter。
 
+`v1.5.0` 的 FinOps Core 不需要新增環境變數。Pricing catalog、usage events、cost events、budget policies 與 budget violations 都保存於 Postgres；default pricing 由 FinOps service 以 deterministic internal catalog 寫入。V1.5 不會連外同步供應商費率，也不會啟動 cost-aware routing、Token Broker 或 Safe MCP。
+
 ## Auth / Dashboard Auth
 
 `AUTH_ENABLED=false` 時，API 保持本機 demo 友善模式。`AUTH_ENABLED=true` 時，submit、runs、incidents、approvals、evaluations、tenant、governance、operations、metrics、worker DLQ、run subresources、observability summary 與 dashboard summary API 需要 `X-API-Key`；`healthz` 與 `readyz` 維持公開。

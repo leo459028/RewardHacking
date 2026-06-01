@@ -20,6 +20,26 @@
 </section>
 
 <section class="panel">
+  <h2>Cost Summary <span class="heading-note">V1.5 FinOps ledger</span></h2>
+  <section class="grid stats">
+    <div class="stat"><div class="stat-label">Estimated</div><div class="stat-value">{{ "%.8f"|format(cost_summary.estimated_cost) }} {{ cost_summary.currency }}</div></div>
+    <div class="stat"><div class="stat-label">Actual</div><div class="stat-value">{{ "%.8f"|format(cost_summary.actual_cost) }} {{ cost_summary.currency }}</div></div>
+    <div class="stat"><div class="stat-label">Delta</div><div class="stat-value">{{ "%.8f"|format(cost_summary.cost_delta) }} {{ cost_summary.currency }}</div></div>
+    <div class="stat"><div class="stat-label">Budget</div><div class="stat-value">{{ cost_summary.budget_status }}</div></div>
+  </section>
+  <table>
+    <thead><tr><th>Resource</th><th>Cost</th></tr></thead>
+    <tbody>
+    {% for key, value in cost_summary.breakdown.items() %}
+      <tr><td>{{ key }}</td><td>{{ "%.8f"|format(value) }} {{ cost_summary.currency }}</td></tr>
+    {% else %}
+      <tr><td colspan="2" class="muted">No cost events recorded.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
   <h2>Policy <span class="heading-note">政策判定</span></h2>
   <p>{{ run.decision_reason }}</p>
   {% for flag in run.policy_flags %}<span class="flag">{{ flag }}</span>{% else %}<span class="muted">No policy flags.</span>{% endfor %}
