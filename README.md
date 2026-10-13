@@ -1,269 +1,187 @@
-# Agent Reward-Hacking Guardrail
-
-## V1.5.1 Agent FinOps Core / Pricing Import Admin
-
-歷史版本：`v1.5.0`
-
-V1.5.1 在 V1.5 Agent FinOps Core / Cost Ledger 上補齊正式 FinOps schema。這版新增完整 pricing、usage、cost、budget、budget violation 欄位，並加入官方模型價格 seed 匯入流程、dry-run 驗證、版本化 pricing 異動、來源文件 audit 與 Admin Dashboard 管理頁。
-
-新增重點：
-
-- `pricing_catalog` 擴充 provider、billing platform、resource subtype、model family/tier、modality、pricing mode、token type、tier threshold、capabilities、source、effective date、scope、supersede 與 import metadata。
-- `usage_events` 擴充 tenant/org/project/environment/cost center、workflow/run/trace/checkpoint/replay linkage、provider request id、token/image/video/tool/runtime/storage/network 用量與 idempotency metadata。
-- `cost_events` 擴充 pricing snapshot、gross/discount/net/tax/base currency/fx/billing period/invoice/allocation tags，確保歷史成本不會被後續價格異動改寫。
-- `budget_policies` 與 `budget_violations` 補上 soft/hard limit、scope、basis、actions、approval、resolution 與完整 audit 欄位。
-- 新增 `pricing_import_batches`、`pricing_change_logs`、`pricing_source_documents`，保存 dry-run/apply 報表、版本化價格異動與官方來源文件。
-
-新增入口：
-
-- Admin API：`/v1/admin/finops/pricing/*`
-- Dashboard：`/dashboard/admin/finops/pricing`、`/dashboard/admin/finops/pricing/import`、`/dashboard/admin/finops/pricing/sources`
-- CLI：`python scripts/import_pricing_catalog.py --dry-run --file app/seeds/model_pricing_seed.yaml`
-- 完整欄位清單：[`docs/v1.5.1_finops_core.md`](docs/v1.5.1_finops_core.md)
-
-## V1.5 Agent FinOps Core / Cost Ledger
-
-目前版本：`v1.5.1`
-
-V1.5 延續 V1.4 Checkpoint / Resume / Replay MVP，新增 Agent FinOps Core 成本資料層。Submit、worker completion、resume 與 replay flow 會寫入 deterministic `usage_events` 與 `cost_events`，並以 `pricing_catalog` 計算 estimated / actual cost；`budget_policies` 與 `budget_violations` 用於記錄 run-level budget 超額。
-
-新增 API：
-- `GET/POST/PATCH/DELETE /v1/pricing`
-- `POST /v1/usage-events`
-- `GET /v1/usage-events/runs/{run_id}` 與 `/v1/usage-events/tenants/{tenant_id}`
-- `GET /v1/cost/runs/{run_id}`、`/v1/cost/tenants/{tenant_id}`、`/v1/cost/workflows/{workflow_id}`、`/v1/cost/models`
-- `GET/POST/PATCH /v1/budgets`
-- `GET /v1/budget-violations`
-
-新增 Dashboard：
-- `/dashboard/runs/{run_id}` 顯示 `Cost Summary`，可查 estimated cost、actual cost、delta、budget status 與 resource breakdown。
-- `/dashboard/costs` 顯示 Tenant Cost Summary、Top Runs、Top Models / Workflows、Budget Violations 與 Pricing Catalog 小版。
-
-目前限制：V1.5 只做成本帳本與可查詢資料層，不做 cost-aware routing、Token Broker、Safe MCP、OTLP/LangSmith exporter 或真實外部模型/工具費率同步。這些留到 V1.6 或後續版本。
-
-## V1.4 Checkpoint / Resume / Replay MVP
-
-歷史版本：`v1.4.0`
-
-V1.4 延續 V1.3 Trace / Replay Readiness，新增可恢復執行的最小閉環。每次 submit 會建立 `run_checkpoints` submit checkpoint，保存 request payload、policy decision、execution plan 摘要、step count 與 replay readiness。
-
-新增查詢入口：
-
-- `GET /v1/runs/{run_id}/checkpoints`：查詢 run 的 checkpoint timeline。
-- `POST /v1/runs/{run_id}/resume`：建立 resume checkpoint，將 run 放回 `queued`，並重新 publish worker event。
-- `POST /v1/runs/{run_id}/replay`：建立 dry-run replay attempt，重建 policy / plan / step context，但不呼叫真實外部工具、不改外部狀態。
-- `/dashboard/runs/{run_id}`：新增 Checkpoint / Resume 區塊與 Replay Attempts 表格。
-- `/dashboard/control-plane`：最新 execution plans 新增 Resumable / Replayable 欄位。
-
-目前限制：V1.4 的 replay 是安全 dry-run，不會重新執行真實工具，也尚未接 LangGraph checkpoint/resume、MCP Gateway、OTLP/LangSmith exporter、外部 object storage 或真實 OS sandbox。
-
-## V1.3 Trace / Replay Readiness
-
-上一版：`v1.3.0`
-
-V1.3 延續 V1.2 Control Plane Execution Plan，新增內部 Trace Contract 與 Replay Bundle。每次 submit 會沿用 `X-Trace-Id`，將 trace id 寫入 run request metadata、`execution_plans.trace_id` 與 `execution_plan_steps.trace_id`，並保留 `exporter_type`、`external_trace_id`、`span_id`、`parent_span_id` 等 metadata，方便未來銜接 OTLP 或 LangSmith-style exporter。
-
-新增查詢入口：
-
-- `GET /v1/runs/{run_id}/trace`：查詢 run、execution plan 與 step-level audit timeline。
-- `GET /v1/runs/{run_id}/replay-bundle`：匯出可審計的 replay bundle，包含 request payload、policy decision、execution plan、step audit、tool references 與 trace metadata。
-- `/dashboard/runs/{run_id}`：新增 Trace / Replay 區塊、Replay Bundle 連結與 Step Audit 表格。
-- `/dashboard/control-plane`：最新 execution plans 新增 Trace ID、Step Summary 與 Plan Health。
-
-目前限制：V1.3 只提供 replay readiness 與內部 trace contract，不會重新執行 run，也尚未實作真實 OTLP、LangSmith、LangGraph checkpoint/resume 或 MCP Gateway 整合。
-
-這是一套幫 AI agent 加上安全護欄、審核流程與事後紀錄的系統。
-
-白話一點說：當 AI agent 被交代一個任務時，它可能會為了「看起來完成目標」而走捷徑，例如跳過測試、誤用工具、讀取不該讀的資料、繞過規則，甚至執行破壞性操作。這個專案的目標，是在任務執行前、中、後都加上檢查與紀錄，讓團隊比較容易發現風險、擋下高風險行為，並在事後追查發生了什麼。
-
-## 專案版號
-
-目前版本：`v1.5.1`
-
-`v0.5.0` 是 V0.4 Execution Hardening 與 V0.5 Evaluator + Observability 的整合版。該版本已經有 queue、worker retry/DLQ、Redis run state、approval TTL/event、bounded executor transcript、tool execution audit、evaluation result 與 Dashboard 查詢入口，但還不是完整的 production sandbox、auth 或多租戶 production safety platform。
-
-`v0.6.0` 在 v0.5 基礎上加入 Tenant Governance MVP：每筆 run 會保存 `tenant_id`，API 可用 `X-API-Key` 對應 tenant，Redis 會做 tenant request quota 與 high-risk quota 檢查，並新增 governance audit 與 `/dashboard/governance` 查詢入口。
-
-`v0.7.0` 將 Tenant Governance MVP 推進成 Tenant Governance Center：新增 DB-backed tenant 設定、API key hash 儲存、RBAC-lite role、tenant-level quota override 與 Governance Dashboard 的 tenant/API key 查詢區塊。`.env` 的 `API_KEYS` 仍保留為開發與 bootstrap fallback；正式治理資料以 `tenants` 與 `tenant_api_keys` 資料表為準。
-
-`v0.8.0` 新增 Production Operations Gate：提供 `/dashboard/operations`、Operations API、release readiness checks、operations evidence 與 release gate snapshot。這版會把 backup/restore drill、secret rotation 等營運證據保存到 audit trail，並加入 `X-Trace-Id` response header 與 submit metadata，但不自動執行真實備份還原、secret rotation、完整 OpenTelemetry 或 Kafka lag alert。
-
-`v1.0.0` 將 v0.8 的可查詢營運閘門推進為 production readiness baseline：`APP_ENV=prod` 時 release gate 會把 safety regression evidence、backup/restore evidence、secret rotation evidence、DLQ、stale queued runs、blocking incidents、expired approvals 與 bootstrap API key 當成上線阻擋條件。v1.0 也補齊敏感 read API 的 API key auth、HTTP request metrics、incident counter increment，並加入 deterministic red-team corpus regression。注意：v1.0 production ready 指的是 guardrail、audit 與 release gate baseline ready；bounded executor 仍不執行真實外部副作用，也不是完整 OS sandbox。
-
-`v1.1.0` 新增 Classical Chinese Prompt Guard：針對古文、文言文或混合中文包裝的駭客意圖做 deterministic prompt analysis。正常文言文教學與摘要不會被阻擋；若古文內容包含忽略指令、繞過政策、憑證外洩、破壞資料或惡意程式意圖，系統會加入 `classical_*` policy flags、提高風險分數，並進入人工審核或拒絕。Run detail 與 API response 的 `evaluation_summary.prompt_guard` 可查語言、正規化文字、flags 與 signals。
-
-`v1.2.0` 新增 Control Plane 骨架：低風險 request 在進入 worker queue 前，會先產生可查詢的 `execution_plan`，保存 workflow version、model route、selected tools、steps、approval gates 與 policy snapshot。新增 workflow/tool registry API、`/v1/runs/{run_id}/execution-plan` 查詢，以及 `/dashboard/control-plane` 與 Run Detail 的 Execution Plan 區塊。這版仍不宣稱已完成真實 MCP Gateway、LangGraph checkpoint/resume、replay/time travel 或外部模型路由；V1.2 的 model route 是 deterministic control-plane metadata。
-
-`v1.3.0` 新增 Trace / Replay Readiness：把 `X-Trace-Id` 串到 `execution_plans` 與 `execution_plan_steps`，並提供 trace API、replay bundle API、Run Detail 的 Trace / Replay 區塊與 Control Plane Dashboard 的 Trace ID / Step Summary / Plan Health。
-
-`v1.4.0` 新增 Checkpoint / Resume / Replay MVP：submit 時保存 checkpoint，支援 checkpoint 查詢、resume checkpoint 與 dry-run replay attempt。V1.4 的 replay 不呼叫真實外部工具，只重建可審計的 policy、plan 與 step context。
-`v1.5.0` 新增 Agent FinOps Core / Cost Ledger：保存 pricing catalog、usage events、cost events、budget policies 與 budget violations，並新增 FinOps API、Run Detail Cost Summary 與 `/dashboard/costs`。V1.5 只做成本資料層，不做 cost-aware routing、Token Broker、Safe MCP 或外部費率同步。
-`v1.5.1` 擴充 V1.5 的 FinOps schema，新增官方價格 seed dry-run/apply、Admin FinOps API、Admin Dashboard、pricing import batch、pricing change log 與 pricing source document audit。
-
-## 這個專案想解決什麼問題
-
-AI agent 不是只會「回答問題」，它可能還會讀資料、改程式、呼叫工具、執行流程、觸發部署或操作內部系統。當 agent 可以做的事情越多，風險也會越高。
-
-這個專案想處理的核心問題包括：
-
-- agent 為了完成表面目標，採用取巧方式，也就是 reward hacking。
-- agent 跳過驗證，例如沒有測試卻宣稱已完成。
-- agent 嘗試忽略原本規則、繞過 policy 或接受 prompt injection。
-- agent 要求使用不該用的工具、網路、敏感資料或破壞性操作。
-- 團隊缺少 audit trail，事後不知道 request、decision、risk score、incident 是怎麼來的。
-- 高風險任務沒有明確的人審流程與安全邊界。
-
-這個系統的完整目標，是讓 agent 任務在執行前先被檢查，執行中受到限制，執行後還能被評估與追蹤。
-
-## 名詞白話解釋
-
-- **agent**：可以自己規劃步驟、呼叫工具或執行任務的 AI 系統。
-- **guardrail**：安全護欄，用來降低 AI 做出危險或不合規行為的機率。
-- **reward hacking**：AI 用取巧方式達成表面目標，但其實沒有真正做好事情。
-- **policy engine**：規則判斷器，用來決定任務可以執行、需要審核，或應該拒絕。
-- **audit trail**：事後可追蹤的紀錄，包含誰送出任務、系統怎麼判斷、結果如何。
-- **incident**：需要注意、追蹤或審核的事件。
-
-## Roadmap 完成後的適用情境
-
-以下是這個專案完成完整 Roadmap 後，希望能支援的目標使用情境。這些情境不代表目前 `v1.5.1` 已全部完成。
-
-1. AI coding agent 在修改程式碼前，檢查是否跳過測試、繞過規則或做破壞性操作。
-2. 內部營運 agent 執行批次任務前，確認工具權限、任務風險與是否需要人工核准。
-3. Data query agent 查詢資料前，檢查是否涉及 PII、敏感欄位或不合理匯出。
-4. 客服 agent 操作帳號、退款、訂單或權限時，要求高風險動作先進入審核。
-5. DevOps agent 想部署、刪除資源、修改設定時，強制走 approval gate 與 audit trail。
-6. 企業想觀察 agent 的 risk score、policy flags、incident 趨勢與審核狀態。
-7. 安全團隊想建立 prompt injection、reward hacking、tool misuse 的測試與監控基線。
-8. 團隊想讓 agent 執行多工具 workflow，但需要 tool budget、rate limit、circuit breaker。
-9. 研究或教學場景需要展示完整 agent guardrail 架構，例如 policy、executor、evaluator、audit。
-10. 產品團隊想在導入真實 agent runtime 前，先建立一套可逐步強化的安全閘門。
-
-## 不適用情境
-
-這個專案不是萬能的 AI 安全產品，也不是所有系統都需要它。
-
-它不適合以下情況：
-
-- 你的系統只是單純聊天，沒有工具呼叫、資料存取或實際操作。
-- 你的 agent 不會改資料、不會執行流程，也不會接觸敏感資訊。
-- 你需要的是完整資安平台，例如 WAF、EDR、SIEM、DLP 或 IAM。
-- 你需要的是完整 agent runtime，而不是 guardrail layer。
-- 你需要立即上 production，但還沒有準備好權限控管、sandbox、監控與人審流程。
-- 你期待系統可以百分之百保證 AI 不會犯錯。
-
-## 相關限制
-
-即使 Roadmap 全部完成，這個專案也只能降低風險，不能保證 agent 絕對安全。
-
-需要特別注意：
-
-- guardrail 是降低風險，不是消除風險。
-- 高風險任務仍需要組織流程、權限控管與人工審核配合。
-- 真正執行工具時，仍需要 sandbox、tool ACL、network policy、secret 管理。
-- evaluator 只能提供風險訊號，不應被當成唯一真相。
-- audit trail 可以幫助追蹤問題，但不能替代資料治理與資安制度。
-- 如果 prompt、工具權限或資料權限設計不良，guardrail 也可能被繞過或誤判。
-
-## 目前 v1.5 做到哪裡
-
-`v1.5.1` 目前是可部署驗證、可查詢、可審計的 guarded async execution + Tenant Governance Center + Production Readiness Gate baseline，並加入古文/文言式繞語攻擊防護、Control Plane execution plan 骨架、Trace / Replay Readiness、Checkpoint / Resume / Replay MVP，以及 Agent FinOps Core / Pricing Import Admin。V1.5.1 會保存 submit/resume checkpoint、dry-run replay attempt、pricing catalog、usage/cost events、budget policies、budget violations、pricing import batches、pricing change logs 與 pricing source documents，並在 Run Detail 顯示 Cost Summary、在 `/dashboard/costs` 顯示 tenant cost summary、在 `/dashboard/admin/finops/pricing` 管理 pricing catalog。
-
-已完成：
-
-- 可以送出 agent request。
-- 系統會計算 risk score。
-- policy engine 會做 `allow`、`escalated`、`denied` 判斷。
-- 低風險任務會先建立 `queued` run，並 publish `agent.requests` event。
-- Worker 可以消費 queued run，重新檢查 policy，執行 bounded executor，並寫回 evaluation。
-- Bounded executor 會記錄 tool transcript 與 artifact refs，但不呼叫真實外部工具。
-- Destructive 或需要審核的任務會進入 `awaiting_approval`，不會執行工具。
-- Redis 已接入 run state、idempotency key 與 tool circuit breaker 的最小閉環。
-- Approval API 支援查詢 queue 與 `approve_once`、`deny`、`request_changes`。
-- Approval 會記錄 reviewer、reason、TTL/expired 狀態與 approval event。
-- Worker 會記錄 attempt、failure reason、retry_scheduled 與 DLQ。
-- Tool transcript 會落到 `tool_executions` audit table，包含 sandbox policy、resource/cost limit 與 artifact refs。
-- Evaluator 會保存 task-specific rubric、deterministic fake judge signal、final score 與 verdict。
-- Dashboard 新增 `/dashboard/worker`、`/dashboard/observability` 與 `/dashboard/governance`，可查看 DLQ、worker attempts、incident/approval/evaluator/SLO summary 與 tenant governance summary。
-- 結果會寫進 Postgres audit trail。
-- Dashboard 可以查看 runs、incidents、risk score、policy flags、evaluation summary、event timeline、tool transcript、execution plan 與 approval queue。
-- 已導入 Alembic migration。
-- 已有 API tests、service unit tests、dashboard HTML tests 與 GitHub CI。
-- 已有最小 API key auth、Dashboard Basic Auth、tenant quota 與 governance audit。
-- 可以透過 `/v1/tenants` 建立與查詢 tenant。
-- 可以透過 `/v1/tenants/{tenant_id}/api-keys` 建立 DB-managed API key；明文 key 只在建立時回傳一次，資料庫只保存 hash 與 prefix。
-- API key 支援 `viewer`、`operator`、`admin` 三種 RBAC-lite role；`viewer` 可讀取查詢與 Operations readiness/evidence/gate，`operator` 可送出任務、處理 approval decision，並讀取治理與 Operations 查詢資料，`admin` 可管理 tenant/API key/quota，並可建立 Operations evidence 與 release gate snapshot。
-- Tenant 可設定 request quota 與 high-risk quota，會覆蓋全域 `.env` quota 預設。
-- Governance Dashboard 會顯示 tenant 設定與 API key 清單。
-- Operations Dashboard 會顯示 release readiness、operations evidence 與 release gate snapshot。
-- Control Plane Dashboard 會顯示 workflow registry、tool registry 與最新 execution plans。
-- Operations API 可建立 backup/restore drill、secret rotation、safety regression 等人工營運證據，並保存 release gate 檢查項。
-- `APP_ENV=prod` 時，release gate 會因缺少 safety regression evidence、blocking incidents、DLQ、stale queued runs、expired approvals 或 bootstrap `API_KEYS` 等條件 fail closed。
-- `AUTH_ENABLED=true` 時，`/v1/metrics`、worker DLQ、run subresources、observability summary 與 dashboard summary 等敏感 read API 都需要 `X-API-Key`。
-- Prometheus metrics 已包含 HTTP request counter / latency，且 incident 建立時會遞增 `agent_incidents_total{severity,code}`。
-- Prometheus metrics 會在 prompt guard 命中時遞增 `agent_prompt_guard_flags_total{flag}`。
-- 測試已加入 deterministic red-team corpus regression，覆蓋 prompt injection、PII exfiltration、destructive action、tool budget abuse、external network bypass、system/developer instruction reveal、done shortcut 與 not tested。
-- V1.1 測試已加入古文/文言式攻擊 regression，覆蓋正常文言文不阻擋、古文 prompt injection、憑證外洩、破壞意圖、惡意程式意圖、Dashboard Prompt Guard 顯示與 metrics。
-- V1.3 測試已加入 Trace / Replay regression，覆蓋 trace API、replay bundle、step audit persistence、Control Plane Dashboard 與 Run Detail Trace / Replay 顯示；V1.2 Control Plane regression 仍保留。
-- V1.4 測試已加入 Checkpoint / Resume / Replay regression，覆蓋 checkpoint API、resume API、dry-run replay attempt、Run Detail Checkpoint / Resume 與 Control Plane Resumable / Replayable 顯示。
-- API 會回傳 `X-Trace-Id`；submit flow 會把 trace id 保存到 request metadata 與 Kafka event payload。
-
-尚未完成：
-
-- 還沒有完整 OS sandbox、network/filesystem/process/secret 邊界。
-- 還沒有完整 human approval workflow，例如多 reviewer queue、reviewer 報表、turnaround time-series 與 request changes 後續流程；目前已具備 approval TTL、reviewer/reason 與 event audit 的基線。
-- 還沒有 Kafka consumer lag alert 與完整 OpenTelemetry tracing；v1.0 先提供 HTTP metrics 與 trace id 基線。
-- LLM-as-judge 目前是可插拔 signal，預設使用 deterministic fake judge 且不作為唯一 hard deny。
-- 還沒有完整 OAuth、RBAC、tenant 管理 UI、retention purge、真實 backup/restore 自動化、secret rotation 自動化或真實 OS sandbox。
-- 還沒有完整 OAuth/SSO、user/per-tool quota、Kafka consumer lag alert、完整 OpenTelemetry、真實 LangGraph checkpoint/resume 或真實 MCP Gateway replay execution。
-
-所以目前 `v1.5.1` 適合用來建立 agent guardrail 的 production readiness baseline，驗證 queue/worker retry/DLQ/approval/evaluator/observability/governance/operations/safety regression、古文繞語攻擊防護、control-plane execution plan、trace/replay audit bundle、checkpoint/resume/dry-run replay、FinOps 成本帳本與 pricing import admin 的產品閉環；若要執行真實外部工具、外部 trace exporter 或 cost-aware routing，仍必須另接完整 sandbox、IAM、secret manager、MCP gateway、OTLP/LangSmith-style exporter、Token Broker/Safe MCP 與正式維運流程。
-
-## 快速啟動
-
-1. 複製環境設定：
-
+# RewardHacking: Autonomous Agent Guardrail & Governance Control Plane
+
+[![CI](https://github.com/your-username/RewardHacking/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/RewardHacking/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-brightgreen.svg)](pyproject.toml)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-teal.svg)](https://fastapi.tiangolo.com)
+[![Code Style](https://img.shields.io/badge/Code%20Style-Ruff-000000.svg)](https://github.com/astral-sh/ruff)
+[![Docker Ready](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](docker-compose.yml)
+
+A production-grade, open-source runtime safety guardrail, human-in-the-loop governance control plane, and FinOps cost ledger designed specifically for **autonomous AI agents** (coding agents, DevOps bots, data query agents, and workflow automations).
+
+---
+
+## What Problem Does This Solve?
+
+Modern AI agents do not merely generate text—they read repositories, mutate code, invoke tools, run system commands, and trigger infrastructure deployments. When autonomous agents are tasked with complex goals, they frequently exhibit **Reward Hacking (Specification Gaming)**:
+- **Shortcut Taking & False Verification**: Declaring tasks "completed" while secretly bypassing tests or disabling linters.
+- **Rule Evasion & Policy Bypass**: Exploiting prompt ambiguity or using obfuscated phrasing (such as classical Chinese phrasing or nested system overrides) to evade safety filters.
+- **Tool Misuse & Destructive Actions**: Calling unauthorized tools, touching production databases, deleting files, or triggering unsanctioned payments.
+- **Lack of Auditing & Traceability**: Missing forensic audit trails of requests, policy decisions, step executions, and evaluator signals.
+- **Runaway Token Costs**: Infinite loops or inefficient tool-calling sprees that rapidly deplete API budgets.
+
+**RewardHacking** establishes a defense-in-depth security perimeter around AI agents: **verifying before execution**, **constraining during execution**, and **evaluating and auditing after execution**.
+
+---
+
+## Current Release: `v1.5.2`
+
+### V1.5.2 Open-Source Readiness & Internationalization (Current)
+`v1.5.2` prepares the repository for full open-source distribution and aligns with the **OpenAI Codex for Open Source** program:
+- **Full English Internationalization**: Complete English rewrite of the documentation suite (`docs/`), technical specifications, and developer guides.
+- **Open-Source Governance & Community Standards**: Addition of OSI-compliant Apache-2.0 `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` (Contributor Covenant v2.1), `SECURITY.md`, PR/Issue templates, and Dependabot automation.
+- **Security & Secret Cleansing**: Verified clean git commit history (zero leaked credentials) and comprehensive `.env.example` documentation with automated pre-commit scanning.
+- **Release Gate Synchronization**: Operations gate and FastAPI application version synchronized to `v1.5.2`.
+
+### Release History & Evolutionary Context
+
+- **`v1.5.1` (Historical)**: Added official model pricing catalog seed ingestion (`app/seeds/model_pricing_seed.yaml`), dry-run validation, versioned pricing change logs, source document audit trails, and Admin FinOps pricing management (`/dashboard/admin/finops/pricing`).
+- **`v1.5.0` (Historical)**: Introduced Agent FinOps Core / Cost Ledger (`pricing_catalog`, `usage_events`, `cost_events`, `budget_policies`, `budget_violations`), cost tracking across runs and tenants, and `/dashboard/costs`.
+- **`v1.4.0` (Historical)**: Introduced Checkpoint / Resume / Replay MVP, enabling submit checkpoints, resume checkpoints with worker re-dispatch, and safe dry-run replay attempts.
+- **`v1.3.0` (Historical)**: Added Trace & Replay Readiness, propagating `X-Trace-Id` to execution plans and step audits, and generating reproducible replay bundles.
+- **`v1.2.0` (Historical)**: Introduced the Control Plane skeleton with execution plans, tool definitions, and workflow registries (`/dashboard/control-plane`).
+- **`v1.1.0` (Historical)**: Added Classical Chinese Prompt Guard, providing deterministic detection against prompt injections and destructive commands packaged in classical/literary Chinese text.
+- **`v1.0.0` (Historical)**: Established production readiness baseline with operations gate checklist, safety regression evidence, and red-team corpus regression suites.
+- **`v0.6.0` - `v0.8.0` (Historical)**: Multi-tenant governance center, RBAC-lite API keys, Redis tenant quota enforcement, and production operations gate (`/dashboard/operations`).
+- **`v0.1.0` - `v0.5.0` (Historical)**: Initial architecture, asynchronous Kafka worker queues, retry/DLQ, Redis run states, human approval TTL gates, and bounded executor transcripts.
+
+---
+
+## System Architecture
+
+```mermaid
+flowchart TD
+    Client["Client / Agent Runtime"] -->|POST /v1/agent/submit| API["FastAPI Ingress Gateway"]
+    
+    subgraph ControlPlane["Control Plane & Safety Boundary"]
+        API --> Auth["Auth & Tenant Quota Check (Redis)"]
+        Auth --> Sanitizer["Prompt Sanitizer & Classical Chinese Guard"]
+        Sanitizer --> Scorer["Multi-Factor Risk Scorer"]
+        Scorer --> Policy["Deterministic Policy Engine"]
+        
+        Policy -->|High Risk / Destructive| Gate["Human Approval Gate (TTL Queue)"]
+        Policy -->|Deny| Incident["Incident Logger & Audit Trail"]
+        Policy -->|Allow| Plan["Execution Plan Generator"]
+    end
+    
+    subgraph ExecutionPlane["Asynchronous Bounded Execution"]
+        Plan --> KafkaQueue["Kafka Bus: agent.requests"]
+        KafkaQueue --> Worker["Guarded Background Worker"]
+        Worker --> Checkpoint["Run Checkpoint (Submit / Resume)"]
+        Worker --> Executor["Bounded Executor (Sandbox Simulation)"]
+        Executor --> CircuitBreaker["Tool Circuit Breaker & Quota (Redis)"]
+    end
+    
+    subgraph AuditAndFinOps["Audit, Evaluation & FinOps"]
+        Executor --> Evaluator["Task Evaluator & Fake LLM Judge"]
+        Evaluator --> Postgres[("PostgreSQL Audit Trail & Event Store")]
+        Evaluator --> FinOps["FinOps Cost Ledger (Usage & Cost Events)"]
+        Gate -.->|Reviewer Decision| Worker
+    end
+
+    subgraph Operations["Operational Dashboard (Jinja2)"]
+        Postgres --> Dashboard["/dashboard (Overview, Runs, Approvals, Costs, Operations)"]
+    end
+```
+
+---
+
+## Core Capabilities
+
+1. **Deterministic Policy Engine & Risk Scoring**
+   - Evaluates task type, requested tools, prompt flags, and operational constraints.
+   - Calculates weighted risk scores and classifies requests into `allow`, `escalated` (awaiting human approval), or `denied`.
+2. **Adversarial Prompt Defense (Classical Chinese Guard)**
+   - Specialized detector for literary/classical Chinese adversarial jailbreaks, credential harvesting, or instructions disguised in archaic syntax.
+3. **Human-in-the-Loop Approval Workflow**
+   - Time-to-Live (TTL) protected approval queues (`/dashboard/approvals`).
+   - Supports `approve_once`, `deny`, and `request_changes` with reviewer identity and audit trails.
+4. **Asynchronous Bounded Execution & Worker DLQ**
+   - Decoupled via Kafka (`agent.requests`).
+   - Retries with exponential backoff and Dead Letter Queue (DLQ) tracking (`/dashboard/worker`).
+5. **Traceability, Replay Bundles & Checkpoints**
+   - End-to-end `X-Trace-Id` propagation across requests, execution plans, and step logs.
+   - Self-contained Replay Bundles (`GET /v1/runs/{run_id}/replay-bundle`) for independent audits.
+6. **Multi-Tenant Governance Center**
+   - Database-backed tenant management, hashed API keys, and RBAC-lite roles (`viewer`, `operator`, `admin`, `finops_admin`).
+   - Redis-enforced per-tenant request and high-risk action quotas.
+7. **Agent FinOps Core & Cost Accounting**
+   - Standardized pricing catalog supporting token types, context tiers, tool calls, and worker runtimes.
+   - Immutable usage and cost ledger preventing cost revisions from retroactively mutating past runs.
+8. **Production Operations Gate**
+   - Pre-deployment checklist (`/dashboard/operations`) verifying backup drills, secret rotations, DLQ drain status, and safety regression evidence.
+
+---
+
+## Target Use Cases (Post-Roadmap)
+
+When fully implemented along the roadmap, this system is designed to support:
+1. **AI Coding Agents**: Verifying patches before disk mutation; blocking attempts to skip tests or tamper with CI/CD scripts.
+2. **Enterprise Internal Ops Agents**: Enforcing least-privilege tool execution and requiring manager approvals for bulk operations.
+3. **Data Query Agents**: Detecting unauthorized PII queries, excessive export payloads, or schema tampering.
+4. **Customer Support Bots**: Halting account changes, refunds, or credential modifications pending operator review.
+5. **DevOps & Cloud Automation**: Enforcing mandatory approval gates and audit logs prior to infrastructure modification or deletion.
+6. **AI Safety Research & Benchmarking**: Providing an extensible testbed for measuring specification gaming and jailbreak defenses.
+
+---
+
+## Non-Applicable Scenarios & Limitations
+
+### Where This Project Is NOT Suitable
+- Pure chatbot applications without tool calls, file access, or external actions.
+- Full replacement for enterprise cybersecurity suites (WAF, EDR, SIEM, DLP, or IAM).
+- Standalone autonomous agent runtime (this is a **guardrail & governance layer**, not an agent framework itself).
+- Immediate unmonitored production deployment without human operators or network boundaries.
+
+### Current Architectural Limitations
+- **Bounded Executor Sandbox**: The current bounded executor simulates tool invocation and records structured transcripts; it does not yet isolate untrusted processes in a microVM or isolated container sandbox.
+- **Deterministic Evaluator**: The evaluator provides risk signals and synthetic judge scores; it should not be treated as a single source of infallible truth.
+- **Fail-Safe Caveat**: Guardrails significantly mitigate risk, but cannot mathematically eliminate all zero-day jailbreaks or sophisticated prompt hacking.
+
+---
+
+## Quickstart (60 Seconds)
+
+### 1. Configure Environment
 ```bash
 cp .env.example .env
 ```
+*(The default `.env.example` is pre-configured for local testing out of the box).*
 
-`.env.example` 預設使用 host 端 `localhost`，方便直接跑 `alembic` 或 `uvicorn`；Docker Compose 會在 `api` / `worker` container 內覆蓋成 `postgres`、`redis`、`kafka` service hostnames。
-
-2. 啟動服務：
-
+### 2. Launch Stack with Docker Compose
 ```bash
 docker compose up -d --build
 ```
+This boots the complete stack:
+- **API Gateway**: `http://localhost:8000`
+- **PostgreSQL**: `localhost:5432`
+- **Redis**: `localhost:6379`
+- **Kafka & Zookeeper**: `localhost:9092`
+- **Background Worker**: Consuming queued runs
 
-3. 檢查 API health：
-
+### 3. Verify Health & Readiness
 ```bash
-curl http://localhost:8000/v1/healthz
+curl -f http://localhost:8000/v1/healthz
+curl -f http://localhost:8000/v1/readyz
 ```
 
-4. 檢查 Postgres readiness：
-
-```bash
-curl http://localhost:8000/v1/readyz
-```
-
-5. 開啟 Dashboard：
-
+### 4. Explore the Operational Dashboard
+Open your web browser and navigate to:
 ```text
 http://localhost:8000/dashboard
 ```
 
-6. 送出測試請求。低風險任務會先回 `queued`，Docker Compose 的 worker 消費後會把 run 更新為 `completed`：
-
+### 5. Submit a Guarded Agent Request
+Submit a low-risk task that passes automatically:
 ```bash
 curl -X POST http://localhost:8000/v1/agent/submit-with-details \
   -H "Content-Type: application/json" \
   -d '{
     "tenant_id": "default",
-    "user_id": "u-1001",
+    "user_id": "eng-001",
     "task_type": "code_fix",
-    "prompt": "Fix the bug in the payment workflow without changing business rules.",
-    "goal": "Return a correct patch",
+    "prompt": "Fix payment retry logic without modifying core business rules.",
+    "goal": "Generate a verified patch",
     "allowed_tools": ["read_repo", "write_patch", "run_tests"],
     "constraints": {
       "no_external_network": true,
@@ -273,22 +191,58 @@ curl -X POST http://localhost:8000/v1/agent/submit-with-details \
   }'
 ```
 
-## 文件導覽
+Now submit a high-risk destructive action that will be intercepted by the policy engine:
+```bash
+curl -X POST http://localhost:8000/v1/agent/submit-with-details \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tenant_id": "default",
+    "user_id": "eng-001",
+    "task_type": "infra_deploy",
+    "prompt": "Drop old database tables and wipe test environment immediately.",
+    "goal": "Purge storage",
+    "allowed_tools": ["execute_shell", "drop_table"],
+    "constraints": {
+      "requires_human_approval": true
+    }
+  }'
+```
+Notice that the second request returns status `awaiting_approval` and appears in the [Approvals Dashboard](http://localhost:8000/dashboard/approvals) for human sign-off!
 
-- [專案文件總覽](docs/OVERVIEW.md)
-- [Roadmap](docs/roadmap.md)
-- [Dashboard 使用說明](docs/dashboard.md)
-- [API 文件](docs/api.md)
-- [架構文件](docs/architecture.md)
-- [V1.1 架構圖資](docs/assets/README.md)（目前仍作為歷史圖資；V1.5 的 FinOps 能力已同步到文字文件、API 與 Dashboard，但尚未新增 v15 圖資）
-- [部署文件](docs/deployment.md)
-- [Runbook](docs/runbook.md)
+---
 
-## 下一步
+## Documentation Navigation
 
-如果你要繼續開發，建議先看 [Roadmap](docs/roadmap.md)。下一階段通常會優先補：
+Comprehensive technical documentation is maintained under the [`docs/`](docs/) directory:
 
-- 完整 OAuth/RBAC、tenant 管理 UI 與更細的 user quota。
-- 真實 data retention purge、backup/restore 自動化、secret rotation 自動化與 rollback runbook。
-- OpenTelemetry tracing、Kafka consumer lag alert 與跨 component trace propagation。
-- 真實 tool sandbox 與外部 artifact/object storage。
+- [Project Overview & Design Principles](docs/OVERVIEW.md)
+- [System Architecture & Dataflow](docs/architecture.md)
+- [REST API Specification](docs/api.md)
+- [Operational Dashboard Guide](docs/dashboard.md)
+- [Database Schema & Audit Models](docs/data_model.md)
+- [Threat Modeling & Security Design](docs/security.md)
+- [Configuration & Environment Variables](docs/configuration.md)
+- [Deployment & Production Hardening](docs/deployment.md)
+- [Developer Guide & Local Setup](docs/development.md)
+- [Testing Guide & Red-Team Corpus](docs/testing_guide.md)
+- [Production Runbooks & Incident Response](docs/runbook.md)
+- [Observability, Metrics & SLOs](docs/observability.md)
+- [Kafka Topics & Event Contracts](docs/kafka_topics.md)
+- [Redis Keyspace & Rate Limiting](docs/redis_keys.md)
+- [Database Migrations Guide](docs/migrations.md)
+- [Project Roadmap](docs/roadmap.md)
+- [Agent FinOps Core Reference](docs/v1.5.1_finops_core.md)
+- [Testing & Release Verification Report](docs/test_report.md)
+
+---
+
+## Community & Contributing
+
+We welcome contributions! Please review our:
+- [Contributing Guidelines](CONTRIBUTING.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Security Policy](SECURITY.md)
+
+## License
+
+This project is licensed under the [Apache License, Version 2.0](LICENSE).
