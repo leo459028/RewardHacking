@@ -1,54 +1,68 @@
-# 專案工作規範
+# Project Working Guidelines & Agent Specification
 
-本檔案是給未來在這個 repo 工作的 agent / engineer 使用。請優先遵守這裡的規範，再參考 `README.md` 
+This document provides operational guidelines and engineering standards for AI agents and human engineers working on this repository. Please adhere to these guidelines first before referring to `README.md`.
 
-## 適用範圍
+---
 
-這份規範適用整個專案。除非子目錄另有更細的 `AGENTS.md`，否則所有程式碼、測試與文件更新都要遵守本檔案。
+## Scope of Application
 
-## 1. 規劃方案要求
+These specifications apply across the entire repository. Unless a subdirectory provides a more specific `AGENTS.md`, all code modifications, test additions, and documentation updates must comply with this document.
 
-涉及功能、風險判斷、資料查詢、審計紀錄或使用者可見行為的新版本、新功能或修正計畫，必須包含可以查詢與測試的 UI 或 Dashboard 入口。
-若是純文件、純測試、格式整理或不影響使用者可見行為的修正，需在計畫中說明 UI / Dashboard 驗證不適用的原因。
-規劃內容至少要包含：
+---
 
-- 功能目標與成功條件。
-- UI / Dashboard 如何操作、查詢與驗證。
-- 實作方案與會影響的主要模組。
-- 測試項目與實際要執行的命令。
-- 實作完成後要更新哪些文件。
-- `docs/test_report.md` 要寫入哪些實際測試結果。
+## 1. Planning & Proposal Requirements
 
-不要只寫概念或預期結果；要讓下一位工程師可以直接照著做。
+Any feature addition, risk decision modification, data query update, audit logging change, or plan impacting user-visible behavior must include accessible UI or Dashboard entry points for querying and testing.
+If a change is purely documentation, tests, code formatting, or internal refactoring with no user-visible behavioral impact, explain explicitly why UI/Dashboard verification is not applicable.
 
-## 2. 實作方案要求
+Every proposal must contain:
+- Functional goals and concrete acceptance criteria.
+- UI / Dashboard verification instructions (navigation, inputs, expected visual state).
+- Implementation design and list of affected modules.
+- Verification test suite and exact executable shell commands.
+- List of documentation files to be updated after implementation.
+- Required test data and metrics to be recorded into `docs/test_report.md`.
 
-實作時優先沿用本專案既有架構：
-- 小修或延伸既有版本時，可沿用現有資料流；但有更優解，可更新資料流。另外，版本升級需要時可以合理演進。
-- 修改程式碼前，先讀相關檔案與測試。不要回復或刪除使用者既有變更。若工作樹已有 unrelated changes，保留它們，只修改本次任務需要的範圍。
+Do not write vague conceptual sketches; ensure the plan provides actionable step-by-step instructions that subsequent engineers can execute directly.
 
-## 3. 測試要求
+---
 
-- 實作完成後要做完整測試。若需要 Docker，請先提醒使用者開啟 Docker Desktop，再執行 Docker 相關驗證。
+## 2. Implementation Requirements
 
-- 所有實際測試結果都要寫入 `docs/test_report.md`。內容要包含執行日期、命令、通過數量、Dashboard 驗證結果、Docker 驗證結果，以及任何限制或已知問題。不能只寫預期結果。
+- **Maintain Architectural Continuity**: When extending or fixing existing releases, follow established architectural boundaries and dataflows unless an optimal paradigm shift is justified.
+- **Read Before Modifying**: Inspect existing source files and test suites before making changes.
+- **Preserve Unrelated Changes**: Never revert or discard existing user modifications in the working tree. If unrelated dirty changes exist, preserve them and only modify files within the required task scope.
 
-## 4. 文件同步要求
+---
 
-- 測試通過後，必須比對程式碼與文件是否同步。相關文件要用繁體中文更新，盡量白話易懂，只保留必要英文技術名稱、API route、欄位名稱與指令。
-- 文件不得只描述預期行為；必須跟目前程式碼、路由、欄位、metadata、Dashboard 情境、測試數量與限制同步。
-- 更新 `README.md` 時要特別注意：除了更改版本號碼之外，專案的適用情境、不適用情境、限制等不要隨意修改，除非使用者有明確要求。
-- 更新文件時，舊內容除非已經錯誤、過期、重複到會造成誤解，或與目前程式碼/路由/欄位/測試結果衝突，否則不要整段刪除或重寫。優先用新增段落、版本小節、狀態註記或「目前限制 / 歷史演進」方式保留脈絡，讓後續工程師可以看出版本如何演進。若確實需要刪除舊內容，請在變更說明中交代原因。
-- 常見需要先檢查的文件：根目錄 `README.md` 與 `docs` 目錄內和本次變更相關的文件。只更新受影響、已過期或會造成誤解的文件，不要為了同步而改動無關文件。
+## 3. Testing Requirements
 
-## 5. Git 操作規範
+- **Comprehensive Verification**: Execute complete automated test suites after implementation.
+- **Docker Verification**: If Docker is required, remind the user to start Docker Desktop before executing Docker-dependent checks.
+- **Record Actual Results**: All actual test execution results must be recorded in `docs/test_report.md`. Entries must capture: execution date, exact commands, passed counts, Dashboard verification status, Docker verification status, and known limitations. Never record speculative or theoretical results.
 
-- 未經使用者明確要求，不要執行 `commit`、`push`、`reset`。
-- 提交前要先說明會包含哪些檔案，並確認沒有把 unrelated changes 混進同一個提交。
-- 若工作樹已經有使用者既有變更，要保留它們；只處理本次任務需要的檔案。
+---
 
-## 6. 專案特別注意事項
+## 4. Documentation Synchronization Requirements
 
-- 根目錄 `README.md` 是主要入口，
-- 若需要生成任何圖片，例如架構圖、資訊圖、封面圖、UI mockup 或文件插圖，預設使用 ChatGPT Image2 生圖模型；產出後要放入專案適當路徑，例如 `docs/assets`，並用清楚的用途及版本檔名保存，避免覆蓋仍需保留的舊圖。
-- 回覆使用者時，請清楚說明做了什麼、測了什麼、哪些限制仍存在。
+- **Post-Test Synchronization**: Verify that code and documentation remain synchronized after all tests pass.
+- **Synchronized Truth**: Documents must not merely describe theoretical intent; they must accurately reflect current implementation, routes, database schemas, metadata, Dashboard views, test counts, and boundaries.
+- **README Maintenance**: When updating `README.md`, do not arbitrarily alter target use cases, non-applicable scenarios, or limitations unless explicitly instructed by the user.
+- **Preserve Historical Context**: Do not discard historical sections unless they are obsolete, conflicting, or misleading. Prefer appending release sections, version badges, or historical notes so future contributors can trace architectural evolution.
+- **Focused Updates**: Only update affected or out-of-date documentation files; avoid modifying unrelated files solely for synchronization.
+
+---
+
+## 5. Git Operations Policy
+
+- **No Unauthorized Git Mutations**: Do not execute `git commit`, `git push`, or `git reset` unless explicitly commanded by the user.
+- **Pre-Commit Disclosure**: State clearly which files will be staged and verify that unrelated changes are not commingled.
+- **Protect Working Tree**: If the working tree contains pre-existing user changes, preserve them untouched.
+
+---
+
+## 6. Special Project Notices
+
+- **Primary Entrance**: The root `README.md` serves as the primary gateway for users and external contributors.
+- **Image Generation**: If generating diagrams, infographics, or mockups, default to ChatGPT Image2, save assets with versioned identifiers under `docs/assets/`, and avoid overwriting historical assets.
+- **Transparent Communication**: Clearly explain what was accomplished, what was tested, and which limitations or known boundaries remain.

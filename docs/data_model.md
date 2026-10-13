@@ -1,442 +1,102 @@
-# 資料模型
+# Database Schema & Audit Models
 
-目前資料模型版本：`v1.5.1`
+> **Data Model Version**: `v1.5.2`  
+> **ORM**: SQLAlchemy (asyncio)  
+> **Migration Baseline**: Alembic revision `202606010004` (head)
 
-本專案目前使用 SQLAlchemy models 搭配 Alembic migration 管理 Postgres audit tables。API submit 後會將 run 與 incident 寫入資料庫，dashboard 與查詢 API 都從同一份資料讀取。
+This specification details the relational data models and audit schemas maintained in PostgreSQL for the **RewardHacking** platform.
 
-## SQLAlchemy Models
+---
 
-### `AgentRun`
+## Core Audit Trail Models
 
-Table：`agent_runs`
+### 1. `AgentRun` (`agent_runs`)
+Stores the complete state and evaluation dossier for every submitted agent task.
 
-| 欄位 | 型別 | 說明 |
+| Column | Type | Nullable | Description |
+| --- | --- | --- | --- |
+| `id` | Integer | No | Primary Key |
+| `run_id` | String(64) | No | Unique external UUID identifier (Unique Index) |
+| `tenant_id` | String(64) | No | Owning tenant identifier (Index) |
+| `user_id` | String(64) | No | Submitting user ID (Index) |
+| `task_type` | String(64) | No | Task classification (e.g. `code_fix`, `infra_deploy`) |
+| `prompt` | Text | No | Raw input prompt |
+| `goal` | Text | No | Stated objective of the agent task |
+| `status` | String(32) | No | Status (`queued`, `running`, `awaiting_approval`, `completed`, `denied`, `failed`) |
+| `decision_reason` | Text | Yes | Policy engine justification |
+| `risk_score` | Float | No | Computed composite risk score (0.0 - 1.0) |
+| `policy_flags` | JSON | No | List of triggered policy flags |
+| `request_payload`| JSON | No | Full verbatim submission JSON payload |
+| `execution_output`| Text | Yes | Bounded executor output summary |
+| `evaluation_summary`| JSON | Yes | Composite payload including `prompt_guard`, evaluator signals |
+| `result` | JSON | Yes | Final consolidated result snapshot |
+| `requires_human_review` | Boolean | No | Indicates whether human review was mandated |
+| `created_at` | Timestamp | No | Ingestion timestamp |
+| `updated_at` | Timestamp | No | Last modification timestamp |
+
+---
+
+### 2. `Incident` (`incidents`)
+Logs security incidents, policy denials, and unmitigated rule breaches.
+
+| Column | Type | Nullable | Description |
+| --- | --- | --- | --- |
+| `id` | Integer | No | Primary Key |
+| `run_id` | String(64) | No | Foreign link to `agent_runs.run_id` (Index) |
+| `severity` | String(16) | No | Severity level (`low`, `medium`, `high`, `critical`) |
+| `code` | String(64) | No | Incident classification code |
+| `detail` | Text | No | Detailed forensic evidence and rationale |
+| `created_at` | Timestamp | No | Incident logging timestamp |
+
+---
+
+### 3. `ExecutionPlan` (`execution_plans`) & `ExecutionPlanStep` (`execution_plan_steps`)
+Captures the control plane pre-execution plan and step-level audit trail.
+
+- **`execution_plans`**: Captures `plan_id`, `run_id`, `workflow_id`, `trace_id`, `status`, and `policy_snapshot`.
+- **`execution_plan_steps`**: Captures ordered steps, assigned tools, arguments, and execution statuses.
+
+---
+
+### 4. `RunCheckpoint` (`run_checkpoints`) & `ReplayAttempt` (`replay_attempts`)
+Enables resumable runs and reproducible dry-run replay analysis.
+
+- **`run_checkpoints`**: Records `checkpoint_id`, `run_id`, `checkpoint_type` (`submit`, `resume`, `step`), and step counters.
+- **`replay_attempts`**: Records dry-run reconstruction logs, step results, and replay verification summaries.
+
+---
+
+## Multi-Tenant Governance Models
+
+### 5. `Tenant` (`tenants`) & `TenantApiKey` (`tenant_api_keys`)
+Provides multi-tenant governance with hashed credential storage.
+
+- **`tenants`**: Records `tenant_id`, `name`, `status`, `request_limit_per_minute`, `high_risk_limit_per_hour`.
+- **`tenant_api_keys`**: Records `key_id`, `tenant_id`, `key_prefix`, `key_hash` (SHA-256), `role` (`viewer`, `operator`, `admin`, `finops_admin`), and `revoked_at`.
+
+---
+
+## Agent FinOps Core Models
+
+### 6. `PricingCatalog` (`pricing_catalog`)
+Maintains the centralized, versioned cost matrix for AI models and infrastructure resources.
+
+| Column | Type | Description |
 | --- | --- | --- |
-| `id` | integer | primary key |
-| `run_id` | string | 對外追蹤用 UUID，唯一 |
-| `tenant_id` | string | run 所屬租戶，既有資料 migration 後預設為 `default` |
-| `user_id` | string | 使用者或租戶內使用者 |
-| `task_type` | string | 任務類型 |
-| `prompt` | text | 任務 prompt |
-| `goal` | text | 任務目標 |
-| `status` | string | `denied`、`escalated`、`queued`、`running`、`awaiting_approval`、`completed`、`failed` 等 |
-| `decision_reason` | text | policy decision reason |
-| `risk_score` | float | policy risk score |
-| `policy_flags` | JSON | 命中的 policy flags |
-| `request_payload` | JSON | 原始 request payload |
-| `execution_output` | text | executor output 摘要 |
-| `evaluation_summary` | JSON | policy / execution / evaluation event summary |
-| `result` | JSON | response、execution output、evaluation summary 的整合快照 |
-| `requires_human_review` | boolean | 是否需人工審核 |
-| `created_at` | timestamp | 建立時間 |
-| `updated_at` | timestamp | 更新時間 |
-
-`v1.1.0` 起的 Prompt Guard 不新增欄位或資料表；分析結果保存在 `evaluation_summary.prompt_guard`，包含：
-
-- `language`：例如 `en`、`zh`、`mixed_zh`、`zh_classical`。
-- `normalized_prompt`：去除頭尾與重複空白後的 prompt。
-- `flags`：例如 `classical_chinese_obfuscation`、`classical_prompt_injection`。
-- `signals`：每個命中規則的 category、canonical intent 與 matched text。
-
-索引：
-
-- `run_id` unique index。
-- `tenant_id` index。
-- `user_id` index。
-- `status` index。
-
-### `Incident`
-
-Table：`incidents`
-
-| 欄位 | 型別 | 說明 |
-| --- | --- | --- |
-| `id` | integer | primary key |
-| `run_id` | string | 關聯 run |
-| `severity` | string | `low`、`medium`、`high`、`critical` |
-| `code` | string | incident code |
-| `detail` | text | incident detail |
-| `created_at` | timestamp | 建立時間 |
-
-目前 incident 建立規則：
-
-- `status=denied`：建立 `policy_denied` incident。
-- `status=escalated`：建立 `policy_escalated` incident。
-- `status=awaiting_approval`：建立 `approval_required` incident。
-- `status=failed`：建立 `worker_failed` incident。
-- evaluator verdict 為 `review`：建立 `eval_review_required` incident。
-
-### `WorkerAttempt`
-
-Table：`worker_attempts`
-
-記錄 worker 每次處理 run 的 attempt number、status、failure reason、next retry time。`status=retry_scheduled` 表示還會重試，`status=dlq` 表示已超過重試上限。
-
-### `ToolExecution`
-
-Table：`tool_executions`
-
-記錄每個 tool action 的 tool name、status、detail、sandbox policy 與 artifact refs。目前 sandbox policy 是可審計契約，不代表已啟動真實 OS sandbox。
-
-### `ApprovalEvent`
-
-Table：`approval_events`
-
-記錄 approval pending、approve once、deny、request changes、reviewer、reason、expires_at 與 expired 狀態。
-
-### `EvaluationResultRecord`
-
-Table：`evaluation_results`
-
-記錄 evaluator final score、verdict、task-specific rubric、judge signal 與 explanation。LLM-as-judge 目前預設為 deterministic fake signal，且 `used_for_hard_deny=false`。
-
-### `GovernanceEvent`
-
-Table：`governance_events`
-
-記錄 v0.6 tenant governance 事件，例如 request quota exceeded 與 high-risk quota fail-closed。
-
-| 欄位 | 型別 | 說明 |
-| --- | --- | --- |
-| `id` | integer | primary key |
-| `tenant_id` | string | 事件所屬租戶 |
-| `user_id` | string | 觸發事件的租戶內使用者 |
-| `run_id` | string | 若事件已建立 run，保存對應 run id；request quota 直接阻擋時可為空字串 |
-| `event_type` | string | 例如 `request_quota_exceeded`、`high_risk_quota_exceeded` |
-| `decision` | string | 例如 `blocked`、`approval_required` |
-| `reason` | text | 人可讀原因 |
-| `limit_value` | integer | quota limit |
-| `used` | integer | 事件發生時已使用數量 |
-| `remaining` | integer | 剩餘 quota |
-| `details` | JSON | quota bucket 等補充資訊 |
-| `created_at` | timestamp | 建立時間 |
-
-### `Tenant`
-
-Table：`tenants`
-
-記錄 v0.7 Tenant Governance Center 的 tenant 設定。`tenant_id` 仍是各 audit table 的邏輯關聯鍵；本版不新增 foreign key，避免和既有 demo/backfill 資料產生部署耦合。
-
-| 欄位 | 型別 | 說明 |
-| --- | --- | --- |
-| `id` | integer | primary key |
-| `tenant_id` | string | tenant 識別，唯一 |
-| `display_name` | string | Dashboard 顯示名稱 |
-| `status` | string | `active` 或後續管理狀態；停用 tenant 的 DB-managed key 會被拒絕 |
-| `request_limit_per_minute` | integer | tenant-level request quota |
-| `high_risk_limit_per_hour` | integer | tenant-level high-risk quota |
-| `created_at` | timestamp | 建立時間 |
-| `updated_at` | timestamp | 更新時間 |
-
-### `TenantApiKey`
-
-Table：`tenant_api_keys`
-
-記錄 DB-managed API key。明文 key 只在建立時回傳一次；資料庫只保存 hash 與 prefix。
-
-| 欄位 | 型別 | 說明 |
-| --- | --- | --- |
-| `id` | integer | primary key |
-| `key_id` | string | 對外管理用 key id |
-| `tenant_id` | string | key 所屬 tenant |
-| `name` | string | key 顯示名稱 |
-| `key_prefix` | string | Dashboard 顯示用 prefix |
-| `key_hash` | string | SHA-256 hash，唯一 |
-| `role` | string | `viewer`、`operator` 或 `admin` |
-| `status` | string | `active` 或 `revoked` |
-| `revoked` | boolean | 是否已撤銷 |
-| `created_at` | timestamp | 建立時間 |
-| `revoked_at` | timestamp | 撤銷時間 |
-
-### `OperationsEvidence`
-
-Table：`operations_evidence`
-
-記錄 Operations Gate 使用的人工營運證據，例如 backup/restore drill、secret rotation、safety regression 或 retention review。這是審計證據，不會自動執行實際備份、還原、輪替或 red-team 測試。
-
-| 欄位 | 型別 | 說明 |
-| --- | --- | --- |
-| `id` | integer | primary key |
-| `evidence_type` | string | 例如 `backup_restore_drill`、`secret_rotation`、`safety_regression`、`retention_review` |
-| `status` | string | `pass`、`warn` 或 `fail` |
-| `summary` | text | 人可讀證據摘要 |
-| `reference_url` | string | 文件、測試報告或外部紀錄位置 |
-| `metadata_payload` | JSON | 補充資訊 |
-| `created_by` | string | 建立者或 key 來源 |
-| `created_at` | timestamp | 建立時間 |
-
-### `ReleaseGateRun` / `ReleaseGateItem`
-
-Tables：`release_gate_runs`、`release_gate_items`
-
-保存某次 release gate snapshot 與每個檢查項目的結果。`release_gate_runs.status` 由 items 彙總而來：只要任一 item 為 `fail`，整體為 `fail`；否則任一 item 為 `warn` 時整體為 `warn`；其餘為 `pass`。
-
-| 欄位 | 型別 | 說明 |
-| --- | --- | --- |
-| `gate_id` | string | 對外查詢 release gate 的 ID |
-| `release_version` | string | 例如 `v1.5.1` |
-| `status` | string | `pass`、`warn` 或 `fail` |
-| `summary` | text | gate 結果摘要 |
-| `created_by` | string | 建立者 |
-| `trace_id` | string | 建立 gate 時的 `X-Trace-Id` |
-| `check_key` | string | item 檢查鍵，例如 `backup_restore_evidence`、`safety_regression_evidence` |
-| `title` / `detail` | string / text | item 顯示文字 |
-| `metadata_payload` | JSON | item 補充資訊 |
-
-### `WorkflowDefinition`
-
-Table：`workflow_definitions`
-
-記錄 V1.2 Control Plane 的 DB-managed workflow。系統也內建 builtin workflows；DB 中相同 `workflow_id` 與 `version` 的資料會覆蓋 builtin 顯示結果。
-
-| 欄位 | 型別 | 說明 |
-| --- | --- | --- |
-| `workflow_id` | string | workflow 識別，例如 `analysis-basic` |
-| `version` | string | workflow 版本 |
-| `task_type` | string | 對應 `AgentRequest.task_type` |
-| `display_name` | string | Dashboard 顯示名稱 |
-| `status` | string | `active` 時可被 planner 選用 |
-| `definition` | JSON | workflow steps 或後續 registry metadata |
-
-### `ToolDefinition`
-
-Table：`tool_definitions`
-
-記錄 V1.2 Control Plane 的 DB-managed tool registry。系統也內建 builtin tools；DB 中相同 `tool_name` 的資料會覆蓋 builtin 顯示結果。
-
-| 欄位 | 型別 | 說明 |
-| --- | --- | --- |
-| `tool_name` | string | tool 識別，例如 `read_data` |
-| `display_name` | string | Dashboard 顯示名稱 |
-| `status` | string | `active` 時可被 planner 選用 |
-| `task_types` | JSON | 可使用此 tool 的任務類型 |
-| `requires_approval` | boolean | 是否強制進 approval gate |
-| `risk_level` | string | `low`、`medium`、`high` 等風險標註 |
-| `metadata_payload` | JSON | registry 補充資訊 |
-
-### `ExecutionPlan`
-
-Table：`execution_plans`
-
-V1.3 在低風險 run 進入 worker queue 前建立 execution plan，並把 HTTP `X-Trace-Id` 寫入 `trace_id` 與 `trace_metadata`。Worker 若找不到對應 plan，會 fail closed，將 run 轉為 `awaiting_approval` 並加入 `missing_execution_plan` flag。
-
-| 欄位 | 型別 | 說明 |
-| --- | --- | --- |
-| `plan_id` | string | execution plan 對外識別 |
-| `run_id` | string | 對應 `agent_runs.run_id`，唯一 |
-| `tenant_id` | string | run 所屬 tenant |
-| `workflow_id` / `workflow_version` | string | planner 選出的 workflow |
-| `status` | string | `planned` 或 `requires_approval` |
-| `model_route` | JSON | deterministic model route metadata，不代表外部模型呼叫 |
-| `selected_tools` | JSON | planner 選出的工具與風險資訊 |
-| `steps` | JSON | policy、approval、tool execution、evaluation 等步驟 |
-| `approval_gates` | JSON | tool 或 registry 造成的 approval gates |
-| `policy_snapshot` | JSON | submit 時的 policy decision 快照 |
-| `trace_id` | string | 與 run request metadata 對齊的 trace id |
-| `trace_metadata` | JSON | 保留 `exporter_type`、`external_trace_id`、`span_id`、`parent_span_id` 等未來 exporter 欄位 |
-
-### `ExecutionPlanStep`
-
-Table：`execution_plan_steps`
-
-V1.3 新增 step-level audit，用來讓 Trace / Replay API 與 Dashboard 查詢每個 execution plan step 的狀態與摘要。
-
-| 欄位 | 型別 | 說明 |
-| --- | --- | --- |
-| `step_id` | string | step 對外識別，例如 `step_1_plan` |
-| `plan_id` | string | 對應 `execution_plans.plan_id` |
-| `run_id` | string | 對應 `agent_runs.run_id` |
-| `trace_id` | string | 與 execution plan / run metadata 對齊 |
-| `step_index` | integer | step 在 timeline 中的順序 |
-| `step_type` | string | `policy_check`、`tool_execution`、`evaluation` 等 |
-| `status` | string | `planned`、`completed`、`failed` 等 |
-| `started_at` / `finished_at` | timestamp | step 時間戳 |
-| `duration_ms` | integer | step duration |
-| `input_summary` / `output_summary` / `error_summary` | text | replay bundle 與 Dashboard 用的摘要 |
-| `metadata_payload` | JSON | step metadata 與未來 exporter 欄位 |
-
-### `RunCheckpoint`
-
-Table：`run_checkpoints`
-
-V1.4 新增 checkpoint timeline。Submit flow 會建立 `checkpoint_type=submit` 的 checkpoint；`POST /v1/runs/{run_id}/resume` 會建立 `checkpoint_type=resume` 的 checkpoint，讓 run 的恢復點可以被 API 與 Dashboard 查詢。
-
-| 欄位 | 型別 | 說明 |
-| --- | --- | --- |
-| `checkpoint_id` | string | checkpoint 對外識別 |
-| `run_id` / `tenant_id` / `trace_id` | string | 對應 run、tenant 與 trace |
-| `checkpoint_type` | string | `submit` 或 `resume` |
-| `status` | string | checkpoint 建立當下的 run status |
-| `resume_cursor` | string | 建議恢復位置，例如 `worker_queue` 或 `approval_queue` |
-| `state_payload` | JSON | request、policy、execution plan 摘要、step count、replay readiness 與 resume reason |
-| `created_by` | string | 建立來源，例如 `dashboard`、API key 或 reviewer |
-| `created_at` | timestamp | 建立時間 |
-
-### `ReplayAttempt`
-
-Table：`replay_attempts`
-
-V1.4 新增 dry-run replay attempt。Replay attempt 只重建 policy、workflow 與 step context，不呼叫真實外部工具，也不修改外部狀態。
-
-| 欄位 | 型別 | 說明 |
-| --- | --- | --- |
-| `replay_id` | string | replay attempt 對外識別 |
-| `source_run_id` | string | 原始 run id |
-| `tenant_id` / `trace_id` | string | 對應 tenant 與 trace |
-| `mode` | string | 目前只支援 `dry_run` |
-| `status` | string | replay attempt 狀態，目前成功建立即為 `completed` |
-| `result_payload` | JSON | replay 的 source status、policy snapshot、workflow id、step count 與外部執行標記 |
-| `limitations` | JSON | 明確記錄不呼叫外部工具、不改外部狀態 |
-| `created_by` | string | 建立者 |
-| `created_at` | timestamp | 建立時間 |
-
-### `PricingCatalog`
-
-Table：`pricing_catalog`
-
-V1.5 新增 deterministic pricing catalog，用來把 usage event 換算成 cost event。內建 default pricing 由 service 首次記帳時寫入，包含 model input/output tokens、tool call、worker seconds、artifact MB、checkpoint write 與 replay attempt。
-
-| 欄位 | 型別 | 說明 |
-| --- | --- | --- |
-| `pricing_id` | string | pricing record id |
-| `provider` | string | 目前預設 `internal` |
-| `resource_type` | string | `model`、`tool`、`compute`、`storage`、`checkpoint`、`replay` |
-| `model_name` | string | model 名稱；generic pricing 會留空 |
-| `price_unit` | string | `input_tokens`、`output_tokens`、`tool_call`、`worker_seconds` 等 |
-| `unit_price` | numeric | 單位價格 |
-| `currency` | string | 目前預設 `USD` |
-| `is_active` | boolean | 軟停用用欄位 |
-| `metadata_payload` | JSON | pricing 來源與備註 |
-
-### `UsageEvent`
-
-Table：`usage_events`
-
-V1.5 成本帳本的原始用量事件。Submit 會寫 estimated usage；worker completion 會寫 actual usage；resume 與 replay 會寫 checkpoint / replay usage。
-
-| 欄位 | 型別 | 說明 |
-| --- | --- | --- |
-| `usage_id` | string | usage event id |
-| `tenant_id` / `user_id` / `run_id` / `trace_id` | string | 成本歸屬與追蹤欄位 |
-| `workflow_id` / `step_id` | string | 對應 execution plan / step |
-| `checkpoint_id` / `replay_attempt_id` | string | resume 或 replay linkage |
-| `provider` / `model_name` | string | provider 與 model metadata |
-| `resource_type` | string | 成本資源類型 |
-| `usage_unit` | string | pricing lookup 使用的單位 |
-| `quantity` | numeric | deterministic 用量 |
-| `phase` | string | `estimated`、`actual`、`resume`、`replay`、`manual` |
-| `metadata_payload` | JSON | 來源與細節 |
-
-### `CostEvent`
-
-Table：`cost_events`
-
-每筆 usage event 會依 pricing catalog 產生一筆 cost event。Estimated phase 會寫 `estimated_cost`，actual phase 會寫 `actual_cost`。
-
-| 欄位 | 型別 | 說明 |
-| --- | --- | --- |
-| `cost_id` | string | cost event id |
-| `usage_event_id` | string | 對應 usage event |
-| `pricing_catalog_id` | string | 使用的 pricing record |
-| `tenant_id` / `run_id` / `trace_id` / `workflow_id` | string | 成本歸屬 |
-| `resource_type` / `model_name` | string | 成本資源 metadata |
-| `estimated_cost` / `actual_cost` | numeric | estimated 與 actual 成本 |
-| `currency` | string | 幣別 |
-| `allocation_tags` | JSON | tenant/workflow allocation tags |
-| `calculation_method` | string | 目前與 usage `phase` 對齊 |
-
-### `BudgetPolicy` / `BudgetViolation`
-
-Tables：`budget_policies`、`budget_violations`
-
-V1.5 先支援 run-level budget policy。當同一 run 的 estimated + actual cost 超過 active run budget 時，系統會建立 `budget_violations`。目前 violation 只記錄與查詢，不會阻擋 run 或改變 routing。
-
-| Table | 重要欄位 | 說明 |
-| --- | --- | --- |
-| `budget_policies` | `budget_id`、`tenant_id`、`scope`、`period`、`limit_amount`、`actions`、`is_active` | 定義 tenant/run/workflow/model budget；V1.5 實作 run scope 檢查 |
-| `budget_violations` | `violation_id`、`budget_id`、`tenant_id`、`run_id`、`violation_type`、`actual_amount`、`limit_amount`、`decision` | 保存超額事件，`violation_type=run_budget_exceeded` |
-
-## Event Schemas
-
-所有 event 繼承 `BaseEvent`：
-
-| 欄位 | 說明 |
-| --- | --- |
-| `event_id` | event UUID |
-| `trace_id` | 跨 component 追蹤 ID |
-| `run_id` | 單次 agent run ID |
-| `event_type` | event 類型 |
-| `ts` | ISO timestamp |
-| `payload` | event-specific JSON |
-
-注意：目前 Kafka event envelope 本身未放 `tenant_id` 欄位；tenant 資訊會放在 `payload.request.tenant_id`，並在 Postgres audit tables 中保存。
-
-目前 `evaluation_summary.event_timeline` 與 Kafka payload 常見 event types：
-
-- `agent.requested`
-- `policy.decision`
-- `execution.result`
-- `evaluation.result`
-- `incident`
-- `run.state`
-- `worker.retry_scheduled`
-- `worker.failed`
-- `approval.decision`
-
-`v1.4.0` 延續 v1.0 的 HTTP `X-Trace-Id` 基線：trace id 會寫入 submit request 的 `metadata.trace_id`，並同步到 `execution_plans.trace_id`、`execution_plan_steps.trace_id`、`run_checkpoints.trace_id`、`replay_attempts.trace_id`、trace API 與 replay bundle。`agent.requests` 的 `payload.request.metadata.trace_id` 仍會傳給 worker；release gate snapshot 也會保存建立當下的 trace id。`BaseEvent.trace_id` 目前由 event helper 另行產生 UUID；後續若導入完整 OpenTelemetry，應把 API response header、Kafka envelope、logs 與 database 的 trace id 對齊。
-
-`v1.4.0` 延續 `execution_plan_steps`，並新增 `run_checkpoints` 與 `replay_attempts`；Kafka event envelope 尚未直接內嵌完整 plan、step audit、checkpoint 或 replay bundle，worker 會用 `run_id` 從 Postgres 讀取對應 execution plan。
-
-## 資料生命週期建議
-
-### Hot Data
-
-近期 run state、idempotency key、tool circuit breaker 目前已放 Redis，TTL 依用途設定 5 分鐘到 24 小時。Approval 的長期決策、TTL 與 reviewer event 會寫入 Postgres audit trail。
-
-### Audit Data
-
-policy decision、execution summary、evaluation summary、incident 已進 Postgres，保留期可依合規需求設定。
-
-### Artifacts
-
-程式碼 diff、test report、完整 tool output、模型輸出全文可能太大，不建議全部塞進 `agent_runs.result`。目前保存 bounded tool transcript、tool execution audit 與 artifact refs；正式環境可加入 object storage，Postgres 只存 artifact URI 與 hash。
-
-## 隱私與資料保護
-
-- Prompt 可能包含敏感資料，正式環境需做 PII detection 與 redaction。
-- Log 中不應輸出完整 prompt 或 tool output。
-- `metadata` 欄位應避免存 access token、password、private key。
-- Audit retention 到期後需要清除或匿名化。
-## V1.3 Trace / Replay Data Model 補充
-
-V1.3 在 `execution_plans` 增加：
-
-| 欄位 | 型別 | 說明 |
-| --- | --- | --- |
-| `trace_id` | string | 沿用 HTTP `X-Trace-Id`，用來串起 run、plan 與 step audit。 |
-| `trace_metadata` | JSON | 內部 Trace Contract metadata，保留 `exporter_type`、`external_trace_id`、`span_id`、`parent_span_id` 與未來 exporter 提示。 |
-
-V1.3 新增 `execution_plan_steps`：
-
-| 欄位 | 型別 | 說明 |
-| --- | --- | --- |
-| `step_id` | string | plan step id，例如 `policy-check`。 |
-| `plan_id` / `run_id` / `tenant_id` | string | 對應 execution plan、run 與 tenant。 |
-| `trace_id` | string | 與 `execution_plans.trace_id` 一致。 |
-| `step_type` | string | `policy_check`、`approval_gate`、`tool_execution`、`evaluation` 等。 |
-| `status` | string | `completed`、`planned`、`pending`、`blocked` 或 `failed`。 |
-| `started_at` / `finished_at` / `duration_ms` | timestamp / integer | step audit 的時間欄位；尚未執行的 step 可為空。 |
-| `input_summary` / `output_summary` / `error_summary` | text | 給 Dashboard、稽核與 replay bundle 使用的摘要。 |
-| `metadata_payload` | JSON | step-level span/exporter metadata。 |
-## V1.5.1 FinOps Schema 欄位總表
-
-V1.5.1 已把 FinOps schema 擴充到完整 pricing、usage、cost、budget、budget violation、pricing import batch、pricing change log 與 pricing source document 欄位。每個 table 的完整欄位清單已整理在 [`docs/v1.5.1_finops_core.md`](v1.5.1_finops_core.md#schema-欄位總表)，包含：
-
-- `pricing_catalog`
-- `usage_events`
-- `cost_events`
-- `budget_policies`
-- `budget_violations`
-- `pricing_import_batches`
-- `pricing_change_logs`
-- `pricing_source_documents`
+| `pricing_id` | String(64) | Unique price identifier |
+| `provider` | String(64) | Model provider (e.g., `openai`, `anthropic`, `google`) |
+| `model_name` | String(128)| Model name (e.g., `gpt-4o`, `claude-3-5-sonnet`) |
+| `resource_type` | String(64) | `token`, `tool_call`, `worker_runtime` |
+| `token_type` | String(64) | `input`, `output`, `cached_input`, `reasoning` |
+| `rate` | Numeric | Cost per pricing unit |
+| `price_unit` | String(64) | Unit (e.g., `per_1m_tokens`, `per_invocation`) |
+| `effective_start_date`| Timestamp | Validity start timestamp |
+| `is_active` | Boolean | Active status flag |
+
+### 7. `UsageEvent` (`usage_events`) & `CostEvent` (`cost_events`)
+The immutable financial ledger recording deterministic resource consumption and calculated expenditures.
+- **`usage_events`**: Immutable logs of token counts, tool calls, and execution latencies.
+- **`cost_events`**: Computed financial records bound to specific pricing catalog snapshots, guaranteeing historical cost integrity.
+
+### 8. `BudgetPolicy` (`budget_policies`) & `BudgetViolation` (`budget_violations`)
+Enforces soft and hard expenditure thresholds per run, tenant, or workflow.

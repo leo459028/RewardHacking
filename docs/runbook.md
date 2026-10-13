@@ -1,402 +1,90 @@
-# Runbook v1.5
+# Production Runbooks & Incident Response
 
-此 runbook 用於本機 demo、維運檢查與 incident response。它反映目前實作狀態：API、Dashboard、Postgres audit trail、Kafka worker、Redis run state、approval queue、worker retry/DLQ、tool execution audit、evaluator/observability summary、tenant governance、production readiness gate、safety regression evidence、古文/文言式 Prompt Guard、Control Plane execution plan、Trace / Replay Readiness、Checkpoint / Resume / Replay MVP 與 Agent FinOps Core / Cost Ledger 已接入 request path。
+> **Runbook Version**: `v1.5.2`  
+> **Previous Versions**: `v1.5.1`, `v1.5.0`, `v1.0.0`
 
-目前營運基線：`v1.5.1`
+This operational runbook provides triage instructions, troubleshooting procedures, and incident response playbooks for operators maintaining the **RewardHacking** platform.
 
-V1.5.1 新增 Admin FinOps pricing import 管理並擴充 FinOps schema。若 Run Detail 沒有 `Cost Summary`，先確認 migration head 是否為 `202606010004`、submit flow 是否產生 `usage_events` / `cost_events`，再查 `/v1/cost/runs/{run_id}`。若 `/dashboard/costs` 沒有 budget violations，確認是否已建立 active run-scope budget policy，且該 run 的 estimated + actual cost 是否超過 `hard_limit_amount` 或 `limit_amount`。若 pricing catalog 缺官方模型價格，先到 `/dashboard/admin/finops/pricing/import` 執行 Dry Run，再 Apply Import。
+---
 
-## 快速檢查
-
-API health：
-
-```bash
-curl http://localhost:8000/v1/healthz
-```
-
-Postgres readiness：
+## Quick Health Checks
 
 ```bash
-curl http://localhost:8000/v1/readyz
-```
+# 1. API process liveness
+curl -f http://localhost:8000/v1/healthz
 
-Prometheus metrics：
+# 2. PostgreSQL readiness
+curl -f http://localhost:8000/v1/readyz
 
-```bash
-curl http://localhost:8000/v1/metrics
-```
+# 3. Prometheus metrics output
+curl -s http://localhost:8000/v1/metrics | head -n 20
 
-常用 Dashboard：
-
-- `http://localhost:8000/dashboard/worker`
-- `http://localhost:8000/dashboard/observability`
-- `http://localhost:8000/dashboard/governance`
-- `http://localhost:8000/dashboard/operations`
-- `http://localhost:8000/dashboard/control-plane`
-
-Dashboard：
-
-```text
-http://localhost:8000/dashboard
-```
-
-Docker Compose：
-
-```bash
+# 4. Container status
 docker compose ps
-docker compose logs -f api
-docker compose logs -f worker
+
+# 5. Worker logs
+docker compose logs --tail=100 -f worker
 ```
 
-## 1. API 無法啟動
-
-症狀：
-
-- `api` container exit。
-- `/v1/healthz` 無回應。
-- logs 出現 import error、dependency error、migration error 或 env parse error。
-
-處理步驟：
-
-1. 查看 logs：
-
-```bash
-docker compose logs api
-```
-
-2. 確認 `.env` 存在且 `POSTGRES_DSN` 指向可連線的 Postgres；主機端使用 `localhost:5432`，Docker container 內由 `docker-compose.yml` 覆蓋成 `postgres:5432`。
-3. 確認 dependencies 已安裝：
-
-```bash
-pip install -r requirements.txt
-```
-
-4. 本機執行測試：
-
-```bash
-pytest -q
-```
-
-5. 若是 image 問題，重建：
-
-```bash
-docker compose build --no-cache api
-```
-
-## 2. Readiness 失敗
-
-症狀：
-
-- `/v1/healthz` 成功，但 `/v1/readyz` 失敗。
-- Dashboard 或 submit API 回 500。
-
-可能原因：
-
-- Postgres container 未啟動或未 healthy。
-- `POSTGRES_DSN` 錯誤。
-- Alembic migration 尚未套用。
-- DB 密碼或網路設定錯誤。
-
-處理步驟：
-
-1. 查看 Postgres 狀態：
-
-```bash
-docker compose ps postgres
-docker compose logs postgres
-```
-
-2. 套用 migration。若正在驗證 Docker stack，優先從 API container 執行：
-
-```bash
-docker compose exec -T api alembic upgrade head
-```
-
-主機端直接驗證 migration 時可執行：
-
-```bash
-alembic upgrade head
-```
-
-3. 確認 `.env` 在 host 直接跑時使用 `localhost`；Docker Compose 內的 `api` / `worker` 會由 `docker-compose.yml` 覆蓋為 `postgres` hostname。
-
-## 3. Submit 後 Dashboard 沒更新
-
-症狀：
-
-- `POST /v1/agent/submit` 成功，但 `/dashboard` total runs 沒增加。
-- `/v1/runs` 查不到資料。
-
-處理步驟：
-
-1. 確認 submit endpoint 回傳的 `run_id`。
-2. 查詢 API：
-
-```bash
-curl http://localhost:8000/v1/runs
-curl http://localhost:8000/v1/dashboard/summary
-```
-
-3. 查看 API logs 是否有 persistence error。
-4. 確認服務實際連到同一個 Postgres database。
-
-若 run 停在 `queued` 太久：
-
-```bash
-docker compose ps worker
-docker compose logs worker
-```
-
-確認 worker 有啟動且可連到 Kafka、Redis 與 Postgres。
-
-## 4. Dashboard Playground Submit 回 internal_server_error
-
-症狀：
-
-- 在 `/dashboard/playground` 按下 Submit Run 後，頁面回傳 `{"error":{"code":"internal_server_error"}}`。
-- API logs 顯示 stack trace 指向 `request.form()`。
-- 錯誤訊息提到需要 `python-multipart` 才能解析 form。
-
-可能原因：
-
-- Docker image 或本機 runtime 沒有安裝 `python-multipart`。
-- `requirements.txt` 與 `pyproject.toml` 的 runtime dependencies 不同步。
-- 修改 Dashboard form route 後只測 GET page render，沒有測 POST submit flow。
-
-處理步驟：
-
-1. 查看 API logs：
-
-```bash
-docker compose logs api
-```
-
-2. 確認 `requirements.txt` 與 `pyproject.toml` 都包含 `python-multipart`。
-3. 若是 Docker runtime 問題，重新 build：
-
-```bash
-docker compose up -d --build
-```
-
-4. 用表單 endpoint 做回歸驗證：
-
-```bash
-curl -X POST http://localhost:8000/dashboard/playground \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "user_id=demo-user&task_type=code_fix&allowed_tools=read_repo%2C+run_tests&max_tool_calls=8&goal=fix+bug1699&prompt=fix+bug&no_external_network=on"
-```
-
-預期結果：HTTP 200，頁面內容包含 `queued`，且不包含 `internal_server_error`。
-
-## 5. Escalation / Deny Rate 突然升高
-
-症狀：
-
-- 大量 request 回 `escalated` 或 `denied`。
-- `policy_flags` 中某些 flags 激增。
-- incidents 明顯增加。
-
-可能原因：
-
-- prompt injection attack。
-- 上游 prompt template 改壞。
-- `DEFAULT_RISK_THRESHOLD` 調太低。
-- 新 rule false positive。
-- 使用者開始要求 external network、PII 或 destructive actions。
-
-處理步驟：
-
-1. 在 `/dashboard/runs` 依 status 篩選。
-2. 查看 run detail 的 `policy_flags` 與 request payload。
-3. 若是 false positive，調整 sanitizer、risk scoring 或 policy rule，並補 regression test。
-4. 若是攻擊，先維持 fail closed，再加強 rate limit 或上游阻擋。
-
-## 6. Evaluator Review Rate 過高
-
-症狀：
-
-- 許多 allow 後的任務最後 status 是 `awaiting_approval`。
-- run detail 中 `evaluation_summary` verdict 為 `review`。
-
-可能原因：
-
-- executor output 過短。
-- 任務缺乏驗證證據。
-- evaluator heuristic 過嚴。
-- 任務品質真的下降。
-
-處理步驟：
-
-1. 抽樣查看 `evaluation_summary`。
-2. 比對 `shortcut_risk`、`hallucination_risk`、`policy_violation_risk`。
-3. 對 code task 要求 test report 或 diff artifact。
-4. 調整 evaluator 前先補測試資料。
-
-## 6A. 古文 / 文言式攻擊被擋下
-
-症狀：
-
-- `policy_flags` 出現 `classical_chinese_obfuscation`、`classical_prompt_injection`、`classical_policy_bypass`、`classical_credential_exfiltration`、`classical_destructive_intent` 或 `classical_malware_intent`。
-- run detail 的 Prompt Guard 顯示 `language=zh_classical`。
-- `agent_prompt_guard_flags_total{flag}` 增加。
-
-處理步驟：
-
-1. 到 `/dashboard/runs/{run_id}` 查看 Prompt Guard 區塊，確認 matched signals。
-2. 若 prompt 是正常文言文教學或摘要，補 regression test 並調整規則，避免誤擋。
-3. 若 prompt 包含洩密、繞過政策、破壞資料或惡意程式意圖，維持 fail closed，要求人工審核。
-4. 需要追蹤趨勢時，查 `/v1/metrics` 的 `agent_prompt_guard_flags_total{flag}`。
-
-## 7. Destructive Action Request
-
-症狀：
-
-- request constraints 中 `allow_destructive_actions=true`。
-- 沒有 `requires_human_approval=true`。
-- policy flags 出現 `destructive_without_approval`。
-
-處理步驟：
-
-1. 預設進入 `awaiting_approval` 或 `denied`。
-2. 確認 incident 已建立。
-3. 到 `/dashboard/approvals` 要求人工審核與 rollback plan。
-4. 不要為了單一流程放寬全域規則；應建立特定 workflow policy。
-
-## 8. PII Access Request
-
-症狀：
-
-- `allow_pii_access=true`。
-- policy flags 出現 `pii_access_requested`。
-
-處理步驟：
-
-1. 預設 escalated。
-2. 確認合法目的、資料最小化與保留期限。
-3. 要求 PII redaction 或 masked dataset。
-4. 確認 logs 不輸出 PII。
-
-## 9. Tenant Quota / Governance 問題
-
-症狀：
-
-- submit 回 `429 tenant_request_quota_exceeded`。
-- high-risk request 沒有執行，run 進入 `awaiting_approval` 且 `policy_flags` 包含 `tenant_high_risk_quota_exceeded`。
-- `/dashboard/governance` 的 quota limited count 增加。
-
-排查重點：
-
-1. 確認 `.env` 或部署環境中的 quota 設定：
-
-```bash
-QUOTA_ENABLED=true
-TENANT_REQUEST_LIMIT_PER_MINUTE=60
-TENANT_HIGH_RISK_LIMIT_PER_HOUR=10
-```
-
-2. 查詢治理事件：
-
-```bash
-curl "http://localhost:8000/v1/governance/events?tenant_id=default"
-curl "http://localhost:8000/v1/governance/summary?tenant_id=default"
-```
-
-3. 檢查 Redis quota keys：
-
-```bash
-docker compose exec redis redis-cli keys 'tenant:*:quota:*'
-```
-
-處理方向：
-
-- 若是測試環境需要重跑，可暫時降低或關閉 `QUOTA_ENABLED`，但要在 `docs/test_report.md` 記錄實際設定。
-- 若是正式環境流量暴增，先確認是否為單一 tenant 異常、是否有 prompt attack 或 retry storm，再調整 quota。
-- request quota 超過時不會建立 run，只會寫入 `governance_events`；high-risk quota 超過時會建立 run 並 fail closed 進入人工審核。
-
-## 10. Kafka Topic 或 Consumer 問題
-
-目前 Kafka topics 會由 Docker Compose 建立，API 會 publish `agent.requests`，worker 會消費 queued run。`v0.6.0` 保留 retry/backoff 與 DLQ audit；lag alert 尚未實作。
-
-若 `kafka-init` 或 worker 消費失敗：
-
-```bash
-docker compose logs kafka
-docker compose logs kafka-init
-docker compose logs worker
-docker compose up kafka-init
-```
-
-常見檢查：
-
-- `.env` 在 Docker Compose 中應使用 `KAFKA_BOOTSTRAP_SERVERS=kafka:9092`。
-- queued run 若沒有被 worker 更新，先確認 worker container 是否健康。
-- 重複 event 會被 Redis idempotency key 擋下，不應重複執行。
-
-## 11. Release Gate 失敗
-
-症狀：
-
-- `/dashboard/operations` 顯示 readiness 為 `fail`。
-- `POST /v1/operations/release-gates` 建立的 snapshot 狀態為 `fail`。
-
-處理步驟：
-
-1. 查看 `/dashboard/operations` 的 Readiness Checks，確認是哪個 `check_key` 阻擋。
-2. 若是 `worker_dlq`、`stale_queued_runs` 或 `blocking_incidents`，先處理 worker、approval 或 incident，不要直接 release。
-3. 若是 `backup_restore_evidence`、`secret_rotation_evidence` 或 `safety_regression_evidence` 為 `warn` / `fail`，補做人工 drill 或 red-team corpus regression 後透過 Dashboard 或 API 建立 evidence。
-4. 若是 `bootstrap_keys_in_prod`，確認正式環境不要依賴 `.env` 的 `API_KEYS` fallback，改用 DB-managed API key 或正式 IAM。
-
-注意：v1.1 延續 v1.0 的 Operations Gate，這是審計與 readiness 層，不會自動執行 backup/restore、secret rotation、safety regression 或 retention purge。`APP_ENV=prod` 時缺少 fresh safety regression evidence 會讓 release gate fail closed。
-
-v1.2 另新增 Control Plane execution plan。若 worker 發現 queued run 缺少 `execution_plans`，會 fail closed 到 `awaiting_approval`，policy flags 會包含 `missing_execution_plan`；處理時應先查 `/v1/runs/{run_id}/execution-plan` 與 Run Detail 的 Execution Plan 區塊。
-
-v1.4 另新增 Checkpoint / Resume / Replay。若 Run Detail 沒有顯示 checkpoint，先查 `/v1/runs/{run_id}/checkpoints` 與 `run_checkpoints` migration 是否套用到 `202606010002`；若 resume 後 run 沒有回到 worker queue，確認 Redis run state、Kafka `agent.requests` publish 與 worker logs；若 replay attempt 沒出現在 Run Detail，查 `POST /v1/runs/{run_id}/replay` 回應與 `replay_attempts` table。V1.4 replay 是 `dry_run`，不應期待它重新呼叫真實外部工具。
-
-## 12. Redis 問題
-
-目前 API 與 worker flow 依賴 Redis 管理短期 run state、idempotency key、tool circuit breaker 與 tenant quota。Redis 不保存唯一 audit trail，重要資料仍以 Postgres 為準。
-
-檢查：
-
-```bash
-docker compose logs redis
-docker compose exec redis redis-cli keys 'run:*:state'
-docker compose exec redis redis-cli keys 'breaker:*'
-docker compose exec redis redis-cli keys 'tenant:*:quota:*'
-```
-
-若某個 tool 被暫停，policy flag 會出現 `tool_circuit_breaker_open:<tool_name>`，run 會 fail closed 進入 `awaiting_approval`。
-
-## Severity 分級
-
-| Severity | 定義 | 例子 |
-| --- | --- | --- |
-| `critical` | 可能造成資料外洩、未授權 destructive action、系統性 policy bypass | PII exfiltration、production delete |
-| `high` | 高風險請求大量通過或 evaluator 失效 | deny/escalate 無效、worker bypass policy |
-| `medium` | 需人工審核但尚未造成確認損害 | evaluator review spike |
-| `low` | 單一可控異常或文件/設定問題 | 低量 false positive |
-
-## 營運 KPI
-
-- request rate。
-- tenant quota limited count。
-- policy allow/escalate/deny rate。
-- average risk score。
-- top policy flags。
-- evaluator pass/review rate。
-- incident count by severity。
-- Dashboard run count。
-- Postgres readiness。
-- worker completion count。
-- approval queue count。
-- current：worker job duration、retry/DLQ、approval/evaluator/governance summary。
-- future：Kafka consumer lag、human approval turnaround time-series。
-## V1.5.1 FinOps Runbook 補充
-
-若 pricing catalog 缺官方模型價格，先到 `/dashboard/admin/finops/pricing/import` 對 `app/seeds/model_pricing_seed.yaml` 執行 Dry Run。Dry Run 正常後再 Apply Import，並到 `/dashboard/admin/finops/pricing/sources` 確認 source documents 與 pricing change logs 已建立。
-
-常用排查：
-
-- Dry Run 顯示 `invalid_rows`：檢查 seed 欄位、enum、decimal、source URL 與 effective date。
-- Apply 後成本仍為 0：檢查 `usage_events.provider`、`billing_platform`、`resource_type`、`usage_unit`、`token_type` 與 active pricing key 是否能對上。
-- 調價後歷史成本改變：不應發生。請檢查 `cost_events.pricing_snapshot` 是否有保存當時計算使用的 `unit_price` 與 `pricing_id`。
+---
+
+## Operational Incident Playbooks
+
+### 1. API Gateway Startup Failure
+- **Symptoms**: Container crashes on startup; `/v1/healthz` returns connection refused; traceback in logs.
+- **Root Causes**:
+  - Unapplied database migrations or PostgreSQL unreachable.
+  - Missing environment variables in `.env`.
+- **Mitigation Steps**:
+  1. Inspect startup logs: `docker compose logs api`.
+  2. Verify database connection string `POSTGRES_DSN`.
+  3. Run migrations manually: `alembic upgrade head`.
+
+---
+
+### 2. Worker Dead Letter Queue (DLQ) Accumulation
+- **Symptoms**: Elevated `agent_worker_dlq_total` metric; tasks accumulating in `/dashboard/worker`.
+- **Root Causes**:
+  - Repeated tool execution failures exceeding `WORKER_MAX_ATTEMPTS` (default: 3).
+  - Downstream tool timeouts or persistent network failure.
+  - Serialization errors during evaluator execution.
+- **Mitigation Steps**:
+  1. Query DLQ records: `GET /v1/worker/dlq`.
+  2. Inspect the failure reason and tool transcript on the Run Detail page (`/dashboard/runs/{run_id}`).
+  3. If transient tool issues have resolved, resume the run using `POST /v1/runs/{run_id}/resume`.
+
+---
+
+### 3. Tool Circuit Breaker Tripped
+- **Symptoms**: Low-risk runs are suddenly blocked with `tool_circuit_breaker_tripped` errors; tool status shows open in Redis.
+- **Root Causes**:
+  - Consecutive failures for a designated tool exceeded threshold within the sliding window.
+- **Mitigation Steps**:
+  1. Verify the health of the downstream tool or service.
+  2. Reset the circuit breaker state key in Redis:
+     ```bash
+     redis-cli del "circuit_breaker:tool:{tool_name}"
+     ```
+  3. Re-verify with a test submission via `/dashboard/playground`.
+
+---
+
+### 4. Tenant Quota Exceeded (HTTP 429)
+- **Symptoms**: Client requests fail with `429 Too Many Requests` (`quota_exceeded`).
+- **Root Causes**:
+  - Tenant exceeded `TENANT_REQUEST_LIMIT_PER_MINUTE` (default: 60) or `TENANT_HIGH_RISK_LIMIT_PER_HOUR` (default: 10).
+- **Mitigation Steps**:
+  1. Inspect tenant event history at `/dashboard/governance`.
+  2. If legitimate traffic spike, adjust quota override via `POST /v1/tenants` or modify tenant settings in database.
+
+---
+
+### 5. Missing Model Pricing Catalog Data
+- **Symptoms**: Run Detail shows zero or missing values under `Cost Summary`; `/dashboard/costs` shows empty catalog.
+- **Mitigation Steps**:
+  1. Navigate to `/dashboard/admin/finops/pricing/import`.
+  2. Run a Dry Run validation of `app/seeds/model_pricing_seed.yaml`.
+  3. Click **Apply Import** or execute via CLI:
+     ```bash
+     python scripts/import_pricing_catalog.py --apply --file app/seeds/model_pricing_seed.yaml
+     ```

@@ -1,82 +1,41 @@
-# Redis Keys
+# Redis Keyspace & Rate Limiting
 
-Redis 用於短期 state、cache、approval token、rate limit、circuit breaker 與 worker coordination。`v1.5.1` 目前沿用既有 API/worker flow 的 run state、worker idempotency key、tool circuit breaker、tenant request quota 與 high-risk quota。Operations Gate、Prompt Guard、Control Plane Trace / Replay、Checkpoint、Resume、dry-run Replay 與 FinOps Core 不新增 Redis key；release readiness、safety regression evidence、release gate snapshot、Prompt Guard summary、execution plan、step audit、checkpoint、replay attempt、replay bundle、usage/cost events、pricing catalog、budget policy、budget violation、pricing import batch、pricing change log 與 pricing source document 皆以 Postgres audit tables 為準。Resume API 只會把 run state 重新設為 `queued` 並 publish worker event。
+> **Specification Version**: `v1.5.2`  
+> **Redis Client**: `redis-py` (asyncio)  
+> **Default URI**: `redis://localhost:6379/0`
 
-## Key 命名原則
+Redis serves as the high-throughput, low-latency ephemeral datastore in **RewardHacking**, handling runtime state caching, sliding-window rate limiting, and tool circuit breakers.
 
-- 使用冒號分段：`namespace:{id}:field`。
-- 有 tenant 時把 tenant 放前面：`tenant:{tenant_id}:quota`。
-- 所有短期狀態都應設定 TTL。
-- 避免存完整 prompt、PII、secret 或大型 artifact。
+---
 
-## 建議 Key
+## Keyspace Convention
 
-| Key | 用途 | TTL 建議 |
-| --- | --- | --- |
-| `run:{run_id}:state` | run 當前狀態，例如 queued/running/completed | 1 到 24 小時 |
-| `run:{run_id}:policy` | policy decision 快取 | 1 到 24 小時 |
-| `run:{run_id}:evaluation` | evaluation summary 快取 | 1 到 24 小時 |
-| `run:{run_id}:approval` | 人工審核 token 或狀態 | 15 分鐘到 2 小時 |
-| `tenant:{tenant_id}:quota:requests:{YYYYMMDDHHMM}` | 租戶每分鐘 request quota | 約 60 秒 |
-| `tenant:{tenant_id}:quota:high_risk:{YYYYMMDDHH}` | 租戶每小時 high-risk quota | 約 3600 秒 |
-| `tenant:{tenant_id}:quota` | 舊版或延伸設計用的租戶 quota/rate limit | 依 quota window |
-| `tenant:{tenant_id}:risk_window` | 近期風險統計 | 5 分鐘到 1 小時 |
-| `breaker:{tool_name}` | tool circuit breaker | 5 到 30 分鐘 |
-| `risk:{run_id}` | risk score 快取 | 1 到 24 小時 |
-| `idempotency:run:{run_id}:worker:{attempt_number}` | worker attempt 去重 | 1 到 24 小時 |
-| `idempotency:{event_id}` | 後續 event 去重延伸設計 | 1 到 7 天 |
+- **Delimiter**: Colon `:` separated hierarchical namespaces.
+- **Tenant Prefix**: Multi-tenant keys always prefix with `tenant:{tenant_id}:`.
+- **Mandatory TTL**: All temporary keys must have an explicit Time-To-Live (TTL) to avoid memory leaks.
+- **PII Exclusion**: Raw prompts, personally identifiable information, or credentials must never be written to Redis.
 
-## Value 範例
+---
 
-`run:{run_id}:state`
+## Key Catalog
 
-```json
-{
-  "status": "running",
-  "updated_at": "2026-05-17T00:00:00Z",
-  "worker_id": "worker-1",
-  "attempt": 1
-}
-```
+| Key Pattern | Type | Recommended TTL | Description |
+| --- | --- | --- | --- |
+| `run:{run_id}:state` | String (JSON) | 86,400s (24h) | Current run lifecycle state (`queued`, `running`, `completed`) |
+| `run:{run_id}:approval` | String (JSON) | 3,600s (1h) | Pending approval session state and reviewer claim |
+| `tenant:{tenant_id}:quota:requests:{YYYYMMDDHHMM}` | String (Int) | 120s | Sliding-window request counter per minute |
+| `tenant:{tenant_id}:quota:high_risk:{YYYYMMDDHH}` | String (Int) | 7,200s (2h) | Hourly budget counter for high-risk operations |
+| `breaker:{tool_name}` | String (JSON) | 300s - 1,800s | Tool circuit breaker state (`open`, `closed`, `half_open`) |
+| `idempotency:run:{run_id}:worker:{attempt}` | String | 86,400s (24h) | Worker execution attempt deduplication lock |
 
-`breaker:{tool_name}`
+---
 
-```json
-{
-  "status": "open",
-  "reason": "high_failure_rate",
-  "opened_at": "2026-05-17T00:00:00Z"
-}
-```
+## Circuit Breaker Semantics
 
-## Circuit Breaker 建議
-
-以下情況可打開 breaker：
-
-- 某 tool error rate 突然升高。
-- 某 tool 觸發大量 policy violation。
-- 外部依賴不穩定，導致 worker backlog。
-- 安全團隊手動暫停特定 tool。
-
-Policy engine 在評估時可查 Redis breaker，若 tool 被停用，直接 `escalate` 或 `deny`。
-
-目前實作會把命中的 breaker 加入 policy flags，例如 `tool_circuit_breaker_open:read_data`，並讓 run 進入 `awaiting_approval`。這是 fail closed 行為：operator 暫停工具後，任務不會繼續執行該工具。
-
-## Rate Limit 建議
-
-可用 Redis 記錄：
-
-- 每個 user/tenant 每分鐘 request 數。
-- 每個 tenant 每小時高風險任務數。
-- 每個 tool 每分鐘呼叫數。
-
-超過限制時，API 應回傳明確錯誤或 `escalate`，而不是靜默丟棄。
-
-目前已實作 submit path 的 tenant request quota 與 high-risk quota。request quota 超過時回 `429 tenant_request_quota_exceeded`；high-risk quota 超過時會 fail closed 進入 `awaiting_approval`，並寫入 `governance_events`。若 `tenants` 資料表有該 tenant，quota limit 會優先使用 DB tenant 設定；找不到 tenant 時才使用 `.env` 全域預設。
-
-## 運維注意事項
-
-- 正式環境要啟用 auth/TLS 或部署在私有網路。
-- Redis 不應作為唯一 audit store。
-- 重要決策仍需落 Postgres 或長期 event storage。
-- 設定 memory policy 前要確認 key TTL 與 eviction 行為。
+The circuit breaker halts invocations of a malfunctioning or abused tool:
+- **State `open`**: All agent tasks requesting the tool are immediately rejected with error code `tool_circuit_breaker_tripped`.
+- **Tripping Condition**: When consecutive failures for a given tool exceed configured thresholds within a 5-minute sliding window.
+- **Manual Reset**:
+  ```bash
+  redis-cli del "breaker:{tool_name}"
+  ```

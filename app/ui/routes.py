@@ -592,7 +592,7 @@ async def dashboard_operations_release_gate(
     readiness = await compute_operations_readiness(session, settings=get_settings())
     await persist_release_gate(
         session,
-        release_version=str(form.get("release_version", "v1.5.1")),
+        release_version=str(form.get("release_version", "v1.5.2")),
         created_by=str(form.get("created_by", "dashboard")),
         trace_id=str(getattr(request.state, "trace_id", "")),
         readiness=readiness,
