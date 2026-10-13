@@ -23,7 +23,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Lint
-        run: ruff check app tests scripts
+        run: ruff check app tests scripts --config pyproject.toml
 
       - name: Security & Secret Scan
         run: python scripts/security_check.py
