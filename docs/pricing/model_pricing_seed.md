@@ -1,10 +1,10 @@
-# model_pricing_seed.md
+# Model Pricing Seed Reference
 
-- 查價日期：2026-06-01（Asia/Taipei）
-- 用途：Reward Hacking V1.5 Agent FinOps Core 的官方模型價格預設資料。
-- 建議流程：Markdown 供人審查，YAML 供系統匯入；Admin dry-run 後才 apply。
-- 原則：價格異動時不得覆蓋舊 row，應使用 `effective_to` + `supersedes_pricing_id` 建立新版本。
-- 注意：MiniMax M3 目前含短期促銷價，Kimi/MiniMax 等動態頁價格建議 Admin 匯入前再次人工確認。
+- **Audit Date**: 2026-06-01 (Asia/Taipei)
+- **Purpose**: Official default model pricing rate cards for RewardHacking Agent FinOps Core.
+- **Workflow**: Markdown for human review; YAML for automated ingestion (`app/seeds/model_pricing_seed.yaml`); Admin dry-run before applying.
+- **Policy**: When rates change, old records must never be overwritten; use `effective_to` and `supersedes_pricing_id` to maintain historical audit integrity.
+- **Note**: Certain dynamic models (e.g. promotional pricing) should be verified by operators before applying imports.
 
 ## Source Documents
 

@@ -1,7 +1,9 @@
 [project]
 name = "reward-hacking-guardrail"
-version = "1.5.1"
-description = "Agent guardrail prototype for preventing reward hacking"
+version = "1.5.2"
+description = "Production-grade runtime guardrails, human-in-the-loop governance, and FinOps for autonomous AI agents"
+readme = "README.md"
+license = {text = "Apache-2.0"}
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115.0",
