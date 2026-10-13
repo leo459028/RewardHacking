@@ -1,4 +1,36 @@
-# 測試紀錄
+# Test Execution & Verification Report
+
+## 2026-10-13 - v1.5.2 Open-Source Readiness, Full English Documentation & Codex for OSS Verification
+
+- **Version**: `v1.5.2`
+- **Scope of Changes**:
+  1. **Security & Secret Cleansing**: Created `scripts/security_check.py`; verified zero leaked credentials across entire Git history and working tree; documented complete `.env.example`.
+  2. **Open-Source Governance & Standards**: Added Apache License 2.0 `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `.github/pull_request_template.md`, Issue templates (bug report, feature request, security vulnerability), and `.github/dependabot.yml`.
+  3. **Full English Internationalization**: Rewrote `README.md` and all 18+ Markdown documents in `docs/` and `AGENTS.md` in English, highlighting open-source positioning in AI Agent Safety, Human-in-the-Loop Governance, and FinOps Ledgers.
+  4. **Version Synchronization**: Upgraded `pyproject.toml`, `app/main.py`, `app/ui/routes.py`, and `/dashboard/operations` release gate default to `v1.5.2`.
+- **UI / Dashboard Verification Endpoints**: `/dashboard`, `/dashboard/operations`, `/dashboard/costs`.
+
+### Test Commands & Actual Execution Results
+
+| Test Command | Actual Result |
+| --- | --- |
+| `python scripts/security_check.py` | Passed: `[OK] No sensitive API keys, secrets, or credentials found in git history or working tree.` |
+| `ruff check app tests scripts` | Passed: `All checks passed!` |
+| `pytest -q` | Passed: `74 passed, 85 warnings in 26.42s` (warnings are existing Pydantic V2 `json_encoders` deprecation). |
+| `docker compose ps` | Passed: `rewardhacking-api-1` (Up), `rewardhacking-worker-1` (Up), `rewardhacking-kafka-1` (Up, healthy), `rewardhacking-postgres-1` (Up, healthy), `rewardhacking-redis-1` (Up, healthy). |
+| `alembic current` | Passed: connected to PostgreSQL, verified `202606010004 (head)`. |
+| `python scripts/import_pricing_catalog.py --dry-run` | Passed: `status=validated`, `valid_rows=149`, `unchanged_rows=148`, `rows_to_supersede=1`. |
+| `curl -s http://localhost:8000/v1/healthz` | HTTP 200: returned `{"status":"ok"}`. |
+| `curl -s http://localhost:8000/v1/readyz` | HTTP 200: returned `{"status":"ready"}`. |
+| `curl -s http://localhost:8000/dashboard/operations` | Passed: HTML form release version input correctly defaults to `<input name="release_version" value="v1.5.2">`. |
+| `curl -s http://localhost:8000/dashboard` | Passed: rendered `<div class="brand">Reward Guardrail<span>Operational Dashboard</span></div>`. |
+| `curl -s http://localhost:8000/dashboard/costs` | Passed: rendered `<h2>Tenant Cost Summary</h2>`. |
+| `POST /v1/agent/submit-with-details` (Docker Stack) | Passed: low-risk task returned `status=queued`, `risk_score=0.2`, generated `code_fix_rubric` evaluation, published to Kafka, and executed by worker. |
+
+### Limitations & Known Observations
+- The Bounded Executor currently operates in safe dry-run simulation mode with invocation transcripts; production external shell executions require microVM or isolated container boundaries.
+- Pydantic V2 `json_encoders` deprecation warning is part of the existing model serialization layer and does not impede runtime execution or tests.
+- All documentation across the repository is now fully internationalized in English while preserving historical release evolution context.
 
 ## 2026-06-02 - 文件與程式碼同步收斂
 
