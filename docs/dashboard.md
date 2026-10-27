@@ -1,7 +1,7 @@
 # Operational Dashboard Guide
 
-> **Dashboard Version**: `v1.5.2`  
-> **Previous Versions**: `v1.5.1`, `v1.5.0`, `v1.4.0`  
+> **Dashboard Version**: `v1.5.3`
+> **Previous Versions**: `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.4.0`
 > **Access URL**: `http://localhost:8000/dashboard`
 
 RewardHacking includes a lightweight, server-rendered (Jinja2) web dashboard providing full observability, human-in-the-loop governance, and FinOps administration without requiring separate Node.js or React build pipelines.
@@ -14,17 +14,18 @@ RewardHacking includes a lightweight, server-rendered (Jinja2) web dashboard pro
 | --- | --- | --- |
 | `/dashboard` | **Overview** | System summary: total runs, status distribution, average risk scores, active flags, and recent incidents. |
 | `/dashboard/runs` | **Runs Explorer** | Searchable audit list of agent runs with filters for status, tenant, and task type. |
-| `/dashboard/runs/{run_id}` | **Run Detail** | Comprehensive forensic dossier: policy decision, Classical Chinese prompt guard, execution plan, checkpoint timeline, replay bundle, step audit, tool transcripts, and FinOps cost summary. |
+| `/dashboard/runs/{run_id}` | **Run Detail** | Comprehensive forensic dossier: policy decision, Classical Chinese prompt guard, execution plan, checkpoint timeline, replay bundle, step audit, tool transcripts, FinOps cost summary, and budget violations. |
 | `/dashboard/approvals` | **Approval Queue** | Actionable queue for high-risk / destructive runs. Operators can execute `approve_once`, `deny`, or `request_changes`. |
 | `/dashboard/worker` | **Worker Operations** | Background worker telemetry: active attempts, retry backoffs, and Dead Letter Queue (DLQ). |
-| `/dashboard/observability` | **Observability & SLOs** | Aggregated SLI/SLO trends, incident resolution rates, evaluator scores, and approval turnaround latencies. |
+| `/dashboard/observability` | **Observability & SLOs** | Aggregated SLI/SLO trends, incident resolution rates, evaluator scores, approval turnaround latencies, and FinOps summary. |
 | `/dashboard/governance` | **Tenant Governance** | Multi-tenant overview: tenant quotas, active hashed API keys, and governance security audit logs. |
 | `/dashboard/control-plane` | **Control Plane** | Workflow registry, registered tools, pre-execution plans, trace IDs, and resumable checkpoints. |
-| `/dashboard/costs` | **FinOps Costs** | Tenant cost totals, top spenders, model expense rankings, and budget violation alerts. |
+| `/dashboard/costs` | **FinOps Costs** | Tenant cost totals, cache/batch savings, model expense rankings, active budget policies, and inline budget violation triage (`Acknowledge`, `Resolve`, `Ignore`). |
 | `/dashboard/admin/finops/pricing` | **Pricing Catalog** | Admin management interface for the model pricing catalog. |
-| `/dashboard/admin/finops/pricing/import` | **Pricing Import** | Dry-run validation and application of official model pricing YAML seeds. |
-| `/dashboard/admin/finops/pricing/sources` | **Source Audit** | Versioned pricing change logs and official documentation source tracking. |
-| `/dashboard/operations` | **Operations Gate** | Production release gate checklist, operational evidence logging (backup drills, secret rotation, safety regressions), and `v1.5.2` release snapshot management. |
+| `/dashboard/admin/finops/pricing/import` | **Pricing Import** | Dry-run validation, stale source detection, and application of official model pricing YAML seeds. |
+| `/dashboard/admin/finops/pricing/sources` | **Source Audit** | Versioned pricing change logs, stale source badges, and official documentation source tracking. |
+| `/dashboard/admin/finops/budgets` | **Budget Policies** | FinOps budget governance portal for creating, superseding, and disabling multi-scope/period budget policies. |
+| `/dashboard/operations` | **Operations Gate** | Production release gate checklist (including FinOps pricing catalog and critical violation checks), operational evidence logging, and `v1.5.3` release snapshot management. |
 | `/dashboard/playground` | **Interactive Playground** | Rapid experimentation console to submit test prompts and inspect guardrail verdicts in real time. |
 
 ---
@@ -56,4 +57,4 @@ In production environments (`APP_ENV=prod`), deployments must meet strict releas
    - Backup/restore drill verification.
    - Secret rotation compliance (< 90 days).
    - Deterministic safety regression test evidence.
-4. Click **Create Release Gate Snapshot** with version `v1.5.2` to record the official gate sign-off in the audit trail.
+4. Click **Create Release Gate Snapshot** with version `v1.5.3` to record the official gate sign-off in the audit trail.

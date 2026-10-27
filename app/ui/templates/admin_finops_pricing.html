@@ -8,6 +8,7 @@
     <div class="muted">Versioned model, tool, runtime, storage, image, audio and video pricing.</div>
   </div>
   <div class="inline-form">
+    <a class="button secondary" href="/dashboard/admin/finops/budgets">Budget Policies</a>
     <a class="button secondary" href="/dashboard/admin/finops/pricing/import">Import</a>
     <a class="button secondary" href="/dashboard/admin/finops/pricing/sources">Source Audit</a>
   </div>
@@ -68,7 +69,7 @@
         <td>{{ item.resource_type }}<br><span class="muted">{{ item.resource_subtype }}</span></td>
         <td>{{ item.pricing_mode }}</td>
         <td>{{ item.token_type }}</td>
-        <td>{{ item.unit_price }} {{ item.currency }}<br><span class="muted">{{ item.price_unit }}</span></td>
+        <td>{{ item.unit_price|decimal_plain }} {{ item.currency }}<br><span class="muted">{{ item.price_unit }}</span></td>
         <td>{{ item.effective_from }}<br><span class="muted">{{ item.effective_to or "open" }}</span></td>
         <td><a href="{{ item.source_url }}">{{ item.source_type }}</a><br><span class="muted">{{ item.source_checked_at }}</span></td>
         <td>{{ item.scope_type }}</td>

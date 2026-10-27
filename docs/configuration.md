@@ -1,6 +1,6 @@
 # Configuration & Environment Variables
 
-> **Configuration Version**: `v1.5.2`  
+> **Configuration Version**: `v1.5.3`
 > **Source Model**: `app/core/config.py` (`Settings`) via `pydantic-settings`  
 > **Template**: `.env.example`
 
@@ -46,6 +46,8 @@ Application configuration is loaded from environment variables and local `.env` 
 | `SECRET_ROTATION_MAX_AGE_DAYS` | `90` | Maximum validity age for credential rotation logs |
 | `RELEASE_GATE_MAX_QUEUED_AGE_MINUTES` | `15` | Threshold for detecting stale queued tasks during release gate |
 | `RELEASE_GATE_FAIL_ON_BOOTSTRAP_KEYS_IN_PROD` | `true` | If true, blocks production release if bootstrap keys exist in `.env` |
+| `PRICING_SOURCE_STALE_DAYS` | `30` | Maximum age (in days) since `retrieved_at` before pricing source documents are flagged as stale |
+| `FINOPS_BUDGET_ENFORCEMENT_ENABLED` | `true` | Enables active pre-execution and runtime budget enforcement across runs, tenants, workflows, and users |
 
 ---
 

@@ -37,9 +37,13 @@ Do not write vague conceptual sketches; ensure the plan provides actionable step
 
 ## 3. Testing Requirements
 
-- **Comprehensive Verification**: Execute complete automated test suites after implementation.
+- **Comprehensive Verification**: Execute complete automated test suites (`pytest -q`, `ruff check app tests scripts`, `python scripts/security_check.py`) after implementation.
 - **Docker Verification**: If Docker is required, remind the user to start Docker Desktop before executing Docker-dependent checks.
-- **Record Actual Results**: All actual test execution results must be recorded in `docs/test_report.md`. Entries must capture: execution date, exact commands, passed counts, Dashboard verification status, Docker verification status, and known limitations. Never record speculative or theoretical results.
+- **Mandatory Browser E2E Verification (`docs/manual_test.md` & `scripts/browser_manual_test.py`)**: Every new release or change impacting user-visible routes, forms, APIs, or Dashboard views MUST:
+  1. Update `docs/manual_test.md` and `scripts/browser_manual_test.py` to include scenarios covering the new release features.
+  2. Launch a real browser and execute the complete interactive walkthrough (`python scripts/browser_manual_test.py` or equivalent browser automation) against the running stack.
+  3. Verify `0` Console errors, `0` Page errors, `0` failed HTTP requests (`>=400`), and `0` formatting artifacts (such as `0E-8`).
+- **Record Actual Results**: All actual test execution results (including pytest, Docker runtime, and Browser E2E test outputs and artifact IDs) must be recorded in `docs/test_report.md`. Entries must capture: execution date, exact commands, passed counts, Dashboard/Browser verification status, Docker verification status, and known limitations. Never record speculative or theoretical results.
 
 ---
 

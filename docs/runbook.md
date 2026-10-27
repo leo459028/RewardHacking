@@ -1,7 +1,7 @@
 # Production Runbooks & Incident Response
 
-> **Runbook Version**: `v1.5.2`  
-> **Previous Versions**: `v1.5.1`, `v1.5.0`, `v1.0.0`
+> **Runbook Version**: `v1.5.3`
+> **Previous Versions**: `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.0.0`
 
 This operational runbook provides triage instructions, troubleshooting procedures, and incident response playbooks for operators maintaining the **RewardHacking** platform.
 
@@ -79,12 +79,21 @@ docker compose logs --tail=100 -f worker
 
 ---
 
-### 5. Missing Model Pricing Catalog Data
-- **Symptoms**: Run Detail shows zero or missing values under `Cost Summary`; `/dashboard/costs` shows empty catalog.
+### 5. Missing Model Pricing Catalog Data or Stale Pricing Sources
+- **Symptoms**: Run Detail shows zero or missing values under `Cost Summary`; `/dashboard/costs` shows empty catalog; `/dashboard/admin/finops/pricing/sources` shows `stale` badge.
 - **Mitigation Steps**:
   1. Navigate to `/dashboard/admin/finops/pricing/import`.
-  2. Run a Dry Run validation of `app/seeds/model_pricing_seed.yaml`.
+  2. Run a Dry Run validation of `app/seeds/model_pricing_seed.yaml` and inspect `stale_sources`.
   3. Click **Apply Import** or execute via CLI:
      ```bash
      python scripts/import_pricing_catalog.py --apply --file app/seeds/model_pricing_seed.yaml
      ```
+
+---
+
+### 6. FinOps Budget Overrun & Violation Triage
+- **Symptoms**: Submissions are blocked (`status=denied`, `reason_code=budget_exceeded`), routed to human review (`status=awaiting_approval`, `reason_code=budget_requires_approval`), or degraded (`budget_model_degraded`); `finops_open_critical_violations` warns on `/dashboard/operations`.
+- **Mitigation Steps**:
+  1. Inspect open violations at `/dashboard/costs` or `GET /v1/budget-violations?status=open`.
+  2. Acknowledge active triage via the inline **Acknowledge** button or `POST /v1/budget-violations/{id}/acknowledge`.
+  3. Adjust or supersede budget policies at `/dashboard/admin/finops/budgets` (`POST /v1/budgets` with `supersede_existing=true`), then resolve the violation via **Resolve** (`POST /v1/budget-violations/{id}/resolve`).

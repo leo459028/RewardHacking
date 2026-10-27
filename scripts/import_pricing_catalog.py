@@ -39,14 +39,23 @@ async def main() -> int:
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with session_factory() as session:
+            allow_warnings = True if args.allow_warnings else (not args.strict)
             if args.dry_run:
-                report = await dry_run_pricing_seed(session, seed, created_by=args.created_by)
+                report = await dry_run_pricing_seed(
+                    session,
+                    seed,
+                    created_by=args.created_by,
+                    strict=args.strict,
+                    allow_warnings=allow_warnings,
+                )
             else:
                 report = await apply_pricing_seed(
                     session,
                     seed,
                     created_by=args.created_by,
                     base_currency=args.base_currency,
+                    strict=args.strict,
+                    allow_warnings=allow_warnings,
                 )
         print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2, default=str))
         if report.invalid_rows:

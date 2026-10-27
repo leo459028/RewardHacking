@@ -1,17 +1,18 @@
 # Project Documentation Overview
 
-> **Current Version**: `v1.5.2`  
-> **Previous Version**: `v1.5.1`
+> **Current Version**: `v1.5.3`
+> **Previous Version**: `v1.5.2`
 
 This directory contains the comprehensive technical documentation for the **RewardHacking Guardrail** platform.
 
 ---
 
-## Release Baseline: `v1.5.2`
+## Release Baseline: `v1.5.3`
 
 ### Release Evolution
 
-- **`v1.5.2` (Current)**: Open-Source Readiness, Internationalization & OpenAI Codex for OSS Alignment. Complete documentation rewrite in English, standardized open-source licensing (Apache-2.0), community governance documents (`CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`), automated secret scanning, and operations release gate version synchronization.
+- **`v1.5.3` (Current)**: Active FinOps Budget Enforcement, Context-Aware Pricing Engine & FinOps Governance Portal. Added pre-execution and runtime budget enforcement (`block`, `require_approval`, `degrade_model`, `warn_only`) across `run`/`tenant`/`workflow`/`user` scopes and `per_run`/`daily`/`monthly` windows, context-tier pricing resolution, cache/batch savings calculation, `/dashboard/admin/finops/budgets` governance portal, violation triage lifecycle (`acknowledge`, `resolve`, `ignore`), stale source guardrails, FinOps Prometheus metrics, and Pydantic V2 `PlainSerializer` zero-warning serialization.
+- **`v1.5.2` (Historical)**: Open-Source Readiness, Internationalization & OpenAI Codex for OSS Alignment. Complete documentation rewrite in English, standardized open-source licensing (Apache-2.0), community governance documents (`CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`), automated secret scanning, and operations release gate version synchronization.
 - **`v1.5.1` (Historical)**: Agent FinOps Core / Pricing Import Admin. Expanded schema for pricing, usage, cost, budget, and violation entities. Added official model pricing seed ingestion (`app/seeds/model_pricing_seed.yaml`), dry-run validation, versioned pricing change logs, source document audit trails, and Admin FinOps pricing dashboard.
 - **`v1.5.0` (Historical)**: Agent FinOps Core / Cost Ledger. Introduced `pricing_catalog`, `usage_events`, `cost_events`, `budget_policies`, and `budget_violations`, along with FinOps REST APIs and `/dashboard/costs`.
 - **`v1.4.0` (Historical)**: Checkpoint / Resume / Replay MVP. Added submit checkpoints (`run_checkpoints`), resume flow re-dispatching to workers, dry-run replay attempts, and execution replay tracking.
@@ -50,6 +51,7 @@ RewardHacking is a production-grade safety guardrail and governance control plan
 | [Deployment & Hardening](deployment.md) | Docker Compose setup, container configurations, and production readiness |
 | [Developer Guide](development.md) | Local development workflow, code style, and contribution standards |
 | [Testing Guide](testing_guide.md) | Pytest test suite, adversarial red-team corpus, and CI verification |
+| [Manual QA & Browser Testing Guide](manual_test.md) | Step-by-step interactive browser walkthroughs and manual QA checklists |
 | [Database Data Model](data_model.md) | SQLAlchemy schemas, audit trail models, and data lifecycles |
 | [Kafka Topics & Schemas](kafka_topics.md) | Event topic designs, payloads, and consumer guarantees |
 | [Redis Keyspace](redis_keys.md) | State conventions, rate-limiting quotas, circuit breakers, and TTLs |

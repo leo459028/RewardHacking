@@ -34,8 +34,8 @@
         <tr><th>Mode</th><td>{{ item.pricing_mode }} / {{ item.service_tier }}</td></tr>
         <tr><th>Token Type</th><td>{{ item.token_type }}</td></tr>
         <tr><th>Unit</th><td>{{ item.price_unit }}</td></tr>
-        <tr><th>Unit Price</th><td>{{ item.unit_price }} {{ item.currency }}</td></tr>
-        <tr><th>Discount / Multiplier</th><td>{{ item.discount_rate }} / {{ item.multiplier }}</td></tr>
+        <tr><th>Unit Price</th><td>{{ item.unit_price|decimal_plain }} {{ item.currency }}</td></tr>
+        <tr><th>Discount / Multiplier</th><td>{{ item.discount_rate|decimal_plain }} / {{ item.multiplier|decimal_plain }}</td></tr>
         <tr><th>Tax Included</th><td>{{ item.tax_included }}</td></tr>
       </tbody>
     </table>
@@ -73,7 +73,7 @@
   <h2>Simple Edit</h2>
   <form method="post" action="/dashboard/admin/finops/pricing/{{ item.pricing_id }}/edit" class="form-grid">
     <label>Unit Price
-      <input name="unit_price" value="{{ item.unit_price }}">
+      <input name="unit_price" value="{{ item.unit_price|decimal_plain }}">
     </label>
     <label>Currency
       <input name="currency" value="{{ item.currency }}">
@@ -90,6 +90,10 @@
     <label class="checkline">
       <input type="checkbox" name="is_active" {% if item.is_active %}checked{% endif %}>
       Active
+    </label>
+    <label class="checkline">
+      <input type="checkbox" name="supersede_existing">
+      Supersede as new version
     </label>
     <label>&nbsp;
       <button class="button" type="submit">Save</button>
@@ -109,8 +113,8 @@
       <tr>
         <td>{{ change.change_id }}</td>
         <td>{{ change.change_type }}</td>
-        <td>{{ change.pricing_id_old or "-" }}<br>{{ change.old_unit_price or "" }}</td>
-        <td>{{ change.pricing_id_new or "-" }}<br>{{ change.new_unit_price or "" }}</td>
+        <td>{{ change.pricing_id_old or "-" }}<br>{{ (change.old_unit_price|decimal_plain) if change.old_unit_price is not none else "" }}</td>
+        <td>{{ change.pricing_id_new or "-" }}<br>{{ (change.new_unit_price|decimal_plain) if change.new_unit_price is not none else "" }}</td>
         <td>{{ change.change_reason }}</td>
         <td>{{ change.changed_by }}<br><span class="muted">{{ change.changed_at }}</span></td>
       </tr>

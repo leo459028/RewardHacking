@@ -90,11 +90,14 @@ Every code modification must be accompanied by corresponding tests or verificati
    alembic revision --autogenerate -m "describe change"
    alembic upgrade head
    ```
-3. **Verify the Operational Dashboard**:
-   Ensure web routes and templates render cleanly without template syntax errors:
+3. **Verify the Operational Dashboard & Browser E2E Suite**:
+   Ensure web routes and templates render cleanly without template syntax errors or console errors by following [`docs/manual_test.md`](docs/manual_test.md) and running the automated browser walkthrough:
+   ```bash
+   python scripts/browser_manual_test.py
+   ```
    - Check Overview: `http://localhost:8000/dashboard`
    - Check Operations Gate: `http://localhost:8000/dashboard/operations`
-   - Check FinOps Costs: `http://localhost:8000/dashboard/costs`
+   - Check FinOps Costs & Budgets: `http://localhost:8000/dashboard/costs` & `http://localhost:8000/dashboard/admin/finops/budgets`
 
 ---
 

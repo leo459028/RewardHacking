@@ -1,5 +1,50 @@
 # Test Execution & Verification Report
 
+## 2026-10-27 - v1.5.3 Active FinOps Budget Enforcement, Context-Aware Pricing Engine & FinOps Governance Portal Verification
+
+- **Version**: `v1.5.3`
+- **Scope of Changes**:
+  1. **Active Pre-Execution & Runtime FinOps Budget Enforcement**: Implemented multi-scope (`run`, `tenant`, `workflow`, `user`) and multi-period (`per_run`, `daily`, `monthly`) budget evaluation with `block` (fail-closed `denied`), `require_approval` (`awaiting_approval`), `degrade_model` (`budget_model_degraded` fallback tier routing), and `warn_only` actions.
+  2. **Context-Aware Tiered Pricing, Free Quota & Savings Accounting**: Added `context_tier` (`<=128k`, `>128k`, `<=200k`, `>200k`) pricing resolution, `minimum_billable_quantity`, `free_quota_Included`, and `cache_savings` / `batch_savings` calculation in `CostSummary` and `TenantCostSummary`.
+  3. **FinOps Budget Governance Portal & Violation Triage**: Added `/dashboard/admin/finops/budgets` portal, inline violation triage (`acknowledge`, `resolve`, `ignore`) on `/dashboard/costs`, manual pricing change log recording (`PricingChangeLog`), and stale source detection (`PRICING_SOURCE_STALE_DAYS`).
+  4. **Zero-Warning Pydantic V2 Serialization & FinOps Observability**: Replaced deprecated `json_encoders` with `PlainSerializer` (`0 warnings` across full pytest suite), normalized plain decimal rendering (`decimal_plain` filter, zero `0E-8` artifacts), and added 4 FinOps Prometheus metrics (`agent_finops_*`) plus Operations readiness checks (`finops_pricing_catalog_ready`, `finops_open_critical_violations`).
+- **UI / Dashboard Verification Endpoints**: `/dashboard`, `/dashboard/runs/e1a67227-d8df-463b-8a5a-eee0aa0e30ad`, `/dashboard/costs?tenant_id=v153-verify-tenant`, `/dashboard/admin/finops/budgets`, `/dashboard/admin/finops/pricing`, `/dashboard/admin/finops/pricing/import`, `/dashboard/admin/finops/pricing/sources`, `/dashboard/operations`, `/dashboard/observability`.
+- **Recorded Live Verification Artifacts**:
+  - Pricing Import Batch ID: `pib_ac968bc949104bb18d23e0a1e26c9c1d` (`valid_rows=149`, `new_rows=149`, `stale_sources=158`)
+  - Budget Policy ID: `budget_4ee7443ef8ee4a2880dfee51a3a4775d` (`tenant=v153-verify-tenant`, `period=daily`, `hard_limit_amount=0.000020000000`, `actions_on_hard_limit=['record_violation', 'fail_closed']`)
+  - Blocked Run ID (API): `e1a67227-d8df-463b-8a5a-eee0aa0e30ad` (`status=denied`, `policy_flags=['finops_budget_hard_limit_exceeded']`, `execution_plan.status=blocked`)
+  - Budget Violation ID (API): `bv_ff3ee1510705497184dd2fd2e8889f13` (transitioned `open` -> `acknowledged` -> `resolved`)
+  - Headed Browser E2E Walkthrough (`docs/manual_test.md` via Playwright Chromium):
+    - Scenario 1 Low-Risk Run & Replay Bundle: `091acd57-5883-4015-938a-4be1d133b73f`
+    - Scenario 2a Classical Chinese Adversarial Run: `f733184b-6ce8-46a8-a7e3-7dafd5d16e7f`
+    - Scenario 2b Human Approval Escalated & Approved Run: `d5a941bd-e00c-4603-af2f-158f056f1e0f`
+    - Scenario 3.1 Pricing Detail Edited & Change Log Verified: `/dashboard/admin/finops/pricing/price_c045d5099f4e42249bc64fd2be26795d`
+    - Scenario 3.2–3.4 Browser Budget Block Run: `b0eb5e1a-4f33-43e8-8ecd-c069832bfea6` (created `QA Hard Daily Cap`, blocked in Playground, clicked `Acknowledge` -> `Resolve` in `/dashboard/costs`, disabled policy in `/dashboard/admin/finops/budgets`)
+    - Section 6 Browser Checklist: `14/14` navigation routes HTTP 200, `0` `0E-8` artifacts, `0` Console errors/warnings, `0` Page errors, `0` failed HTTP requests (`>=400`).
+
+### Test Commands & Actual Execution Results
+
+| Test Command | Actual Result |
+| --- | --- |
+| `python scripts/security_check.py` | Passed: `[OK] No sensitive API keys, secrets, or credentials found in git history or working tree.` |
+| `ruff check app tests scripts` | Passed: `All checks passed!` |
+| `git diff --check` | Passed: `0` whitespace errors. |
+| `pytest tests/test_v153_finops_governance.py tests/test_v151_finops_core.py tests/test_v15_finops_core.py -q -W error::DeprecationWarning` | Passed: `21 passed in 15.78s` (`0 warnings`). |
+| `pytest -q` | Passed: `83 passed in 36.86s` (`0 warnings` — all 85 legacy Pydantic V2 `json_encoders` deprecation warnings eliminated). |
+| `docker compose up -d --build` | Passed: built `rewardhacking-api` and `rewardhacking-worker` images and started all 5 services. |
+| `docker compose ps` | Passed: `rewardhacking-api-1` (Up), `rewardhacking-worker-1` (Up), `rewardhacking-kafka-1` (Up, healthy), `rewardhacking-postgres-1` (Up, healthy), `rewardhacking-redis-1` (Up, healthy). |
+| `docker compose exec -T api alembic upgrade head` & `alembic current` | Passed: connected to PostgreSQL, verified `202606010004 (head)`. |
+| `python scripts/import_pricing_catalog.py --dry-run --file app/seeds/model_pricing_seed.yaml --created-by "v1.5.3-verify"` | Passed: `status=validated`, `valid_rows=149`, `new_rows=149`, `invalid_rows=[]`, `unsupported_enum_values=[]`, stale source warnings populated. |
+| `GET /v1/healthz` & `GET /v1/readyz` | HTTP 200: `{"status":"ok"}` and `{"status":"ready"}`. |
+| `POST /v1/admin/finops/pricing/import/apply` | HTTP 200: `import_batch_id=pib_ac968bc949104bb18d23e0a1e26c9c1d`, `status=applied`, `valid_rows=149`. |
+| `POST /v1/budgets` & `POST /v1/agent/submit-with-details` | HTTP 200: created `budget_4ee7443ef8ee4a2880dfee51a3a4775d`; submitted run `e1a67227-d8df-463b-8a5a-eee0aa0e30ad` blocked with `status=denied` and `finops_budget_hard_limit_exceeded`. |
+| `POST /v1/budget-violations/{id}/acknowledge` & `/resolve` & `POST /v1/budgets/{id}/disable` | HTTP 200: violation `bv_ff3ee1510705497184dd2fd2e8889f13` transitioned `open` -> `acknowledged` -> `resolved`; budget policy disabled (`is_active=false`). |
+| Dashboard HTML & Decimal Formatting Check (`9` views) | HTTP 200 across all 9 Dashboard routes; `has_0E-8=False` on all pages; `/dashboard/operations` defaults to `v1.5.3`; `/v1/metrics` exports all 4 `agent_finops_*` metrics. |
+
+### Limitations & Known Observations
+- The Bounded Executor continues to operate in safe dry-run simulation mode with invocation transcripts; production external shell executions require microVM or isolated container boundaries (planned for `v1.6.0+`).
+- Upstream pricing seed items dated `2026-06-01` are accurately flagged by the new `PRICING_SOURCE_STALE_DAYS=30` guardrail during dry-run and import inspection while remaining allowed when `allow_warnings=true`.
+
 ## 2026-10-13 - v1.5.2 Open-Source Readiness, Full English Documentation & Codex for OSS Verification
 
 - **Version**: `v1.5.2`

@@ -11,10 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.models.agent_run import AgentRun
 from app.models.approval_event import ApprovalEvent
+from app.models.finops import BudgetViolation, PricingCatalog
 from app.models.incident import Incident
 from app.models.operations import OperationsEvidence, ReleaseGateItem, ReleaseGateRun
 from app.models.tenant import TenantApiKey
 from app.models.worker_attempt import WorkerAttempt
+from app.services.finops import ensure_default_pricing
 
 
 @dataclass(frozen=True)
@@ -143,6 +145,35 @@ async def compute_operations_readiness(
         )
         or 0
     )
+    total_pricing_rows = (
+        await session.scalar(select(func.count()).select_from(PricingCatalog)) or 0
+    )
+    if total_pricing_rows == 0:
+        await ensure_default_pricing(session)
+    active_pricing = (
+        await session.scalar(
+            select(func.count())
+            .select_from(PricingCatalog)
+            .where(PricingCatalog.is_active.is_(True))
+        )
+        or 0
+    )
+    open_critical_violations = (
+        await session.scalar(
+            select(func.count())
+            .select_from(BudgetViolation)
+            .where(
+                BudgetViolation.resolution_status == "open",
+                BudgetViolation.severity.in_(["high", "critical"]),
+            )
+        )
+        or 0
+    )
+    violation_status = (
+        ("fail" if settings.app_env.lower() == "prod" else "warn")
+        if open_critical_violations
+        else "pass"
+    )
 
     checks = [
         OperationsCheck(
@@ -186,6 +217,20 @@ async def compute_operations_readiness(
             title="Tenant API keys available",
             detail=f"{active_keys} active DB-managed tenant API keys are available.",
             metadata={"active_keys": active_keys},
+        ),
+        OperationsCheck(
+            check_key="finops_pricing_catalog_ready",
+            status="pass" if active_pricing > 0 else "warn",
+            title="FinOps pricing catalog ready",
+            detail=f"{active_pricing} active pricing catalog rows are available.",
+            metadata={"active_pricing": active_pricing},
+        ),
+        OperationsCheck(
+            check_key="finops_open_critical_violations",
+            status=violation_status,
+            title="No open critical budget violations",
+            detail=f"{open_critical_violations} high or critical FinOps budget violations are open.",
+            metadata={"open_critical_violations": open_critical_violations},
         ),
     ]
 

@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     secret_rotation_max_age_days: int = 90
     release_gate_max_queued_age_minutes: int = 15
     release_gate_fail_on_bootstrap_keys_in_prod: bool = True
+    pricing_source_stale_days: int = 30
+    finops_budget_enforcement_enabled: bool = True
 
 
 @lru_cache(maxsize=1)

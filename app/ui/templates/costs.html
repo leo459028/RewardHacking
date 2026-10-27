@@ -5,20 +5,31 @@
   <div>
     <h1>Costs</h1>
     <div class="title-note">Tenant Cost Summary</div>
-    <div class="muted">V1.5 Agent FinOps Core / Cost Ledger</div>
+    <div class="muted">V1.5.3 Agent FinOps Core / Cost Ledger &amp; Budget Governance</div>
   </div>
   <form method="get" action="/dashboard/costs" class="inline-form">
     <input name="tenant_id" value="{{ tenant_id }}" placeholder="tenant_id">
+    <select name="resolution_status">
+      <option value="" {% if not resolution_status %}selected{% endif %}>All Violations</option>
+      <option value="open" {% if resolution_status == "open" %}selected{% endif %}>open</option>
+      <option value="acknowledged" {% if resolution_status == "acknowledged" %}selected{% endif %}>acknowledged</option>
+      <option value="resolved" {% if resolution_status == "resolved" %}selected{% endif %}>resolved</option>
+      <option value="ignored" {% if resolution_status == "ignored" %}selected{% endif %}>ignored</option>
+    </select>
     <button class="button" type="submit">Filter</button>
+    <a class="button secondary" href="/dashboard/admin/finops/budgets">Budget Policies</a>
   </form>
 </div>
 
 <section class="grid stats">
   <div class="stat"><div class="stat-label">Tenant</div><div class="stat-value">{{ summary.tenant_id }}</div></div>
-  <div class="stat"><div class="stat-label">Today</div><div class="stat-value">{{ "%.8f"|format(summary.today_cost) }} USD</div></div>
-  <div class="stat"><div class="stat-label">Month To Date</div><div class="stat-value">{{ "%.8f"|format(summary.month_to_date_cost) }} USD</div></div>
+  <div class="stat"><div class="stat-label">Today</div><div class="stat-value">{{ summary.today_cost|decimal_plain }} USD</div></div>
+  <div class="stat"><div class="stat-label">Month To Date</div><div class="stat-value">{{ summary.month_to_date_cost|decimal_plain }} USD</div></div>
   <div class="stat"><div class="stat-label">Budget Used</div><div class="stat-value">{{ "%.2f"|format(summary.budget_used_percent) }}%</div></div>
   <div class="stat"><div class="stat-label">Violations</div><div class="stat-value">{{ summary.violation_count }}</div></div>
+  <div class="stat"><div class="stat-label">Cache Savings</div><div class="stat-value">{{ summary.cache_savings|decimal_plain }} USD</div></div>
+  <div class="stat"><div class="stat-label">Batch Savings</div><div class="stat-value">{{ summary.batch_savings|decimal_plain }} USD</div></div>
+  <div class="stat"><div class="stat-label">Failed / Replay</div><div class="stat-value">{{ summary.failed_run_cost|decimal_plain }} / {{ summary.replay_cost|decimal_plain }}</div></div>
 </section>
 
 <section class="detail-grid">
@@ -28,7 +39,7 @@
       <thead><tr><th>Run</th><th>Cost</th></tr></thead>
       <tbody>
       {% for item in summary.top_runs %}
-        <tr><td><a href="/dashboard/runs/{{ item.run_id }}">{{ item.run_id }}</a></td><td>{{ "%.8f"|format(item.cost) }} USD</td></tr>
+        <tr><td><a href="/dashboard/runs/{{ item.run_id }}">{{ item.run_id }}</a></td><td>{{ item.cost|decimal_plain }} USD</td></tr>
       {% else %}
         <tr><td colspan="2" class="muted">No cost events recorded.</td></tr>
       {% endfor %}
@@ -42,7 +53,7 @@
       <thead><tr><th>Model</th><th>Cost</th></tr></thead>
       <tbody>
       {% for item in summary.top_models %}
-        <tr><td>{{ item.model_name }}</td><td>{{ "%.8f"|format(item.cost) }} USD</td></tr>
+        <tr><td>{{ item.model_name }}</td><td>{{ item.cost|decimal_plain }} USD</td></tr>
       {% else %}
         <tr><td colspan="2" class="muted">No model usage recorded.</td></tr>
       {% endfor %}
@@ -53,7 +64,7 @@
       <thead><tr><th>Workflow</th><th>Cost</th></tr></thead>
       <tbody>
       {% for item in summary.top_workflows %}
-        <tr><td>{{ item.workflow_id }}</td><td>{{ "%.8f"|format(item.cost) }} USD</td></tr>
+        <tr><td>{{ item.workflow_id }}</td><td>{{ item.cost|decimal_plain }} USD</td></tr>
       {% else %}
         <tr><td colspan="2" class="muted">No workflow cost recorded.</td></tr>
       {% endfor %}
@@ -65,19 +76,42 @@
 <section class="panel">
   <h2>Budget Violations</h2>
   <table>
-    <thead><tr><th>Violation</th><th>Run</th><th>Type</th><th>Decision</th><th>Actual</th><th>Limit</th></tr></thead>
+    <thead><tr><th>Violation</th><th>Run</th><th>Type / Severity</th><th>Decision</th><th>Actual</th><th>Limit</th><th>Resolution</th><th>Actions</th></tr></thead>
     <tbody>
     {% for item in violations %}
       <tr>
         <td>{{ item.violation_id }}</td>
         <td><a href="/dashboard/runs/{{ item.run_id }}">{{ item.run_id }}</a></td>
-        <td>{{ item.violation_type }}</td>
-        <td>{{ item.decision }}</td>
-        <td>{{ "%.8f"|format(item.actual_amount) }} {{ item.currency }}</td>
-        <td>{{ "%.8f"|format(item.limit_amount) }} {{ item.currency }}</td>
+        <td>{{ item.violation_type }}<br><span class="muted">{{ item.severity }}</span></td>
+        <td>{{ item.decision }}<br><span class="muted">{{ item.action_taken }}</span></td>
+        <td>{{ item.actual_amount|decimal_plain }} {{ item.currency }}</td>
+        <td>{{ item.limit_amount|decimal_plain }} {{ item.currency }}</td>
+        <td>{{ item.resolution_status }}<br><span class="muted">{{ item.resolved_by or "-" }}</span></td>
+        <td>
+          <div class="inline-form">
+            {% if item.resolution_status == "open" %}
+            <form method="post" action="/dashboard/costs/violations/{{ item.violation_id }}/acknowledge">
+              <input type="hidden" name="notes" value="Acknowledged from Costs Dashboard">
+              <button class="button secondary" type="submit">Acknowledge</button>
+            </form>
+            {% endif %}
+            {% if item.resolution_status in ["open", "acknowledged"] %}
+            <form method="post" action="/dashboard/costs/violations/{{ item.violation_id }}/resolve">
+              <input type="hidden" name="resolution_status" value="resolved">
+              <input type="hidden" name="notes" value="Resolved from Costs Dashboard">
+              <button class="button" type="submit">Resolve</button>
+            </form>
+            <form method="post" action="/dashboard/costs/violations/{{ item.violation_id }}/resolve">
+              <input type="hidden" name="resolution_status" value="ignored">
+              <input type="hidden" name="notes" value="Ignored from Costs Dashboard">
+              <button class="button danger" type="submit">Ignore</button>
+            </form>
+            {% endif %}
+          </div>
+        </td>
       </tr>
     {% else %}
-      <tr><td colspan="6" class="muted">No budget violations for this tenant.</td></tr>
+      <tr><td colspan="8" class="muted">No budget violations for this tenant.</td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -94,7 +128,7 @@
         <td>{{ item.resource_type }}</td>
         <td>{{ item.model_name or "generic" }}</td>
         <td>{{ item.price_unit }}</td>
-        <td>{{ "%.8f"|format(item.unit_price) }} {{ item.currency }}</td>
+        <td>{{ item.unit_price|decimal_plain }} {{ item.currency }}</td>
         <td>{{ "active" if item.is_active else "inactive" }}</td>
       </tr>
     {% else %}

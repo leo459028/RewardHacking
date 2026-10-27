@@ -1,9 +1,9 @@
 # Developer Guide & Local Setup
 
-> **Guide Version**: `v1.5.2`  
-> **Python Version**: `>=3.11`  
-> **Linter**: `ruff`  
-> **Test Runner**: `pytest`
+> **Guide Version**: `v1.5.3`
+> **Python Version**: `>=3.11`
+> **Linter**: `ruff`
+> **Test Runner**: `pytest` & `scripts/browser_manual_test.py`
 
 This document details the project structure, developer workflows, coding standards, and testing procedures for engineers contributing to **RewardHacking**.
 
@@ -69,6 +69,9 @@ python scripts/security_check.py
 
 # Complete test suite
 pytest -q
+
+# Interactive Browser E2E verification (against running Docker stack on :8000)
+python scripts/browser_manual_test.py
 ```
 
 ---

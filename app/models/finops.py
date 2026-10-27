@@ -240,6 +240,14 @@ class BudgetPolicy(Base):
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
+    @property
+    def name(self) -> str:
+        return self.policy_name
+
+    @property
+    def scope_type(self) -> str:
+        return self.scope
+
 
 class BudgetViolation(Base):
     __tablename__ = "budget_violations"
@@ -281,6 +289,14 @@ class BudgetViolation(Base):
     resolution_status: Mapped[str] = mapped_column(String(32), index=True, nullable=False, default="open")
     details: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    @property
+    def current_spend(self) -> Decimal:
+        return self.actual_amount if self.actual_amount else self.estimated_amount
+
+    @property
+    def threshold_amount(self) -> Decimal:
+        return self.limit_amount
 
 
 class PricingImportBatch(Base):

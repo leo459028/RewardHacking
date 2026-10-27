@@ -12,7 +12,9 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.models.finops import PricingCatalog, PricingChangeLog, PricingImportBatch, PricingSourceDocument
+from app.observability.metrics import FINOPS_PRICING_IMPORTS_TOTAL
 from app.schemas.finops import (
     BillingPlatform,
     Modality,
@@ -231,12 +233,37 @@ def _parse_yaml_scalar(value: str) -> Any:
     return value
 
 
-def validate_pricing_seed(seed: PricingSeed) -> PricingImportReport:
+def validate_pricing_seed(
+    seed: PricingSeed,
+    *,
+    stale_days: int | None = None,
+    strict: bool = False,
+    allow_warnings: bool | None = None,
+) -> PricingImportReport:
     report = PricingImportReport(
         source_file_name=seed.source_file_name,
         source_file_hash=seed.source_file_hash,
     )
     active_keys: dict[tuple[Any, ...], int] = {}
+    stale_threshold_days = stale_days if stale_days is not None else get_settings().pricing_source_stale_days
+    now = datetime.now(timezone.utc)
+
+    for doc_index, source in enumerate(seed.source_documents):
+        checked_dt = _parse_datetime(source.get("checked_at"))
+        if checked_dt is not None:
+            age_days = (now - checked_dt).days
+            if age_days > stale_threshold_days:
+                stale_doc = {
+                    "source_type": "source_document",
+                    "index": doc_index,
+                    "provider": source.get("provider", ""),
+                    "source_url": source.get("source_url", ""),
+                    "checked_at": str(source.get("checked_at", "")),
+                    "age_days": age_days,
+                    "stale_threshold_days": stale_threshold_days,
+                }
+                report.stale_sources.append(stale_doc)
+                report.warnings.append({"reason": "stale_source_document", **stale_doc})
 
     for index, item in enumerate(seed.pricing_items):
         missing = sorted(field for field in REQUIRED_PRICING_FIELDS if _missing(item.get(field)))
@@ -261,6 +288,49 @@ def validate_pricing_seed(seed: PricingSeed) -> PricingImportReport:
                     {"row": index, "reason": "invalid_datetime", "field": field_name, "value": item[field_name]}
                 )
 
+        checked_dt = _parse_datetime(item.get("source_checked_at"))
+        if checked_dt is not None:
+            age_days = (now - checked_dt).days
+            if age_days > stale_threshold_days:
+                stale_item = {
+                    "source_type": "pricing_item",
+                    "row": index,
+                    "provider": item.get("provider", ""),
+                    "model_name": item.get("model_name", ""),
+                    "source_url": item.get("source_url", ""),
+                    "source_checked_at": str(item.get("source_checked_at", "")),
+                    "age_days": age_days,
+                    "stale_threshold_days": stale_threshold_days,
+                }
+                report.stale_sources.append(stale_item)
+                report.warnings.append({"row": index, "reason": "stale_source_checked_at", **stale_item})
+
+        if item.get("pricing_mode") == "promotion" and not item.get("effective_to"):
+            report.warnings.append(
+                {
+                    "row": index,
+                    "reason": "promotion_missing_effective_to",
+                    "provider": item.get("provider", ""),
+                    "model_name": item.get("model_name", ""),
+                    "token_type": item.get("token_type", ""),
+                }
+            )
+
+        if (
+            item.get("token_type") == "cache_storage"
+            and item.get("unit_price") is not None
+            and _is_decimal(item.get("unit_price"))
+            and Decimal(str(item.get("unit_price"))) == Decimal("0")
+        ):
+            report.warnings.append(
+                {
+                    "row": index,
+                    "reason": "free_cache_storage_promotion",
+                    "provider": item.get("provider", ""),
+                    "model_name": item.get("model_name", ""),
+                }
+            )
+
         missing_optional = sorted(field for field in OPTIONAL_PRICING_FIELDS if item.get(field) is None)
         if missing_optional:
             report.missing_optional_fields.append({"row": index, "fields": missing_optional})
@@ -277,6 +347,11 @@ def validate_pricing_seed(seed: PricingSeed) -> PricingImportReport:
             active_keys[key] = index
 
     report.valid_rows = len(seed.pricing_items) - len({item["row"] for item in report.invalid_rows})
+    effective_allow_warnings = (not strict) if allow_warnings is None else allow_warnings
+    if report.invalid_rows:
+        report.status = "invalid"
+    elif (strict or not effective_allow_warnings) and (report.warnings or report.stale_sources):
+        report.status = "invalid"
     return report
 
 
@@ -358,13 +433,17 @@ async def dry_run_pricing_seed(
     seed: PricingSeed,
     *,
     created_by: str = "system",
+    strict: bool = False,
+    allow_warnings: bool | None = None,
 ) -> PricingImportReport:
-    validation = validate_pricing_seed(seed)
+    validation = validate_pricing_seed(seed, strict=strict, allow_warnings=allow_warnings)
     validation.import_mode = "dry_run"
-    if validation.invalid_rows:
+    if validation.invalid_rows or validation.status == "invalid":
         validation.status = "invalid"
+        FINOPS_PRICING_IMPORTS_TOTAL.labels(mode="dry_run", status=validation.status).inc()
         return validation
     await _compare_seed_with_database(session, seed, validation)
+    FINOPS_PRICING_IMPORTS_TOTAL.labels(mode="dry_run", status=validation.status).inc()
     return validation
 
 
@@ -374,11 +453,20 @@ async def apply_pricing_seed(
     *,
     created_by: str = "system",
     base_currency: str = "USD",
+    strict: bool = False,
+    allow_warnings: bool | None = None,
 ) -> PricingImportReport:
-    report = await dry_run_pricing_seed(session, seed, created_by=created_by)
+    validation = validate_pricing_seed(seed, strict=strict, allow_warnings=allow_warnings)
+    if not validation.invalid_rows and validation.status != "invalid":
+        await _compare_seed_with_database(session, seed, validation)
+    report = validation
     report.import_mode = "apply"
     if report.invalid_rows:
         report.status = "failed"
+        FINOPS_PRICING_IMPORTS_TOTAL.labels(mode="apply", status=report.status).inc()
+        return report
+    if report.status == "invalid":
+        FINOPS_PRICING_IMPORTS_TOTAL.labels(mode="apply", status=report.status).inc()
         return report
 
     batch_id = f"pib_{uuid4().hex}"
@@ -445,6 +533,8 @@ async def apply_pricing_seed(
         )
 
     await session.commit()
+    report.status = "applied"
+    FINOPS_PRICING_IMPORTS_TOTAL.labels(mode="apply", status=report.status).inc()
     return report
 
 

@@ -82,3 +82,27 @@ CONTROL_PLANE_STEPS_TOTAL = Counter(
     "Control plane execution plan step audit rows by type and status",
     ["step_type", "status"],
 )
+
+FINOPS_USAGE_EVENTS_TOTAL = Counter(
+    "agent_finops_usage_events_total",
+    "Total FinOps usage events by provider, resource type, and phase",
+    ["provider", "resource_type", "phase"],
+)
+
+FINOPS_COST_USD_TOTAL = Counter(
+    "agent_finops_cost_usd_total",
+    "Total FinOps recorded cost in USD by tenant, cost type, and provider",
+    ["tenant_id", "cost_type", "provider"],
+)
+
+FINOPS_BUDGET_VIOLATIONS_TOTAL = Counter(
+    "agent_finops_budget_violations_total",
+    "Total FinOps budget violations by tenant, scope, threshold type, and decision",
+    ["tenant_id", "scope", "threshold_type", "decision"],
+)
+
+FINOPS_PRICING_IMPORTS_TOTAL = Counter(
+    "agent_finops_pricing_imports_total",
+    "Total FinOps pricing catalog import runs by mode and status",
+    ["mode", "status"],
+)

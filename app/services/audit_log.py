@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.models.approval_event import ApprovalEvent
 from app.models.agent_run import AgentRun
 from app.models.evaluation_result import EvaluationResultRecord
+from app.models.finops import BudgetViolation, CostEvent
 from app.models.governance_event import GovernanceEvent
 from app.models.incident import Incident
 from app.models.tenant import Tenant, TenantApiKey
@@ -43,6 +44,7 @@ class ObservabilitySummary:
     approvals: dict[str, int]
     evaluator: dict[str, int]
     slo: dict[str, int]
+    finops: dict[str, int] = None  # type: ignore[assignment]
 
 
 @dataclass(frozen=True)
@@ -826,5 +828,13 @@ async def observability_summary(session: AsyncSession) -> ObservabilitySummary:
         slo={
             "worker_completion_latency_target_seconds": settings.worker_completion_latency_target_seconds,
             "incident_response_target_seconds": settings.incident_response_target_seconds,
+        },
+        finops={
+            "cost_events": await count(CostEvent),
+            "open_violations": await count(BudgetViolation, BudgetViolation.resolution_status == "open"),
+            "budget_blocked_runs": await count(
+                Incident,
+                Incident.code.in_(["finops_budget_exceeded", "finops_budget_approval_required"]),
+            ),
         },
     )
