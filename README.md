@@ -24,16 +24,18 @@ Modern AI agents do not merely generate text—they read repositories, mutate co
 
 ---
 
-## Current Release: `v1.5.3`
+## Current Release: `v1.5.4`
 
-### V1.5.3 Active FinOps Budget Enforcement, Context-Aware Pricing Engine & FinOps Governance Portal (Current)
-`v1.5.3` upgrades the Agent FinOps Core from passive cost accounting to an **Active Pre-Execution & Runtime FinOps Enforcement Engine**:
-- **Active Multi-Scope & Multi-Period Budget Enforcement**: Supports `run`, `tenant`, `workflow`, and `user` budget policies across `per_run`, `daily`, and `monthly` periods with `block` (fail-closed `denied`), `require_approval` (`awaiting_approval`), `degrade_model` (`budget_model_degraded` fallback tier routing), and `warn_only` actions.
-- **Context-Aware Tiered Pricing, Free Quota & Savings Accounting**: Resolves `context_tier` (`<=128k`, `>128k`, `<=200k`, `>200k`), `minimum_billable_quantity`, `free_quota_Included`, and computes `cache_savings` and `batch_savings`.
-- **Budget Governance Portal & Violation Triage**: Dedicated `/dashboard/admin/finops/budgets` portal and inline violation triage (`acknowledge`, `resolve`, `ignore`) on `/dashboard/costs`, plus stale pricing source guardrails (`PRICING_SOURCE_STALE_DAYS`).
-- **Zero-Warning Pydantic V2 Serialization & FinOps Observability**: Replaced deprecated `json_encoders` with `PlainSerializer` (`0 warnings` across full pytest suite), normalized plain decimal rendering across Dashboard views, and added 4 FinOps Prometheus metrics (`agent_finops_*`) and Operations readiness checks.
+### V1.5.4 Model-Aware FinOps Routing, Step-Level Execution Audit Closure & Interactive Operations Recovery Portal (Current)
+`v1.5.4` closes the end-to-end loop across Control Plane model routing, step-level execution auditing, FinOps cost accounting, and interactive operational recovery:
+- **Model-Aware FinOps Routing & Catalog Pricing**: `ControlPlanePlanner` and `/dashboard/playground` route `provider`, `model_name`, `pricing_mode`, `service_tier`, and `project_id` into `ExecutionPlan.model_route`, enabling `record_submit_usage` and `record_actual_usage` to price runs dynamically against the 149-entry official model pricing catalog and re-route on `degrade_model`.
+- **Full-Dimensional Budget Isolation, `dry_run_only` & `failed_retry` Accounting**: Added `user`, `project`, and `model` scope enforcement in `evaluate_budget_policies()`, `dry_run_only` guardrail enforcement (`forced_dry_run=True`), and `cost_type="failed_retry"` accounting when worker attempts fail or enter DLQ.
+- **Step-Level Execution Audit Lifecycle Closure (`ExecutionPlanStep`)**: `sync_execution_plan_on_approval` and `sync_execution_plan_on_worker_completion` automatically transition `approval-gate`, `tool-execution`, and `evaluation` steps to `completed`/`blocked`/`failed` with real `duration_ms` and `output_summary`, reporting `Plan Health: healthy` on `/dashboard/control-plane`.
+- **Interactive Recovery, DLQ Self-Healing & Approval TTL Sweep Portal**: Added one-click **Trigger Dry-Run Replay** and **Resume from Checkpoint** on `/dashboard/runs/{run_id}`, **Requeue Run** / **Resolve DLQ** (`POST /v1/worker/dlq/{run_id}/requeue` & `/resolve`) on `/dashboard/worker`, and **Expire Stale Approvals** (`POST /v1/approvals/expire-stale`) on `/dashboard/approvals`.
 
 ### Release History & Evolutionary Context
+
+- **`v1.5.3` (Historical)**: Active FinOps Budget Enforcement, Context-Aware Pricing Engine & FinOps Governance Portal. Added pre-execution and runtime budget enforcement (`block`, `require_approval`, `degrade_model`, `warn_only`), context-tier pricing resolution, cache/batch savings calculation, `/dashboard/admin/finops/budgets` governance portal, violation triage lifecycle, FinOps Prometheus metrics, and zero-warning Pydantic V2 serialization.
 
 - **`v1.5.2` (Historical)**: Open-Source Readiness, Full English Internationalization, Apache-2.0 licensing, community governance standards (`CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`), and automated secret scanning.
 - **`v1.5.1` (Historical)**: Added official model pricing catalog seed ingestion (`app/seeds/model_pricing_seed.yaml`), dry-run validation, versioned pricing change logs, source document audit trails, and Admin FinOps pricing management (`/dashboard/admin/finops/pricing`).

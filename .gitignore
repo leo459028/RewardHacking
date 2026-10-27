@@ -41,3 +41,7 @@ bak/
 Bak/
 **/bak/
 **/Bak/
+
+# Local version planning documents (do not upload to GitHub)
+docs/plan/
+docs/plan/*.md

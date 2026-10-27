@@ -28,7 +28,9 @@ from app.schemas.audit import (
     ApiKeyRecord,
     ApprovalDecisionRequest,
     DashboardSummaryResponse,
+    DlqResolveRequest,
     EvaluationRecord,
+    ExpireStaleApprovalsResponse,
     GovernanceEventRecord,
     GovernanceSummaryResponse,
     IncidentRecord,
@@ -98,6 +100,7 @@ from app.services.audit_log import (
     create_tenant,
     create_tenant_api_key,
     dashboard_summary,
+    expire_stale_approvals,
     get_tenant,
     get_tenant_api_key,
     get_run,
@@ -115,6 +118,8 @@ from app.services.audit_log import (
     observability_summary,
     persist_governance_event,
     persist_orchestration_result,
+    requeue_dlq_run,
+    resolve_dlq_run,
     revoke_tenant_api_key,
     update_tenant,
 )
@@ -1776,6 +1781,57 @@ async def get_worker_dlq(
 ):
     require_role(auth_context, "viewer", "operator", "admin")
     return await list_worker_attempts(session, status="dlq")
+
+
+@router.post("/worker/dlq/{run_id}/requeue", response_model=RunRecord)
+async def post_worker_dlq_requeue(
+    run_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+    event_publisher: EventPublisher = Depends(get_event_publisher),
+):
+    require_role(auth_context, "operator", "admin")
+    run = await requeue_dlq_run(session, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    _query_tenant(run.tenant_id, auth_context)
+    await state_store.set_run_state(run.run_id, run.status)
+    event = make_event("agent.requested", run.run_id, {"request": run.request_payload})
+    await event_publisher.publish(get_settings().kafka_request_topic, run.run_id, event)
+    return run
+
+
+@router.post("/worker/dlq/{run_id}/resolve", response_model=list[WorkerAttemptRecord])
+async def post_worker_dlq_resolve(
+    run_id: str,
+    payload: DlqResolveRequest | None = None,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "operator", "admin")
+    run = await get_run(session, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    _query_tenant(run.tenant_id, auth_context)
+    reason = payload.reason if payload is not None else "Resolved by operator"
+    return await resolve_dlq_run(session, run_id, reason=reason)
+
+
+@router.post("/approvals/expire-stale", response_model=ExpireStaleApprovalsResponse)
+async def post_expire_stale_approvals(
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+):
+    require_role(auth_context, "operator", "admin")
+    expired_run_ids = await expire_stale_approvals(session)
+    for rid in expired_run_ids:
+        await state_store.set_run_state(rid, "denied")
+    return ExpireStaleApprovalsResponse(
+        expired_count=len(expired_run_ids),
+        run_ids=expired_run_ids,
+    )
 
 
 @router.get("/evaluations", response_model=list[EvaluationRecord])

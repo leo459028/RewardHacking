@@ -1,6 +1,6 @@
 # Manual QA & Interactive Browser Testing Guide
 
-> **Testing Baseline**: `v1.5.3`
+> **Testing Baseline**: `v1.5.4`
 > **Target Environment**: Local Docker Compose Stack (`http://localhost:8000`)
 > **Primary Interface**: Web Browser (`/dashboard`) & REST API (`/v1`)
 > **Automated Browser Runner**: `python scripts/browser_manual_test.py`
@@ -62,7 +62,7 @@ This scenario verifies the normal execution path, Control Plane execution planni
    - Refresh the page after 2–3 seconds: **Status** transitions to `completed`.
    - **Execution Plan**: Shows workflow `code-fix-basic`, status `completed`, and planned steps (`policy-check`, `tool-execution`, `evaluation`).
    - **Trace / Replay**: Shows a valid `trace_id`. Click the **Replay Bundle JSON** link (`/v1/runs/{run_id}/replay-bundle`) to verify the self-contained JSON audit bundle downloads cleanly.
-   - **Checkpoint / Resume**: Shows the `submit` checkpoint. You can click **Trigger Dry-Run Replay** to verify non-destructive replay execution.
+   - **Checkpoint / Resume**: Shows the `submit` checkpoint. Click **Trigger Dry-Run Replay** to verify a new `replay_...` attempt appears under **Replay Attempts**, or click **Resume from Checkpoint** to create a `resume` checkpoint (`ckpt_...`).
    - **Cost Summary**: Displays estimated and actual costs formatted in plain decimal notation (no `0E-8` scientific notation).
 
 ---
@@ -93,11 +93,12 @@ This scenario verifies interception of high-risk or adversarial prompts (includi
 6. Locate the pending run in the table:
    - Enter a review reason in the text box (e.g., `Verified migration script in staging`).
    - Click **Approve Once** (to release the task to the Kafka worker queue) or **Deny** (to permanently reject the run).
+   - Click **Expire Stale Approvals** in the top header bar to verify stale pending approvals are swept cleanly.
 7. Click the Run ID link to open **Run Detail** and confirm the status transitioned to `queued`/`completed` (if approved) or `denied` (if denied).
 
 ---
 
-## 4. Scenario 3: FinOps Pricing Seed Import, Active Budget Enforcement & Violation Triage (`v1.5.3`)
+## 4. Scenario 3: FinOps Pricing Seed Import, Active Budget Enforcement & Violation Triage (`v1.5.4`)
 
 This scenario tests the complete `v1.5.3` FinOps governance lifecycle: importing the official model pricing catalog, configuring a fail-closed budget policy, triggering an active budget block, and triaging the resulting violation.
 
@@ -181,7 +182,7 @@ This scenario tests the complete `v1.5.3` FinOps governance lifecycle: importing
 2. Verify the **Release Readiness Checks** table includes:
    - `finops_pricing_catalog_ready` (`pass`)
    - `finops_open_critical_violations` (`pass` after resolving open violations in Scenario 4.4)
-3. Verify the **Release Version** input field in the **Create Release Gate** form defaults to `v1.5.3`.
+3. Verify the **Release Version** input field in the **Create Release Gate** form defaults to `v1.5.4`.
 4. Optionally submit operational drill evidence (`backup_restore`, `secret_rotation`, `safety_regression`) and click **Create Release Gate** to record an auditable release snapshot.
 
 ---

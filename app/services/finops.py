@@ -1137,7 +1137,11 @@ async def _record_cost_for_usage(session: AsyncSession, usage: UsageEvent) -> Co
 
     is_actual = usage.phase in {"actual", "manual"}
     amount = net_cost
-    cost_type = "actual" if is_actual else "estimated"
+    is_failed_retry = (
+        (usage.metadata_payload or {}).get("cost_type") == "failed_retry"
+        or (is_actual and usage.status == "failed")
+    )
+    cost_type = "failed_retry" if is_failed_retry else ("actual" if is_actual else "estimated")
     cost = CostEvent(
         cost_id=f"cost_{uuid4().hex}",
         usage_event_id=usage.usage_id,
@@ -1180,7 +1184,7 @@ async def _record_cost_for_usage(session: AsyncSession, usage: UsageEvent) -> Co
         fx_rate=Decimal("1"),
         fx_rate_source="same_currency",
         calculation_method=usage.phase,
-        calculation_version="v1.5.3",
+        calculation_version="v1.5.4",
         allocation_tags={"tenant_id": usage.tenant_id, "workflow_id": usage.workflow_id},
         metadata_payload={
             "usage_unit": usage.usage_unit,
@@ -1336,28 +1340,42 @@ async def record_submit_usage(
     request = AgentRequest.model_validate(run.request_payload)
     workflow_id = plan.workflow_id if plan is not None else request.task_type
     trace_id = (plan.trace_id if plan is not None else request.metadata.get("trace_id", "")) or ""
+    route = dict((plan.model_route if plan is not None else {}) or {})
+    meta = dict(request.metadata or {})
+    routed_provider = str(route.get("provider") or meta.get("provider") or "internal").strip() or "internal"
+    routed_model = (
+        str(route.get("model") or meta.get("model_name") or "deterministic-control-plane").strip()
+        or "deterministic-control-plane"
+    )
+    routed_pricing_mode = str(route.get("pricing_mode") or meta.get("pricing_mode") or "standard").strip() or "standard"
+    routed_service_tier = str(route.get("service_tier") or meta.get("service_tier") or "standard").strip() or "standard"
+    routed_project_id = str(route.get("project_id") or meta.get("project_id") or "").strip()
     tool_count = max(1, len(request.allowed_tools or ["summarize"]))
     input_tokens = _token_estimate(request.prompt + " " + request.goal)
     events = [
         UsageEventCreateRequest(
             tenant_id=run.tenant_id,
+            project_id=routed_project_id,
             user_id=run.user_id,
             run_id=run.run_id,
             trace_id=trace_id,
             workflow_id=workflow_id,
             step_id="step_1_plan",
-            provider="internal",
-            model_name="deterministic-control-plane",
+            provider=routed_provider,
+            model_name=routed_model,
+            service_tier=routed_service_tier,
+            pricing_mode=routed_pricing_mode,
             resource_type="model",
             resource_subtype="chat_completion",
             usage_unit="input_tokens",
             quantity=input_tokens,
             input_tokens=input_tokens,
             phase="estimated",
-            metadata={"source": "submit"},
+            metadata={"source": "submit", "pricing_mode": routed_pricing_mode},
         ),
         UsageEventCreateRequest(
             tenant_id=run.tenant_id,
+            project_id=routed_project_id,
             user_id=run.user_id,
             run_id=run.run_id,
             trace_id=trace_id,
@@ -1372,6 +1390,7 @@ async def record_submit_usage(
         ),
         UsageEventCreateRequest(
             tenant_id=run.tenant_id,
+            project_id=routed_project_id,
             user_id=run.user_id,
             run_id=run.run_id,
             trace_id=trace_id,
@@ -1394,15 +1413,36 @@ async def record_submit_usage(
     )
 
 
-async def record_actual_usage(session: AsyncSession, *, run: AgentRun, plan: ExecutionPlan | None) -> None:
+async def record_actual_usage(
+    session: AsyncSession,
+    *,
+    run: AgentRun,
+    plan: ExecutionPlan | None,
+    is_failed_retry: bool = False,
+) -> None:
     request = AgentRequest.model_validate(run.request_payload)
     workflow_id = plan.workflow_id if plan is not None else request.task_type
     trace_id = (plan.trace_id if plan is not None else request.metadata.get("trace_id", "")) or ""
+    route = dict((plan.model_route if plan is not None else {}) or {})
+    meta = dict(request.metadata or {})
+    routed_provider = str(route.get("provider") or meta.get("provider") or "internal").strip() or "internal"
+    routed_model = (
+        str(route.get("model") or meta.get("model_name") or "deterministic-control-plane").strip()
+        or "deterministic-control-plane"
+    )
+    routed_pricing_mode = str(route.get("pricing_mode") or meta.get("pricing_mode") or "standard").strip() or "standard"
+    routed_service_tier = str(route.get("service_tier") or meta.get("service_tier") or "standard").strip() or "standard"
+    routed_project_id = str(route.get("project_id") or meta.get("project_id") or "").strip()
+    usage_status = "failed" if is_failed_retry else "success"
+    cost_meta_base: dict[str, object] = {"source": "worker"}
+    if is_failed_retry:
+        cost_meta_base["cost_type"] = "failed_retry"
     transcript = run.evaluation_summary.get("execution_event", {}).get("payload", {}).get("tool_transcript", [])
-    output_tokens = _token_estimate(run.execution_output)
+    output_tokens = _token_estimate(run.execution_output or "worker_attempt")
     events = [
         UsageEventCreateRequest(
             tenant_id=run.tenant_id,
+            project_id=routed_project_id,
             user_id=run.user_id,
             run_id=run.run_id,
             trace_id=trace_id,
@@ -1413,27 +1453,33 @@ async def record_actual_usage(session: AsyncSession, *, run: AgentRun, plan: Exe
             quantity=max(1, len(transcript)),
             tool_call_count=max(1, len(transcript)),
             phase="actual",
-            metadata={"source": "worker", "completed_tools": len(transcript)},
+            status=usage_status,
+            metadata={**cost_meta_base, "completed_tools": len(transcript)},
         ),
         UsageEventCreateRequest(
             tenant_id=run.tenant_id,
+            project_id=routed_project_id,
             user_id=run.user_id,
             run_id=run.run_id,
             trace_id=trace_id,
             workflow_id=workflow_id,
             step_id="step_3_evaluation",
-            provider="internal",
-            model_name="deterministic-control-plane",
+            provider=routed_provider,
+            model_name=routed_model,
+            service_tier=routed_service_tier,
+            pricing_mode=routed_pricing_mode,
             resource_type="model",
             resource_subtype="chat_completion",
             usage_unit="output_tokens",
             quantity=output_tokens,
             output_tokens=output_tokens,
             phase="actual",
-            metadata={"source": "worker"},
+            status=usage_status,
+            metadata={**cost_meta_base, "pricing_mode": routed_pricing_mode},
         ),
         UsageEventCreateRequest(
             tenant_id=run.tenant_id,
+            project_id=routed_project_id,
             user_id=run.user_id,
             run_id=run.run_id,
             trace_id=trace_id,
@@ -1444,10 +1490,26 @@ async def record_actual_usage(session: AsyncSession, *, run: AgentRun, plan: Exe
             quantity=1,
             worker_seconds=Decimal("1"),
             phase="actual",
-            metadata={"source": "worker"},
+            status=usage_status,
+            metadata=dict(cost_meta_base),
         ),
     ]
-    await _record_events_and_budget(session, run=run, events=events)
+    outcome = await _record_events_and_budget(session, run=run, plan=plan, events=events)
+    if outcome.decision == "fail_closed":
+        flags = list(run.policy_flags or [])
+        if "finops_runtime_budget_exceeded" not in flags:
+            flags.append("finops_runtime_budget_exceeded")
+            run.policy_flags = flags
+        session.add(
+            Incident(
+                run_id=run.run_id,
+                severity="high",
+                code="finops_runtime_budget_exceeded",
+                detail=outcome.reason or "Runtime actual cost exceeded hard budget limit.",
+            )
+        )
+        INCIDENTS_TOTAL.labels(severity="high", code="finops_runtime_budget_exceeded").inc()
+        await session.commit()
 
 
 async def record_checkpoint_usage(
@@ -1842,6 +1904,30 @@ async def evaluate_budget_policies(
             continue
         if policy.scope == "tenant" and policy.scope_id and policy.scope_id != run.tenant_id:
             continue
+        if policy.scope == "user":
+            target_user = policy.scope_id
+            if target_user and target_user != run.user_id:
+                continue
+        if policy.scope == "project":
+            target_proj = policy.project_id or policy.scope_id
+            run_proj = str(
+                (plan.model_route or {}).get("project_id")
+                if plan is not None
+                else ((run.request_payload or {}).get("metadata") or {}).get("project_id") or ""
+            )
+            if not run_proj and run_costs:
+                run_proj = str(run_costs[0].project_id or "")
+            if target_proj and target_proj != run_proj:
+                continue
+        if policy.scope == "model":
+            target_model = policy.model_name or policy.scope_id
+            run_model = str(
+                (plan.model_route or {}).get("model")
+                if plan is not None
+                else ((run.request_payload or {}).get("metadata") or {}).get("model_name") or "deterministic-control-plane"
+            )
+            if target_model and target_model != run_model:
+                continue
         if policy.scope == "workflow":
             target_wf = policy.workflow_id or policy.scope_id
             if target_wf and target_wf != workflow_id:
@@ -1855,7 +1941,11 @@ async def evaluate_budget_policies(
         for item in tenant_costs:
             if not _cost_in_period(item, policy, now, run.run_id):
                 continue
-            if policy.scope == "workflow":
+            if policy.scope == "user":
+                target_user = policy.scope_id
+                if target_user and item.user_id != target_user:
+                    continue
+            elif policy.scope == "workflow":
                 target_wf = policy.workflow_id or policy.scope_id
                 if target_wf and item.workflow_id != target_wf:
                     continue
@@ -2023,6 +2113,9 @@ async def evaluate_budget_policies(
             for flag in ("finops_model_degraded", "finops_budget_degraded_model"):
                 if flag not in outcome.policy_flags:
                     outcome.policy_flags.append(flag)
+        if decision == "dry_run_only" or "dry_run_only" in actions:
+            if "finops_budget_dry_run_only" not in outcome.policy_flags:
+                outcome.policy_flags.append("finops_budget_dry_run_only")
         if decision == "require_approval":
             outcome.approval_required = True
             if "finops_budget_requires_approval" not in outcome.policy_flags:
@@ -2077,18 +2170,36 @@ async def apply_budget_enforcement_to_run(
     if "finops_model_degraded" in outcome.policy_flags and plan is not None:
         tier = outcome.fallback_model_tier or "cheap"
         old_route = dict(plan.model_route or {})
+        provider_name = str(old_route.get("provider") or "internal")
+        old_model = str(old_route.get("model") or "deterministic-control-plane")
+        degraded_model = f"deterministic-{tier}" if provider_name == "internal" else f"{old_model}-{tier}"
         plan.model_route = {
             **old_route,
-            "model": f"deterministic-{tier}",
+            "model": degraded_model,
             "model_tier": tier,
             "fallback_model_tier": tier,
-            "degraded_from": old_route.get("model", "deterministic-control-plane"),
-            "routing_reason": f"V1.5.3 FinOps budget soft-limit degraded model route to {tier} tier.",
+            "degraded_from": old_model,
+            "routing_reason": f"V1.5.4 FinOps budget soft-limit degraded model route to {tier} tier.",
         }
         exec_plan_dict = dict(summary.get("execution_plan") or {})
         if exec_plan_dict:
             exec_plan_dict["model_route"] = plan.model_route
             summary["execution_plan"] = exec_plan_dict
+
+    if outcome.decision == "dry_run_only" or "finops_budget_dry_run_only" in outcome.policy_flags:
+        req_payload = dict(run.request_payload or {})
+        req_meta = dict(req_payload.get("metadata") or {})
+        req_meta["forced_dry_run"] = True
+        req_payload["metadata"] = req_meta
+        run.request_payload = req_payload
+        if plan is not None:
+            pol_snap = dict(plan.policy_snapshot or {})
+            pol_snap["forced_dry_run"] = True
+            plan.policy_snapshot = pol_snap
+            exec_plan_dict = dict(summary.get("execution_plan") or {})
+            if exec_plan_dict:
+                exec_plan_dict["policy_snapshot"] = pol_snap
+                summary["execution_plan"] = exec_plan_dict
 
     if outcome.decision == "require_approval":
         reason = outcome.reason or "Budget policy requires human approval before execution."

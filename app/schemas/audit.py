@@ -225,3 +225,12 @@ class ReleaseGateRecord(BaseModel):
     items: list[ReleaseGateItemRecord] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
+
+
+class DlqResolveRequest(BaseModel):
+    reason: str = Field(default="Resolved by operator", min_length=1, max_length=256)
+
+
+class ExpireStaleApprovalsResponse(BaseModel):
+    expired_count: int
+    run_ids: list[str] = Field(default_factory=list)

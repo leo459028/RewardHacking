@@ -133,7 +133,10 @@ async def compute_operations_readiness(
         await session.scalar(
             select(func.count())
             .select_from(ApprovalEvent)
-            .where((ApprovalEvent.expired.is_(True)) | (ApprovalEvent.expires_at < now))
+            .where(
+                ApprovalEvent.status == "pending",
+                (ApprovalEvent.expired.is_(True)) | (ApprovalEvent.expires_at < now),
+            )
         )
         or 0
     )

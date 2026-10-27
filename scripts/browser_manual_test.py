@@ -113,6 +113,12 @@ def run_manual_test_suite(base_url: str = "http://localhost:8000", force_headles
         assert "0E-8" not in content1
         print(f"[Scenario 1] Run Detail verified for {run1_id}: status completed/queued, 0E-8=False")
 
+        page.click('button:has-text("Trigger Dry-Run Replay")')
+        page.wait_for_load_state("networkidle")
+        page.goto(f"{base_url}/dashboard/runs/{run1_id}")
+        assert "replay_" in page.content()
+        print(f"[Scenario 1] Triggered Dry-Run Replay via Run Detail UI for {run1_id}")
+
         resp_bundle = page.goto(f"{base_url}/v1/runs/{run1_id}/replay-bundle")
         assert resp_bundle is not None and resp_bundle.status == 200
         bundle_json = resp_bundle.json()
@@ -158,7 +164,11 @@ def run_manual_test_suite(base_url: str = "http://localhost:8000", force_headles
         page.wait_for_selector(form_selector)
         page.fill(f'{form_selector} input[name="reason"]', "Verified migration script in staging via browser QA")
         page.click(f'{form_selector} button[value="approve_once"]')
-        print(f"[Scenario 2b] Approved run {app_run_id} via /dashboard/approvals")
+        page.wait_for_load_state("networkidle")
+        page.goto(f"{base_url}/dashboard/approvals")
+        page.click('button:has-text("Expire Stale Approvals")')
+        page.wait_for_load_state("networkidle")
+        print(f"[Scenario 2b] Approved run {app_run_id} and executed Expire Stale Approvals via /dashboard/approvals")
 
         # 4. Scenario 3: FinOps Pricing Seed Import, Active Budget Enforcement & Violation Triage
         page.goto(f"{base_url}/dashboard/admin/finops/pricing/import")
@@ -269,20 +279,20 @@ def run_manual_test_suite(base_url: str = "http://localhost:8000", force_headles
         assert "finops_pricing_catalog_ready" in ops_html
         assert "finops_open_critical_violations" in ops_html
         release_ver = page.input_value('input[name="release_version"]')
-        assert release_ver == "v1.5.3"
+        assert release_ver == "v1.5.4"
 
         page.select_option('select[name="evidence_type"]', "safety_regression")
         page.select_option('select[name="status"]', "pass")
         page.fill('input[name="reference_url"]', "docs/manual_test.md")
-        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.5.3")
+        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.5.4")
         page.click('button:has-text("Save Evidence")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
         page.click('button:has-text("Create Release Gate Snapshot")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
-        assert "v1.5.3" in page.content()
-        print("[Scenario 4.3] Operations evidence saved & v1.5.3 Release Gate snapshot created via browser")
+        assert "v1.5.4" in page.content()
+        print("[Scenario 4.3] Operations evidence saved & v1.5.4 Release Gate snapshot created via browser")
 
         # 6. Check all primary navigation tabs for 0E-8 and HTTP 200
         nav_routes = [

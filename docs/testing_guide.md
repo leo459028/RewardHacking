@@ -1,6 +1,6 @@
 # Testing Guide & Red-Team Corpus
 
-> **Testing Baseline**: `v1.5.3`
+> **Testing Baseline**: `v1.5.4`
 > **Test Suite**: `pytest`  
 > **Linter**: `ruff`
 
@@ -55,6 +55,7 @@ python scripts/browser_manual_test.py
 | `tests/test_v15_finops_core.py` | Pricing catalog CRUD, immutable usage/cost event ledger, tenant/run cost queries, budget violations. |
 | `tests/test_v151_finops_core.py` | Expanded FinOps schema, model pricing YAML seed parsing, dry-run validation, superseding prices. |
 | `tests/test_v153_finops_governance.py` | Active multi-scope/period budget enforcement (`block`, `require_approval`, `degrade_model`), context-tier pricing, free quota/minimum quantity, cache/batch savings, violation triage lifecycle, manual pricing change logs, stale source guardrails, and zero-warning Pydantic V2 serialization. |
+| `tests/test_v154_control_plane_finops_closure.py` | Model-aware FinOps routing (`provider`/`model_name`/`project_id`), `user`/`project`/`model` budget scope isolation, `dry_run_only` enforcement, `failed_retry` cost accounting, `ExecutionPlanStep` lifecycle synchronization (`healthy` plan health), DLQ requeue/resolve, stale approval TTL sweep, and Run Detail Replay/Resume UI routes. |
 
 ---
 

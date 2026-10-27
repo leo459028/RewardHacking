@@ -20,6 +20,7 @@ from app.models.worker_attempt import WorkerAttempt
 from app.observability.metrics import INCIDENTS_TOTAL
 from app.schemas.agent import AgentRequest
 from app.schemas.audit import ApprovalDecisionRequest
+from app.services.control_plane import sync_execution_plan_on_approval
 from app.services.orchestrator import OrchestrationResult
 
 
@@ -755,6 +756,14 @@ async def apply_approval_decision(
         raise ValueError("decision must be approve_once, deny, or request_changes")
 
     run.evaluation_summary = summary
+    await sync_execution_plan_on_approval(
+        session,
+        run=run,
+        decision=decision.decision,
+        reviewer=decision.reviewer,
+        reason=decision.reason,
+    )
+    summary = dict(run.evaluation_summary or {})
     run.result = {
         "response": {
             "run_id": run.run_id,
@@ -769,6 +778,128 @@ async def apply_approval_decision(
     await session.commit()
     await session.refresh(run)
     return run
+
+
+async def expire_stale_approvals(session: AsyncSession) -> list[str]:
+    now = datetime.now(timezone.utc)
+    stmt = select(ApprovalEvent).where(
+        ApprovalEvent.status == "pending",
+        (ApprovalEvent.expired.is_(True)) | (ApprovalEvent.expires_at <= now),
+    )
+    stale_events = list((await session.scalars(stmt)).all())
+    expired_run_ids: list[str] = []
+
+    for event in stale_events:
+        event.expired = True
+        event.status = "expired"
+        if not event.reviewer:
+            event.reviewer = "system_ttl_sweeper"
+        run = await get_run(session, event.run_id)
+        if run is not None and run.status == "awaiting_approval":
+            reason = "Approval TTL expired without reviewer decision."
+            run.status = "denied"
+            run.decision_reason = reason
+            run.requires_human_review = False
+            flags = list(run.policy_flags or [])
+            if "approval_ttl_expired" not in flags:
+                flags.append("approval_ttl_expired")
+            run.policy_flags = flags
+
+            summary = dict(run.evaluation_summary or {})
+            approval = dict(summary.get("approval", {}))
+            approval.update(
+                {
+                    "status": "expired",
+                    "expired": True,
+                    "reviewer": "system_ttl_sweeper",
+                    "reason": reason,
+                    "decided_at": now.isoformat(),
+                }
+            )
+            summary["approval"] = approval
+            summary["run_state"] = {"status": "denied", "updated_at": now.isoformat()}
+            run.evaluation_summary = summary
+
+            await sync_execution_plan_on_approval(
+                session,
+                run=run,
+                decision="deny",
+                reviewer="system_ttl_sweeper",
+                reason=reason,
+            )
+            summary = dict(run.evaluation_summary or {})
+            run.result = {
+                "response": {
+                    "run_id": run.run_id,
+                    "status": run.status,
+                    "decision_reason": run.decision_reason,
+                    "risk_score": run.risk_score,
+                    "policy_flags": run.policy_flags,
+                },
+                "execution_output": run.execution_output,
+                "evaluation_summary": summary,
+            }
+            if run.run_id not in expired_run_ids:
+                expired_run_ids.append(run.run_id)
+
+    await session.commit()
+    return expired_run_ids
+
+
+async def requeue_dlq_run(session: AsyncSession, run_id: str) -> AgentRun | None:
+    run = await get_run(session, run_id)
+    if run is None:
+        return None
+    stmt = select(WorkerAttempt).where(
+        WorkerAttempt.run_id == run_id,
+        WorkerAttempt.status == "dlq",
+    )
+    attempts = list((await session.scalars(stmt)).all())
+    for attempt in attempts:
+        attempt.status = "requeued"
+
+    run.status = "queued"
+    run.decision_reason = "Requeued from worker DLQ by operator."
+    flags = [f for f in list(run.policy_flags or []) if f != "worker_failed"]
+    if "dlq_requeued" not in flags:
+        flags.append("dlq_requeued")
+    run.policy_flags = flags
+    summary = dict(run.evaluation_summary or {})
+    summary["run_state"] = {"status": "queued", "updated_at": datetime.now(timezone.utc).isoformat()}
+    run.evaluation_summary = summary
+    run.result = {
+        "response": {
+            "run_id": run.run_id,
+            "status": run.status,
+            "decision_reason": run.decision_reason,
+            "risk_score": run.risk_score,
+            "policy_flags": run.policy_flags,
+        },
+        "execution_output": run.execution_output,
+        "evaluation_summary": summary,
+    }
+    await session.commit()
+    await session.refresh(run)
+    return run
+
+
+async def resolve_dlq_run(
+    session: AsyncSession,
+    run_id: str,
+    *,
+    reason: str = "Resolved by operator",
+) -> list[WorkerAttempt]:
+    stmt = select(WorkerAttempt).where(
+        WorkerAttempt.run_id == run_id,
+        WorkerAttempt.status == "dlq",
+    )
+    attempts = list((await session.scalars(stmt)).all())
+    for attempt in attempts:
+        attempt.status = "dlq_resolved"
+        base_reason = (attempt.failure_reason or "").strip()
+        attempt.failure_reason = f"{base_reason} | resolved: {reason}".strip(" |")
+    await session.commit()
+    return attempts
 
 
 async def dashboard_summary(session: AsyncSession) -> DashboardSummary:
