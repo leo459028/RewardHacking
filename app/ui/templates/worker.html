@@ -12,7 +12,7 @@
 <section class="panel">
   <h2>Dead Letter Queue <span class="heading-note">死信佇列</span></h2>
   <table>
-    <thead><tr><th>Run</th><th>Attempt</th><th>Reason</th><th>Created</th></tr></thead>
+    <thead><tr><th>Run</th><th>Attempt</th><th>Reason</th><th>Created</th><th>Actions</th></tr></thead>
     <tbody>
     {% for item in dlq %}
       <tr>
@@ -20,9 +20,18 @@
         <td>{{ item.attempt_number }}</td>
         <td>{{ item.failure_reason }}</td>
         <td>{{ item.created_at }}</td>
+        <td>
+          <form method="post" action="/dashboard/worker/dlq/{{ item.run_id }}/requeue" class="decision-form" style="display:inline-block;">
+            <button class="button secondary" type="submit">Requeue Run</button>
+          </form>
+          <form method="post" action="/dashboard/worker/dlq/{{ item.run_id }}/resolve" class="decision-form" style="display:inline-block;">
+            <input type="hidden" name="reason" value="Resolved from worker dashboard">
+            <button class="button" type="submit">Resolve DLQ</button>
+          </form>
+        </td>
       </tr>
     {% else %}
-      <tr><td colspan="4" class="muted">No DLQ entries.</td></tr>
+      <tr><td colspan="5" class="muted">No DLQ entries.</td></tr>
     {% endfor %}
     </tbody>
   </table>

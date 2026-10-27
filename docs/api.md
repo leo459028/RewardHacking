@@ -1,6 +1,6 @@
 # REST API Specification
 
-> **API Version**: `v1.5.3`
+> **API Version**: `v1.5.4`
 > **Base Path**: `/v1`  
 > **Interactive Documentation**: `http://localhost:8000/docs` (Swagger UI) or `http://localhost:8000/redoc` (ReDoc)
 
@@ -72,6 +72,7 @@ All REST API endpoints are exposed under the `/v1` route prefix. The service ret
 | --- | --- | --- | --- |
 | `GET` | `/v1/approvals` | Queries runs currently in `awaiting_approval` status | `viewer`, `operator`, `admin` |
 | `POST` | `/v1/approvals/{run_id}/decision` | Submits human review decision (`approve_once`, `deny`, `request_changes`) | `operator`, `admin` |
+| `POST` | `/v1/approvals/expire-stale` | Sweeps pending approvals past TTL (`expires_at <= now`) to `expired` / `denied` | `operator`, `admin` |
 
 #### Approval Decision Payload Example
 ```json
@@ -139,6 +140,8 @@ All REST API endpoints are exposed under the `/v1` route prefix. The service ret
 | `POST` | `/v1/operations/release-gates` | Creates an auditable release gate snapshot | `admin` |
 | `GET` | `/v1/incidents` | Lists safety incidents and policy denials | `viewer`, `operator`, `admin` |
 | `GET` | `/v1/worker/dlq` | Lists worker attempts routed to dead letter queue | `viewer`, `operator`, `admin` |
+| `POST` | `/v1/worker/dlq/{run_id}/requeue` | Requeues a DLQ run (`status="queued"`) and republishes `agent.requested` | `operator`, `admin` |
+| `POST` | `/v1/worker/dlq/{run_id}/resolve` | Marks DLQ worker attempts as `dlq_resolved` to clear readiness gate | `operator`, `admin` |
 
 ---
 

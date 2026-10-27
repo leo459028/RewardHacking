@@ -195,21 +195,38 @@ class ControlPlanePlanner:
                     }
                 )
 
+        meta = dict(request.metadata or {})
+        routed_provider = str(meta.get("provider") or "internal").strip() or "internal"
+        routed_model = str(meta.get("model_name") or "deterministic-control-plane").strip() or "deterministic-control-plane"
+        routed_pricing_mode = str(meta.get("pricing_mode") or "standard").strip() or "standard"
+        routed_service_tier = str(meta.get("service_tier") or "standard").strip() or "standard"
+        routed_project_id = str(meta.get("project_id") or "").strip()
+
         model_route: dict = {
-            "model": "deterministic-control-plane",
-            "routing_reason": f"V1.5.3 deterministic route for {request.task_type}.",
+            "provider": routed_provider,
+            "model": routed_model,
+            "pricing_mode": routed_pricing_mode,
+            "service_tier": routed_service_tier,
+            "project_id": routed_project_id,
+            "routing_reason": f"V1.5.4 deterministic route for {request.task_type} ({routed_provider}/{routed_model}).",
         }
         if budget_outcome is not None:
             outcome_data = budget_outcome if isinstance(budget_outcome, dict) else getattr(budget_outcome, "__dict__", {})
             fallback_tier = outcome_data.get("fallback_model_tier")
             degraded = bool(outcome_data.get("degraded") or fallback_tier)
             if degraded and fallback_tier:
+                degraded_model = (
+                    f"deterministic-{fallback_tier}"
+                    if routed_provider == "internal"
+                    else f"{routed_model}-{fallback_tier}"
+                )
                 model_route = {
-                    "model": f"deterministic-{fallback_tier}",
+                    **model_route,
+                    "model": degraded_model,
                     "model_tier": str(fallback_tier),
                     "fallback_model_tier": str(fallback_tier),
-                    "degraded_from": "deterministic-control-plane",
-                    "routing_reason": f"V1.5.3 FinOps budget soft-limit degraded model route to {fallback_tier} tier.",
+                    "degraded_from": routed_model,
+                    "routing_reason": f"V1.5.4 FinOps budget soft-limit degraded model route to {fallback_tier} tier.",
                 }
             if outcome_data.get("require_approval"):
                 approval_gates.append(
@@ -456,8 +473,155 @@ async def execution_plan_step_summaries(session: AsyncSession, run_ids: list[str
         if row.status in {"blocked", "failed"}:
             summary["health"] = "attention"
         elif summary.get("health") != "attention":
-            summary["health"] = "ready"
+            if summary["completed"] == summary["total"] and summary["total"] > 0:
+                summary["health"] = "healthy"
+            else:
+                summary["health"] = "ready"
     return summaries
+
+
+async def sync_execution_plan_on_approval(
+    session: AsyncSession,
+    *,
+    run: object,
+    decision: str,
+    reviewer: str,
+    reason: str,
+) -> None:
+    run_id = getattr(run, "run_id", "")
+    plan = await get_execution_plan_for_run(session, run_id)
+    if plan is None:
+        return
+    steps = await list_execution_plan_steps(session, run_id)
+    now = datetime.now(timezone.utc)
+    step_status = "completed" if decision == "approve_once" else ("blocked" if decision == "deny" else "pending")
+
+    for row in steps:
+        if row.step_type == "approval_gate" or row.step_id == "approval-gate":
+            row.status = step_status
+            if step_status in {"completed", "blocked"}:
+                started = row.started_at
+                if started is not None and started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+                row.finished_at = now
+                row.duration_ms = max(0, int((now - started).total_seconds() * 1000)) if started else 0
+            row.output_summary = f"Approval decision: {decision} by {reviewer} ({reason})."
+            row.error_summary = reason if decision == "deny" else ""
+            CONTROL_PLANE_STEPS_TOTAL.labels(step_type=row.step_type, status=row.status).inc()
+        elif decision == "deny" and row.status in {"planned", "pending"}:
+            row.status = "blocked"
+            row.finished_at = now
+            row.duration_ms = 0
+            row.error_summary = f"Blocked because approval was denied by {reviewer}."
+
+    updated_gates = []
+    for gate in list(plan.approval_gates or []):
+        g = dict(gate)
+        g["status"] = "approved" if decision == "approve_once" else ("denied" if decision == "deny" else "pending")
+        g["reviewer"] = reviewer
+        g["decision_reason"] = reason
+        updated_gates.append(g)
+    plan.approval_gates = updated_gates
+
+    updated_steps_json = []
+    for s in list(plan.steps or []):
+        sd = dict(s)
+        if sd.get("step_type") == "approval_gate" or sd.get("step_id") == "approval-gate":
+            sd["status"] = step_status
+            sd["gates"] = updated_gates
+        elif decision == "deny" and sd.get("status") in {"planned", "pending"}:
+            sd["status"] = "blocked"
+        updated_steps_json.append(sd)
+    plan.steps = updated_steps_json
+    plan.status = "planned" if decision == "approve_once" else ("blocked" if decision == "deny" else "requires_approval")
+
+    summary = dict(getattr(run, "evaluation_summary", None) or {})
+    exec_plan_dict = dict(summary.get("execution_plan") or {})
+    if exec_plan_dict:
+        exec_plan_dict["status"] = plan.status
+        exec_plan_dict["approval_gates"] = plan.approval_gates
+        exec_plan_dict["steps"] = plan.steps
+        summary["execution_plan"] = exec_plan_dict
+        run.evaluation_summary = summary
+
+
+async def sync_execution_plan_on_worker_completion(
+    session: AsyncSession,
+    *,
+    run: object,
+    duration_ms: int = 0,
+    failure_reason: str = "",
+) -> None:
+    run_id = getattr(run, "run_id", "")
+    plan = await get_execution_plan_for_run(session, run_id)
+    if plan is None:
+        return
+    steps = await list_execution_plan_steps(session, run_id)
+    now = datetime.now(timezone.utc)
+    summary = dict(getattr(run, "evaluation_summary", None) or {})
+    transcript = summary.get("execution_event", {}).get("payload", {}).get("tool_transcript", [])
+    eval_payload = summary.get("evaluation_event", {}).get("payload", {})
+    verdict = eval_payload.get("verdict", "pass")
+    final_score = eval_payload.get("final_score", 1.0)
+    exec_output = str(getattr(run, "execution_output", "") or "")
+    run_status = str(getattr(run, "status", "completed") or "completed")
+
+    for row in steps:
+        if row.step_type == "approval_gate" and row.status == "pending" and not failure_reason:
+            row.status = "completed"
+            row.finished_at = now
+            row.duration_ms = 0
+            row.output_summary = "Approval gate satisfied before worker execution."
+        elif row.step_type == "tool_execution":
+            if failure_reason:
+                row.status = "failed"
+                row.finished_at = now
+                row.duration_ms = max(0, duration_ms)
+                row.output_summary = "Tool execution failed in worker."
+                row.error_summary = failure_reason[:256]
+            else:
+                row.status = "completed"
+                row.finished_at = now
+                row.duration_ms = max(1, duration_ms)
+                row.output_summary = f"Completed {len(transcript)} tool call(s). {exec_output[:140]}".strip()
+                row.error_summary = ""
+            CONTROL_PLANE_STEPS_TOTAL.labels(step_type=row.step_type, status=row.status).inc()
+        elif row.step_type == "evaluation":
+            if failure_reason:
+                row.status = "blocked"
+                row.finished_at = now
+                row.duration_ms = 0
+                row.output_summary = "Evaluation skipped due to worker tool execution failure."
+                row.error_summary = failure_reason[:256]
+            else:
+                row.status = "completed"
+                row.finished_at = now
+                row.duration_ms = max(1, duration_ms // 2)
+                row.output_summary = f"Evaluator verdict: {verdict} (final_score={final_score})."
+                row.error_summary = ""
+            CONTROL_PLANE_STEPS_TOTAL.labels(step_type=row.step_type, status=row.status).inc()
+
+    step_status_by_type = {row.step_type: row.status for row in steps}
+    updated_steps_json = []
+    for s in list(plan.steps or []):
+        sd = dict(s)
+        st = sd.get("step_type")
+        if st in step_status_by_type:
+            sd["status"] = step_status_by_type[st]
+        updated_steps_json.append(sd)
+    plan.steps = updated_steps_json
+
+    if failure_reason:
+        plan.status = "failed" if run_status == "failed" else "planned"
+    else:
+        plan.status = "completed" if run_status == "completed" else plan.status
+
+    exec_plan_dict = dict(summary.get("execution_plan") or {})
+    if exec_plan_dict:
+        exec_plan_dict["status"] = plan.status
+        exec_plan_dict["steps"] = plan.steps
+        summary["execution_plan"] = exec_plan_dict
+        run.evaluation_summary = summary
 
 
 def step_to_dict(step: ExecutionPlanStep) -> dict:

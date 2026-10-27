@@ -25,6 +25,7 @@ from app.schemas.agent import AgentConstraints, AgentRequest
 from app.services.audit_log import (
     apply_approval_decision,
     dashboard_summary,
+    expire_stale_approvals,
     get_run,
     governance_summary,
     incidents_for_run,
@@ -38,6 +39,8 @@ from app.services.audit_log import (
     list_worker_attempts,
     observability_summary,
     persist_orchestration_result,
+    requeue_dlq_run,
+    resolve_dlq_run,
 )
 from app.services.orchestrator import AgentOrchestrator
 from app.services.operations import (
@@ -61,7 +64,9 @@ from app.services.control_plane import (
 from app.services.checkpoint import (
     list_replay_attempts,
     list_run_checkpoints,
+    persist_replay_attempt,
     persist_run_checkpoint,
+    resume_run_from_checkpoint,
 )
 from app.services.finops import (
     acknowledge_budget_violation,
@@ -73,6 +78,8 @@ from app.services.finops import (
     list_budget_policies,
     list_budget_violations,
     list_pricing_items,
+    record_checkpoint_usage,
+    record_replay_usage,
     record_submit_usage,
     resolve_budget_violation,
     run_cost_summary,
@@ -745,7 +752,7 @@ async def dashboard_operations_release_gate(
     readiness = await compute_operations_readiness(session, settings=get_settings())
     await persist_release_gate(
         session,
-        release_version=str(form.get("release_version", "v1.5.3")),
+        release_version=str(form.get("release_version", "v1.5.4")),
         created_by=str(form.get("created_by", "dashboard")),
         trace_id=str(getattr(request.state, "trace_id", "")),
         readiness=readiness,
@@ -753,6 +760,115 @@ async def dashboard_operations_release_gate(
     return HTMLResponse(
         '<meta http-equiv="refresh" content="0; url=/dashboard/operations">'
         '<a href="/dashboard/operations">Back to operations</a>'
+    )
+
+
+@router.post("/dashboard/runs/{run_id}/replay", response_class=HTMLResponse)
+async def dashboard_run_replay(
+    run_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    run = await get_run(session, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    plan = await get_execution_plan_for_run(session, run_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Execution plan not found.")
+    steps = await list_execution_plan_steps(session, run_id)
+    attempt = await persist_replay_attempt(
+        session,
+        run=run,
+        plan=plan,
+        steps=steps,
+        mode="dry_run",
+        created_by="dashboard-operator",
+    )
+    await record_replay_usage(session, run=run, plan=plan, attempt=attempt)
+    return HTMLResponse(
+        f'<meta http-equiv="refresh" content="0; url=/dashboard/runs/{run_id}">'
+        f'<a href="/dashboard/runs/{run_id}">Back to run detail</a>'
+    )
+
+
+@router.post("/dashboard/runs/{run_id}/resume", response_class=HTMLResponse)
+async def dashboard_run_resume(
+    request: Request,
+    run_id: str,
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+    event_publisher: EventPublisher = Depends(get_event_publisher),
+):
+    form = await request.form()
+    run = await get_run(session, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    plan = await get_execution_plan_for_run(session, run_id)
+    steps = await list_execution_plan_steps(session, run_id)
+    checkpoint = await resume_run_from_checkpoint(
+        session,
+        run=run,
+        plan=plan,
+        steps=steps,
+        resume_reason=str(form.get("resume_reason", "Resumed from dashboard")),
+        resume_cursor=str(form.get("resume_cursor", "worker_queue")),
+        created_by="dashboard-operator",
+    )
+    await session.refresh(run)
+    await record_checkpoint_usage(session, run=run, plan=plan, checkpoint=checkpoint)
+    await state_store.set_run_state(run.run_id, run.status)
+    event = make_event("agent.requested", run.run_id, {"request": run.request_payload})
+    await event_publisher.publish(get_settings().kafka_request_topic, run.run_id, event)
+    return HTMLResponse(
+        f'<meta http-equiv="refresh" content="0; url=/dashboard/runs/{run_id}">'
+        f'<a href="/dashboard/runs/{run_id}">Back to run detail</a>'
+    )
+
+
+@router.post("/dashboard/worker/dlq/{run_id}/requeue", response_class=HTMLResponse)
+async def dashboard_worker_dlq_requeue(
+    run_id: str,
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+    event_publisher: EventPublisher = Depends(get_event_publisher),
+):
+    run = await requeue_dlq_run(session, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    await state_store.set_run_state(run.run_id, run.status)
+    event = make_event("agent.requested", run.run_id, {"request": run.request_payload})
+    await event_publisher.publish(get_settings().kafka_request_topic, run.run_id, event)
+    return HTMLResponse(
+        '<meta http-equiv="refresh" content="0; url=/dashboard/worker">'
+        '<a href="/dashboard/worker">Back to worker</a>'
+    )
+
+
+@router.post("/dashboard/worker/dlq/{run_id}/resolve", response_class=HTMLResponse)
+async def dashboard_worker_dlq_resolve(
+    request: Request,
+    run_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    form = await request.form()
+    reason = str(form.get("reason", "Resolved from dashboard"))
+    await resolve_dlq_run(session, run_id, reason=reason)
+    return HTMLResponse(
+        '<meta http-equiv="refresh" content="0; url=/dashboard/worker">'
+        '<a href="/dashboard/worker">Back to worker</a>'
+    )
+
+
+@router.post("/dashboard/approvals/expire-stale", response_class=HTMLResponse)
+async def dashboard_expire_stale_approvals(
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+):
+    expired_run_ids = await expire_stale_approvals(session)
+    for rid in expired_run_ids:
+        await state_store.set_run_state(rid, "denied")
+    return HTMLResponse(
+        '<meta http-equiv="refresh" content="0; url=/dashboard/approvals">'
+        '<a href="/dashboard/approvals">Back to approvals</a>'
     )
 
 
@@ -830,6 +946,26 @@ async def submit_playground(
             metadata={
                 "source": "dashboard_playground",
                 "trace_id": str(getattr(request.state, "trace_id", "")),
+                **(
+                    {"provider": str(form.get("provider")).strip()}
+                    if str(form.get("provider", "")).strip()
+                    else {}
+                ),
+                **(
+                    {"model_name": str(form.get("model_name")).strip()}
+                    if str(form.get("model_name", "")).strip()
+                    else {}
+                ),
+                **(
+                    {"pricing_mode": str(form.get("pricing_mode")).strip()}
+                    if str(form.get("pricing_mode", "")).strip()
+                    else {}
+                ),
+                **(
+                    {"project_id": str(form.get("project_id")).strip()}
+                    if str(form.get("project_id", "")).strip()
+                    else {}
+                ),
             },
         )
         disabled_tools = list((await state_store.get_open_breakers(agent_request.allowed_tools)).keys())

@@ -36,6 +36,23 @@
       <label>Max Tool Calls
         <input name="max_tool_calls" type="number" min="0" max="50" value="{{ form.get('max_tool_calls', '8') if form else '8' }}">
       </label>
+      <label>Provider (FinOps Route)
+        <input name="provider" value="{{ form.get('provider', 'internal') if form else 'internal' }}" placeholder="internal / openai / anthropic / google">
+      </label>
+      <label>Model Name
+        <input name="model_name" value="{{ form.get('model_name', 'deterministic-control-plane') if form else 'deterministic-control-plane' }}" placeholder="deterministic-control-plane / gpt-5.4">
+      </label>
+      <label>Pricing Mode
+        <select name="pricing_mode">
+          {% set selected_mode = form.get('pricing_mode', 'standard') if form else 'standard' %}
+          {% for mode in ["standard", "batch", "priority", "flex"] %}
+          <option value="{{ mode }}" {{ "selected" if selected_mode == mode else "" }}>{{ mode }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Project ID
+        <input name="project_id" value="{{ form.get('project_id', '') if form else '' }}" placeholder="optional project_id">
+      </label>
     </div>
     <label style="margin-top: 12px;">Goal
       <input name="goal" value="{{ form.get('goal', 'Summarize the root cause') if form else 'Summarize the root cause' }}">

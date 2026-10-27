@@ -1,7 +1,7 @@
 # Production Runbooks & Incident Response
 
-> **Runbook Version**: `v1.5.3`
-> **Previous Versions**: `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.0.0`
+> **Runbook Version**: `v1.5.4`
+> **Previous Versions**: `v1.5.3`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.0.0`
 
 This operational runbook provides triage instructions, troubleshooting procedures, and incident response playbooks for operators maintaining the **RewardHacking** platform.
 
@@ -49,9 +49,11 @@ docker compose logs --tail=100 -f worker
   - Downstream tool timeouts or persistent network failure.
   - Serialization errors during evaluator execution.
 - **Mitigation Steps**:
-  1. Query DLQ records: `GET /v1/worker/dlq`.
+  1. Query DLQ records: `GET /v1/worker/dlq` or open `/dashboard/worker`.
   2. Inspect the failure reason and tool transcript on the Run Detail page (`/dashboard/runs/{run_id}`).
-  3. If transient tool issues have resolved, resume the run using `POST /v1/runs/{run_id}/resume`.
+  3. If transient tool issues have resolved, click **Requeue Run** on `/dashboard/worker` (`POST /v1/worker/dlq/{run_id}/requeue`) or resume from checkpoint via `/dashboard/runs/{run_id}` (`POST /v1/runs/{run_id}/resume`).
+  4. If the failure is permanently triaged, click **Resolve DLQ** (`POST /v1/worker/dlq/{run_id}/resolve`) to clear the `worker_dlq` readiness gate.
+  5. For stale pending approvals blocking the `expired_approvals` check, click **Expire Stale Approvals** on `/dashboard/approvals` (`POST /v1/approvals/expire-stale`).
 
 ---
 

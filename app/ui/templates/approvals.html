@@ -7,7 +7,12 @@
     <div class="title-note">審核佇列</div>
     <div class="muted">檢視 awaiting approval 與 destructive runs，並送出審核決策。</div>
   </div>
-  <a class="button" href="/dashboard/playground">New Test Run</a>
+  <div style="display:flex; gap:8px; align-items:center;">
+    <form method="post" action="/dashboard/approvals/expire-stale" style="display:inline-block; margin:0;">
+      <button class="button secondary" type="submit">Expire Stale Approvals</button>
+    </form>
+    <a class="button" href="/dashboard/playground">New Test Run</a>
+  </div>
 </div>
 
 <section class="panel">

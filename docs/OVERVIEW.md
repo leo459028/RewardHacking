@@ -1,17 +1,18 @@
 # Project Documentation Overview
 
-> **Current Version**: `v1.5.3`
-> **Previous Version**: `v1.5.2`
+> **Current Version**: `v1.5.4`
+> **Previous Version**: `v1.5.3`
 
 This directory contains the comprehensive technical documentation for the **RewardHacking Guardrail** platform.
 
 ---
 
-## Release Baseline: `v1.5.3`
+## Release Baseline: `v1.5.4`
 
 ### Release Evolution
 
-- **`v1.5.3` (Current)**: Active FinOps Budget Enforcement, Context-Aware Pricing Engine & FinOps Governance Portal. Added pre-execution and runtime budget enforcement (`block`, `require_approval`, `degrade_model`, `warn_only`) across `run`/`tenant`/`workflow`/`user` scopes and `per_run`/`daily`/`monthly` windows, context-tier pricing resolution, cache/batch savings calculation, `/dashboard/admin/finops/budgets` governance portal, violation triage lifecycle (`acknowledge`, `resolve`, `ignore`), stale source guardrails, FinOps Prometheus metrics, and Pydantic V2 `PlainSerializer` zero-warning serialization.
+- **`v1.5.4` (Current)**: Model-Aware FinOps Routing, Step-Level Execution Audit Closure & Interactive Operations Recovery Portal. Added dynamic `provider`/`model_name`/`pricing_mode`/`project_id` routing and catalog pricing in submit/worker flows, `user`/`project`/`model` budget scope isolation, `dry_run_only` enforcement, `failed_retry` cost accounting, automatic `ExecutionPlanStep` lifecycle synchronization (`healthy` plan health), and interactive Run Replay/Resume, Worker DLQ Requeue/Resolve, and Stale Approval TTL sweep endpoints and UI controls.
+- **`v1.5.3` (Historical)**: Active FinOps Budget Enforcement, Context-Aware Pricing Engine & FinOps Governance Portal. Added pre-execution and runtime budget enforcement (`block`, `require_approval`, `degrade_model`, `warn_only`) across `run`/`tenant`/`workflow`/`user` scopes and `per_run`/`daily`/`monthly` windows, context-tier pricing resolution, cache/batch savings calculation, `/dashboard/admin/finops/budgets` governance portal, violation triage lifecycle (`acknowledge`, `resolve`, `ignore`), stale source guardrails, FinOps Prometheus metrics, and Pydantic V2 `PlainSerializer` zero-warning serialization.
 - **`v1.5.2` (Historical)**: Open-Source Readiness, Internationalization & OpenAI Codex for OSS Alignment. Complete documentation rewrite in English, standardized open-source licensing (Apache-2.0), community governance documents (`CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`), automated secret scanning, and operations release gate version synchronization.
 - **`v1.5.1` (Historical)**: Agent FinOps Core / Pricing Import Admin. Expanded schema for pricing, usage, cost, budget, and violation entities. Added official model pricing seed ingestion (`app/seeds/model_pricing_seed.yaml`), dry-run validation, versioned pricing change logs, source document audit trails, and Admin FinOps pricing dashboard.
 - **`v1.5.0` (Historical)**: Agent FinOps Core / Cost Ledger. Introduced `pricing_catalog`, `usage_events`, `cost_events`, `budget_policies`, and `budget_violations`, along with FinOps REST APIs and `/dashboard/costs`.

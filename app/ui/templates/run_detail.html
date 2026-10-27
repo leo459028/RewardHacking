@@ -114,10 +114,19 @@
 {% endif %}
 
 <section class="panel">
-  <h2>Checkpoint / Resume <span class="heading-note">V1.4 recoverable execution</span></h2>
+  <h2>Checkpoint / Resume <span class="heading-note">V1.5.4 recoverable execution</span></h2>
   <p><strong>Checkpoints API</strong> <a href="/v1/runs/{{ run.run_id }}/checkpoints">/v1/runs/{{ run.run_id }}/checkpoints</a></p>
-  <p><strong>Resume API</strong> <code>POST /v1/runs/{{ run.run_id }}/resume</code></p>
-  <p><strong>Replay API</strong> <code>POST /v1/runs/{{ run.run_id }}/replay</code></p>
+  <p><strong>Resume API</strong> <code>POST /v1/runs/{{ run.run_id }}/resume</code> | <strong>Replay API</strong> <code>POST /v1/runs/{{ run.run_id }}/replay</code></p>
+  <div class="form-grid" style="margin-bottom: 12px;">
+    <form method="post" action="/dashboard/runs/{{ run.run_id }}/replay" class="decision-form">
+      <button class="button secondary" type="submit">Trigger Dry-Run Replay</button>
+    </form>
+    <form method="post" action="/dashboard/runs/{{ run.run_id }}/resume" class="decision-form">
+      <input name="resume_reason" value="Operator checkpoint resume" placeholder="Resume reason">
+      <input type="hidden" name="resume_cursor" value="worker_queue">
+      <button class="button" type="submit">Resume from Checkpoint</button>
+    </form>
+  </div>
   <table>
     <thead><tr><th>Checkpoint</th><th>Type</th><th>Status</th><th>Cursor</th><th>Created By</th></tr></thead>
     <tbody>

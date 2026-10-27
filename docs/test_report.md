@@ -1,5 +1,41 @@
 # Test Execution & Verification Report
 
+## 2026-10-27 - v1.5.4 Model-Aware FinOps Routing, Step-Level Execution Audit Closure & Interactive Operations Recovery Portal Verification
+
+- **Version**: `v1.5.4`
+- **Scope of Changes**:
+  1. **Model-Aware FinOps Routing & Catalog Pricing**: Updated `ControlPlanePlanner.plan()`, `/dashboard/playground`, `record_submit_usage()`, and `record_actual_usage()` to dynamically route and price `provider`, `model_name`, `pricing_mode`, `service_tier`, and `project_id` against the 149-entry official model pricing catalog, with automatic fallback model routing on `degrade_model`.
+  2. **Full-Dimensional Budget Isolation, `dry_run_only` & `failed_retry` Accounting**: Added `user`, `project`, and `model` scope enforcement in `evaluate_budget_policies()`, `dry_run_only` enforcement (`forced_dry_run=True`, `finops_budget_dry_run_only`), `cost_type="failed_retry"` accounting on worker failure/DLQ attempts, and `finops_runtime_budget_exceeded` post-execution incident recording.
+  3. **Step-Level Execution Audit Lifecycle Closure (`ExecutionPlanStep`)**: Implemented `sync_execution_plan_on_approval()` and `sync_execution_plan_on_worker_completion()` so `approval-gate`, `tool-execution`, and `evaluation` steps transition to `completed`/`blocked`/`failed` with real `duration_ms` and `output_summary`, reporting `3/3 completed` and `Plan Health: healthy` on `/dashboard/control-plane`.
+  4. **Interactive Recovery, DLQ Self-Healing & Approval TTL Sweep Portal**: Added one-click **Trigger Dry-Run Replay** (`POST /dashboard/runs/{run_id}/replay`) and **Resume from Checkpoint** (`POST /dashboard/runs/{run_id}/resume`) on `/dashboard/runs/{run_id}`, **Requeue Run** / **Resolve DLQ** (`POST /v1/worker/dlq/{run_id}/requeue`, `POST /v1/worker/dlq/{run_id}/resolve`) on `/dashboard/worker`, and **Expire Stale Approvals** (`POST /v1/approvals/expire-stale`) on `/dashboard/approvals`.
+- **UI / Dashboard Verification Endpoints**: `/dashboard`, `/dashboard/playground`, `/dashboard/runs/737a9fad-4d40-49cc-a0e2-9d978e3a4b20`, `/dashboard/control-plane`, `/dashboard/approvals`, `/dashboard/worker`, `/dashboard/costs?tenant_id=finops-qa-tenant`, `/dashboard/admin/finops/pricing`, `/dashboard/admin/finops/pricing/import`, `/dashboard/admin/finops/budgets`, `/dashboard/operations`.
+- **Recorded Live Verification Artifacts**:
+  - Headed Browser E2E Walkthrough (`docs/manual_test.md` via `python scripts/browser_manual_test.py` on Playwright Chromium):
+    - Scenario 1 Low-Risk Run, Dry-Run Replay Trigger & Replay Bundle: `737a9fad-4d40-49cc-a0e2-9d978e3a4b20`
+    - Scenario 2a Classical Chinese Adversarial Run: `8fde31da-3592-478a-8767-e51aba2b2c7c`
+    - Scenario 2b Human Approval Escalated, Approved & Stale Approvals Swept: `cbb2925f-dc99-4c74-b64d-3654e8c0fb9d`
+    - Scenario 3.1 Pricing Seed Dry Run + Apply Import & Pricing Detail Change Log Verified: `/dashboard/admin/finops/pricing/price_23c2b21b47f94c1aae3d72a73c298d25`
+    - Scenario 3.2–3.4 Browser Budget Block Run & Violation Triage (`Acknowledge` -> `Resolve` -> `Disable`): `5e09dfdb-46a3-47f2-b87f-37f28f22c777`
+    - Scenario 4.3 Operations Evidence & Release Gate Snapshot Created: `release_version=v1.5.4`
+    - Section 6 Browser Checklist: `14/14` navigation routes HTTP 200, `0` `0E-8` artifacts, `0` Console errors/warnings, `0` Page errors, `0` failed HTTP requests (`>=400`).
+
+### Test Commands & Actual Execution Results
+
+| Test Command | Actual Result |
+| --- | --- |
+| `python scripts/security_check.py` | Passed: `Running RewardHacking Security & Secret Scan (v1.5.4)... [OK] No sensitive API keys, secrets, or credentials found in git history or working tree.` |
+| `ruff check app tests scripts` | Passed: `All checks passed!` |
+| `git diff --check` | Passed: `0` whitespace errors. |
+| `pytest tests/test_v154_control_plane_finops_closure.py -q -W error::DeprecationWarning` | Passed: `8 passed` (`0 warnings`) covering model-aware pricing, `user`/`project` budget isolation, `dry_run_only`, `failed_retry` cost accounting, `ExecutionPlanStep` lifecycle sync, DLQ requeue/resolve, stale approval TTL sweep, and UI replay/resume. |
+| `pytest -q -W error::DeprecationWarning` | Passed: `91 passed in 46.03s` (`0 warnings`). |
+| `docker compose up -d --build` & `docker compose ps` | Passed: built `rewardhacking-api` and `rewardhacking-worker` images; all 5 containers (`api`, `worker`, `kafka`, `postgres`, `redis`) Up and healthy. |
+| `docker compose exec -T api alembic upgrade head` & `alembic current` | Passed: connected to PostgreSQL, verified `202606010004 (head)`. |
+| `python scripts/browser_manual_test.py` | Passed (`[Browser Mode] headed`): completed all interactive scenarios across `14` Dashboard routes with `0` Console errors, `0` Page errors, `0` HTTP `>=400` responses, and `0` `0E-8` scientific notation artifacts. |
+
+### Limitations & Known Observations
+- The Bounded Executor continues to operate in safe dry-run simulation mode with invocation transcripts; production external shell executions require microVM or isolated container boundaries (planned for `v1.6.0+`).
+- Budget burn-rate forecasting, multi-currency FX conversion (`fx_rate`, `tax_amount`), and CSV/JSON chargeback export are scheduled for `v1.5.5` per `docs/roadmap.md`.
+
 ## 2026-10-27 - v1.5.3 Active FinOps Budget Enforcement, Context-Aware Pricing Engine & FinOps Governance Portal Verification
 
 - **Version**: `v1.5.3`

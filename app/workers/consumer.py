@@ -25,7 +25,10 @@ from app.services.audit_log import (
     update_orchestration_result,
     worker_attempt_count,
 )
-from app.services.control_plane import get_execution_plan_for_run
+from app.services.control_plane import (
+    get_execution_plan_for_run,
+    sync_execution_plan_on_worker_completion,
+)
 from app.services.events import EventPublisher, KafkaEventPublisher
 from app.services.evaluator import Evaluator
 from app.services.finops import record_actual_usage
@@ -168,8 +171,20 @@ async def process_run_by_id(
         else:
             result = _retry_result(run_id, f"Worker retry scheduled: {failure_reason}")
 
+    elapsed_ms = max(1, int((time.perf_counter() - started_at) * 1000))
     updated = await update_orchestration_result(session, run, request, result)
-    await record_actual_usage(session, run=updated, plan=plan)
+    await sync_execution_plan_on_worker_completion(
+        session,
+        run=updated,
+        duration_ms=elapsed_ms,
+        failure_reason=failure_reason,
+    )
+    await record_actual_usage(
+        session,
+        run=updated,
+        plan=plan,
+        is_failed_retry=bool(failure_reason),
+    )
     if failure_reason:
         attempt_status = "dlq" if updated.status == "failed" else "retry_scheduled"
         if attempt_status == "retry_scheduled":
