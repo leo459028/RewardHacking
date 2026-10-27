@@ -4,7 +4,7 @@ import argparse
 import sys
 import time
 
-from playwright.sync_api import sync_playwright
+__test__ = False
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,6 +31,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def run_manual_test_suite(base_url: str = "http://localhost:8000", force_headless: bool = False, slow_mo: int = 100) -> int:
+    from playwright.sync_api import sync_playwright
+
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
 
