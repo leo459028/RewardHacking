@@ -1,6 +1,6 @@
 # Testing Guide & Red-Team Corpus
 
-> **Testing Baseline**: `v1.5.2`  
+> **Testing Baseline**: `v1.5.3`
 > **Test Suite**: `pytest`  
 > **Linter**: `ruff`
 
@@ -25,7 +25,12 @@ ruff check app tests scripts
 
 # Run security secret scan
 python scripts/security_check.py
+
+# Run full interactive browser E2E test suite (requires running server on localhost:8000)
+python scripts/browser_manual_test.py
 ```
+
+> **Mandatory Release Requirement**: Every new version release must update [`docs/manual_test.md`](manual_test.md) and `scripts/browser_manual_test.py` to cover new UI/API capabilities and pass the full browser E2E suite with zero console/page/HTTP errors before sign-off.
 
 ---
 
@@ -49,6 +54,7 @@ python scripts/security_check.py
 | `tests/test_v14_checkpoint_replay.py` | Submit checkpoints, resume checkpoint re-dispatching, dry-run replay attempts without side-effects. |
 | `tests/test_v15_finops_core.py` | Pricing catalog CRUD, immutable usage/cost event ledger, tenant/run cost queries, budget violations. |
 | `tests/test_v151_finops_core.py` | Expanded FinOps schema, model pricing YAML seed parsing, dry-run validation, superseding prices. |
+| `tests/test_v153_finops_governance.py` | Active multi-scope/period budget enforcement (`block`, `require_approval`, `degrade_model`), context-tier pricing, free quota/minimum quantity, cache/batch savings, violation triage lifecycle, manual pricing change logs, stale source guardrails, and zero-warning Pydantic V2 serialization. |
 
 ---
 

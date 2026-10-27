@@ -8,6 +8,7 @@
     <div class="muted">Each applied seed stores source metadata and immutable create/supersede logs.</div>
   </div>
   <div class="inline-form">
+    <a class="button secondary" href="/dashboard/admin/finops/budgets">Budget Policies</a>
     <a class="button secondary" href="/dashboard/admin/finops/pricing">Catalog</a>
     <a class="button secondary" href="/dashboard/admin/finops/pricing/import">Import</a>
   </div>
@@ -67,7 +68,7 @@
         <td>{{ change.change_type }}</td>
         <td>{{ change.pricing_id_old or "-" }}</td>
         <td>{{ change.pricing_id_new or "-" }}</td>
-        <td>{{ change.old_unit_price or "-" }} -> {{ change.new_unit_price or "-" }} {{ change.currency }}</td>
+        <td>{{ (change.old_unit_price|decimal_plain) if change.old_unit_price is not none else "-" }} -&gt; {{ (change.new_unit_price|decimal_plain) if change.new_unit_price is not none else "-" }} {{ change.currency }}</td>
         <td>{{ change.change_reason }}</td>
         <td><a href="{{ change.source_url }}">{{ change.source_url }}</a></td>
         <td>{{ change.changed_by }}<br><span class="muted">{{ change.changed_at }}</span></td>

@@ -1,6 +1,6 @@
 # Database Schema & Audit Models
 
-> **Data Model Version**: `v1.5.2`  
+> **Data Model Version**: `v1.5.3`
 > **ORM**: SQLAlchemy (asyncio)  
 > **Migration Baseline**: Alembic revision `202606010004` (head)
 
@@ -99,4 +99,7 @@ The immutable financial ledger recording deterministic resource consumption and 
 - **`cost_events`**: Computed financial records bound to specific pricing catalog snapshots, guaranteeing historical cost integrity.
 
 ### 8. `BudgetPolicy` (`budget_policies`) & `BudgetViolation` (`budget_violations`)
-Enforces soft and hard expenditure thresholds per run, tenant, or workflow.
+Enforces soft and hard expenditure thresholds across `run`, `tenant`, `workflow`, and `user` scopes and `per_run`, `daily`, and `monthly` periods, with actions (`warn_only`, `require_approval`, `degrade_model`, `block`) and violation lifecycle states (`open`, `acknowledged`, `resolved`, `ignored`).
+
+### 9. `PricingImportBatch` (`pricing_import_batches`), `PricingChangeLog` (`pricing_change_logs`) & `PricingSourceDocument` (`pricing_source_documents`)
+Maintains full audit traceability for pricing catalog seed imports, manual rate adjustments, supersessions, and upstream official pricing source documents.

@@ -1,6 +1,6 @@
 # REST API Specification
 
-> **API Version**: `v1.5.2`  
+> **API Version**: `v1.5.3`
 > **Base Path**: `/v1`  
 > **Interactive Documentation**: `http://localhost:8000/docs` (Swagger UI) or `http://localhost:8000/redoc` (ReDoc)
 
@@ -106,10 +106,15 @@ All REST API endpoints are exposed under the `/v1` route prefix. The service ret
 | `POST` | `/v1/usage-events` | Ingests a usage event and generates immutable cost event | `operator`, `admin` |
 | `GET` | `/v1/usage-events/runs/{run_id}` | Retrieves usage event ledger for a run | `viewer`, `operator`, `admin` |
 | `GET` | `/v1/cost/runs/{run_id}` | Queries estimated vs. actual cost summary for a run | `viewer`, `operator`, `admin` |
-| `GET` | `/v1/cost/tenants/{tenant_id}` | Queries tenant cost totals, top models, and workflow costs | `viewer`, `operator`, `admin` |
-| `GET` | `/v1/budgets` | Lists budget policies and limit thresholds | `viewer`, `operator`, `admin` |
-| `POST` | `/v1/budgets` | Configures new budget policy | `admin`, `finops_admin` |
-| `GET` | `/v1/budget-violations` | Queries budget overrun violations | `viewer`, `operator`, `admin` |
+| `GET` | `/v1/cost/tenants/{tenant_id}` | Queries tenant cost totals, top models, workflow costs, and cache/batch savings | `viewer`, `operator`, `admin` |
+| `GET` | `/v1/budgets` | Lists budget policies and limit thresholds (`scope_type`, `scope_id`, `active_only`) | `viewer`, `operator`, `admin` |
+| `POST` | `/v1/budgets` | Configures new budget policy or supersedes existing policy (`supersede_existing`) | `admin`, `finops_admin` |
+| `GET` | `/v1/budgets/{budget_id}` | Retrieves details for a specific budget policy | `viewer`, `operator`, `admin` |
+| `POST` | `/v1/budgets/{budget_id}/disable` | Soft-disables an active budget policy | `admin`, `finops_admin` |
+| `GET` | `/v1/budget-violations` | Queries budget overrun violations (`tenant_id`, `run_id`, `status`, `severity`) | `viewer`, `operator`, `admin` |
+| `GET` | `/v1/budget-violations/{violation_id}` | Retrieves details for a specific budget violation | `viewer`, `operator`, `admin` |
+| `POST` | `/v1/budget-violations/{violation_id}/acknowledge` | Transitions a budget violation to `acknowledged` | `reviewer`, `admin`, `finops_admin` |
+| `POST` | `/v1/budget-violations/{violation_id}/resolve` | Transitions a budget violation to `resolved` or `ignored` | `reviewer`, `admin`, `finops_admin` |
 
 ---
 

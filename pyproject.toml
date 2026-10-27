@@ -1,6 +1,6 @@
 [project]
 name = "reward-hacking-guardrail"
-version = "1.5.2"
+version = "1.5.3"
 description = "Production-grade runtime guardrails, human-in-the-loop governance, and FinOps for autonomous AI agents"
 readme = "README.md"
 license = {text = "Apache-2.0"}

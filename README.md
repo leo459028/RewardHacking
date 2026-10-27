@@ -24,17 +24,18 @@ Modern AI agents do not merely generate text—they read repositories, mutate co
 
 ---
 
-## Current Release: `v1.5.2`
+## Current Release: `v1.5.3`
 
-### V1.5.2 Open-Source Readiness & Internationalization (Current)
-`v1.5.2` prepares the repository for full open-source distribution and aligns with the **OpenAI Codex for Open Source** program:
-- **Full English Internationalization**: Complete English rewrite of the documentation suite (`docs/`), technical specifications, and developer guides.
-- **Open-Source Governance & Community Standards**: Addition of OSI-compliant Apache-2.0 `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` (Contributor Covenant v2.1), `SECURITY.md`, PR/Issue templates, and Dependabot automation.
-- **Security & Secret Cleansing**: Verified clean git commit history (zero leaked credentials) and comprehensive `.env.example` documentation with automated pre-commit scanning.
-- **Release Gate Synchronization**: Operations gate and FastAPI application version synchronized to `v1.5.2`.
+### V1.5.3 Active FinOps Budget Enforcement, Context-Aware Pricing Engine & FinOps Governance Portal (Current)
+`v1.5.3` upgrades the Agent FinOps Core from passive cost accounting to an **Active Pre-Execution & Runtime FinOps Enforcement Engine**:
+- **Active Multi-Scope & Multi-Period Budget Enforcement**: Supports `run`, `tenant`, `workflow`, and `user` budget policies across `per_run`, `daily`, and `monthly` periods with `block` (fail-closed `denied`), `require_approval` (`awaiting_approval`), `degrade_model` (`budget_model_degraded` fallback tier routing), and `warn_only` actions.
+- **Context-Aware Tiered Pricing, Free Quota & Savings Accounting**: Resolves `context_tier` (`<=128k`, `>128k`, `<=200k`, `>200k`), `minimum_billable_quantity`, `free_quota_Included`, and computes `cache_savings` and `batch_savings`.
+- **Budget Governance Portal & Violation Triage**: Dedicated `/dashboard/admin/finops/budgets` portal and inline violation triage (`acknowledge`, `resolve`, `ignore`) on `/dashboard/costs`, plus stale pricing source guardrails (`PRICING_SOURCE_STALE_DAYS`).
+- **Zero-Warning Pydantic V2 Serialization & FinOps Observability**: Replaced deprecated `json_encoders` with `PlainSerializer` (`0 warnings` across full pytest suite), normalized plain decimal rendering across Dashboard views, and added 4 FinOps Prometheus metrics (`agent_finops_*`) and Operations readiness checks.
 
 ### Release History & Evolutionary Context
 
+- **`v1.5.2` (Historical)**: Open-Source Readiness, Full English Internationalization, Apache-2.0 licensing, community governance standards (`CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`), and automated secret scanning.
 - **`v1.5.1` (Historical)**: Added official model pricing catalog seed ingestion (`app/seeds/model_pricing_seed.yaml`), dry-run validation, versioned pricing change logs, source document audit trails, and Admin FinOps pricing management (`/dashboard/admin/finops/pricing`).
 - **`v1.5.0` (Historical)**: Introduced Agent FinOps Core / Cost Ledger (`pricing_catalog`, `usage_events`, `cost_events`, `budget_policies`, `budget_violations`), cost tracking across runs and tenants, and `/dashboard/costs`.
 - **`v1.4.0` (Historical)**: Introduced Checkpoint / Resume / Replay MVP, enabling submit checkpoints, resume checkpoints with worker re-dispatch, and safe dry-run replay attempts.
@@ -225,6 +226,7 @@ Comprehensive technical documentation is maintained under the [`docs/`](docs/) d
 - [Deployment & Production Hardening](docs/deployment.md)
 - [Developer Guide & Local Setup](docs/development.md)
 - [Testing Guide & Red-Team Corpus](docs/testing_guide.md)
+- [Manual QA & Browser Testing Guide](docs/manual_test.md)
 - [Production Runbooks & Incident Response](docs/runbook.md)
 - [Observability, Metrics & SLOs](docs/observability.md)
 - [Kafka Topics & Event Contracts](docs/kafka_topics.md)

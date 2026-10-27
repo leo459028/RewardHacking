@@ -1,6 +1,6 @@
 # Project Roadmap: Evolutionary Milestones
 
-> **Roadmap Baseline**: `v1.5.2`  
+> **Roadmap Baseline**: `v1.5.3`
 > **Status**: Active Open-Source Track  
 > **Next Target**: `v1.6.0` (Safe MCP Gateway & Token Broker)
 
@@ -26,18 +26,19 @@ This roadmap outlines the past development trajectory and forward-looking engine
 | `v1.4.0` | Completed | Checkpoint / Resume / Replay MVP | Submit checkpoints, resume checkpoint re-dispatching, and non-destructive dry-run replay attempts. |
 | `v1.5.0` | Completed | Agent FinOps Core / Cost Ledger | Standardized model pricing catalog, immutable usage/cost ledger, and budget violation tracking. |
 | `v1.5.1` | Completed | Pricing Seed Importer & Admin UI | Ingestion of official model pricing YAML seeds, dry-run validation, and Admin FinOps pricing portal. |
-| `v1.5.2` | **Current** | **Open-Source & Codex OSS Baseline** | Full English internationalization, Apache-2.0 licensing, community governance standards, secret scan automation. |
+| `v1.5.2` | Completed | Open-Source & Codex OSS Baseline | Full English internationalization, Apache-2.0 licensing, community governance standards, secret scan automation. |
+| `v1.5.3` | **Current** | **Active FinOps Governance & Budget Enforcement** | Multi-scope/period active budget enforcement (`block`, `require_approval`, `degrade_model`), context-tier pricing, savings accounting, and FinOps Budget Governance Portal. |
 | `v1.6.0+`| Planned | Safe MCP Gateway & Token Broker | Safe Model Context Protocol (MCP) gateway, dynamic token brokers, microVM tool sandboxing (gVisor). |
 
 ---
 
-## Current Release: `v1.5.2` Open-Source Distribution
+## Current Release: `v1.5.3` Active FinOps Governance & Budget Enforcement
 
-The `v1.5.2` milestone prepares the project for global open-source adoption and aligns with the **OpenAI Codex for Open Source** program:
-1. **Full English Technical Documentation**: Complete rewrite of the entire `docs/` hierarchy and root `README.md`.
-2. **Community Governance Standards**: Formal adoption of Apache License 2.0, `CONTRIBUTING.md`, Contributor Covenant `CODE_OF_CONDUCT.md` v2.1, and responsible disclosure `SECURITY.md`.
-3. **Automated Secret Scanning**: Integration of `scripts/security_check.py` and GitHub Actions CI checks to prevent credential leakage.
-4. **Operations Gate Version Bump**: Operations release gate default set to `v1.5.2`.
+The `v1.5.3` milestone upgrades Agent FinOps Core from passive cost tracking into an active pre-execution and runtime governance engine:
+1. **Active Multi-Scope & Multi-Period Budget Enforcement**: Enforces `run`, `tenant`, `workflow`, and `user` budgets across `per_run`, `daily`, and `monthly` windows with `block`, `require_approval`, `degrade_model`, and `warn_only` actions.
+2. **Context-Aware Tiered Pricing & Savings Engine**: Evaluates `context_tier`, `minimum_billable_quantity`, `free_quota_Included`, and calculates `cache_savings` and `batch_savings`.
+3. **FinOps Budget Governance Portal & Violation Triage**: Provides `/dashboard/admin/finops/budgets`, violation `acknowledge`/`resolve`/`ignore` actions, manual pricing change logs, and stale pricing source warnings.
+4. **Zero-Warning Pydantic V2 Serialization & FinOps Observability**: Eliminates Pydantic V2 deprecation warnings via `PlainSerializer`, normalizes plain decimal formatting across UI templates, and adds FinOps Prometheus metrics and Operations readiness checks.
 
 ---
 

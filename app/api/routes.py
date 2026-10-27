@@ -67,7 +67,9 @@ from app.schemas.finops import (
     BudgetPolicyCreateRequest,
     BudgetPolicyRecord,
     BudgetPolicyUpdateRequest,
+    BudgetViolationAcknowledgeRequest,
     BudgetViolationRecord,
+    BudgetViolationResolveRequest,
     CostEventRecord,
     PricingCatalogCreateRequest,
     PricingCatalogRecord,
@@ -150,11 +152,15 @@ from app.services.checkpoint import (
     resume_run_from_checkpoint,
 )
 from app.services.finops import (
+    acknowledge_budget_violation,
     budget_to_dict,
     cost_to_dict,
     create_budget_policy,
     create_pricing_item,
+    disable_budget_policy,
     disable_pricing_item,
+    get_budget_policy,
+    get_budget_violation,
     get_pricing_item,
     list_budget_policies,
     list_budget_violations,
@@ -166,6 +172,7 @@ from app.services.finops import (
     record_replay_usage,
     record_submit_usage,
     record_usage_event,
+    resolve_budget_violation,
     run_cost_summary,
     tenant_cost_summary,
     update_budget_policy,
@@ -426,6 +433,8 @@ def _run_cost_response(summary) -> RunCostSummaryResponse:
         replay_cost=summary.replay_cost,
         resume_incremental_cost=summary.resume_incremental_cost,
         failed_retry_cost=summary.failed_retry_cost,
+        cache_savings=summary.cache_savings,
+        batch_savings=summary.batch_savings,
         usage_events=[_usage_record(item) for item in summary.usage_events],
         cost_events=[_cost_record(item) for item in summary.cost_events],
     )
@@ -839,7 +848,7 @@ async def patch_pricing_catalog_item(
     session: AsyncSession = Depends(get_session),
 ):
     require_role(auth_context, "admin")
-    item = await update_pricing_item(session, pricing_id, payload)
+    item = await update_pricing_item(session, pricing_id, payload, updated_by=_actor(auth_context))
     if item is None:
         raise HTTPException(status_code=404, detail="Pricing item not found.")
     return _pricing_record(item)
@@ -852,7 +861,7 @@ async def delete_pricing_catalog_item(
     session: AsyncSession = Depends(get_session),
 ):
     require_role(auth_context, "admin")
-    item = await disable_pricing_item(session, pricing_id)
+    item = await disable_pricing_item(session, pricing_id, updated_by=_actor(auth_context))
     if item is None:
         raise HTTPException(status_code=404, detail="Pricing item not found.")
     return _pricing_record(item)
@@ -894,7 +903,13 @@ async def admin_dry_run_pricing_import(
 ):
     _require_finops_reviewer(auth_context)
     seed = load_pricing_seed(payload.file_path)
-    report = await dry_run_pricing_seed(session, seed, created_by=payload.created_by or _actor(auth_context))
+    report = await dry_run_pricing_seed(
+        session,
+        seed,
+        created_by=payload.created_by or _actor(auth_context),
+        strict=payload.strict,
+        allow_warnings=payload.allow_warnings,
+    )
     return PricingImportReportResponse(**report.to_dict())
 
 
@@ -911,6 +926,8 @@ async def admin_apply_pricing_import(
         seed,
         created_by=payload.created_by or _actor(auth_context),
         base_currency=payload.base_currency,
+        strict=payload.strict,
+        allow_warnings=payload.allow_warnings,
     )
     return PricingImportReportResponse(**report.to_dict())
 
@@ -979,7 +996,7 @@ async def admin_patch_pricing_item(
     session: AsyncSession = Depends(get_session),
 ):
     _require_finops_admin(auth_context)
-    item = await update_pricing_item(session, pricing_id, payload)
+    item = await update_pricing_item(session, pricing_id, payload, updated_by=_actor(auth_context))
     if item is None:
         raise HTTPException(status_code=404, detail="Pricing item not found.")
     return _pricing_record(item)
@@ -1108,10 +1125,24 @@ async def post_budget_policy(
     auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
-    require_role(auth_context, "admin")
+    require_role(auth_context, "admin", "finops_admin", "super_admin")
     tenant_id = _query_tenant(payload.tenant_id or "default", auth_context) or payload.tenant_id or "default"
     payload = payload.model_copy(update={"tenant_id": tenant_id})
     return _budget_record(await create_budget_policy(session, payload))
+
+
+@router.get("/budgets/{budget_id}", response_model=BudgetPolicyRecord)
+async def get_budget_policy_by_id(
+    budget_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    item = await get_budget_policy(session, budget_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Budget policy not found.")
+    _query_tenant(item.tenant_id, auth_context)
+    return _budget_record(item)
 
 
 @router.patch("/budgets/{budget_id}", response_model=BudgetPolicyRecord)
@@ -1121,7 +1152,7 @@ async def patch_budget_policy(
     auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
-    require_role(auth_context, "admin")
+    require_role(auth_context, "admin", "finops_admin", "super_admin")
     item = await update_budget_policy(session, budget_id, payload)
     if item is None:
         raise HTTPException(status_code=404, detail="Budget policy not found.")
@@ -1129,10 +1160,26 @@ async def patch_budget_policy(
     return _budget_record(item)
 
 
+@router.post("/budgets/{budget_id}/disable", response_model=BudgetPolicyRecord)
+async def post_disable_budget_policy(
+    budget_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin", "finops_admin", "super_admin")
+    existing = await get_budget_policy(session, budget_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Budget policy not found.")
+    _query_tenant(existing.tenant_id, auth_context)
+    item = await disable_budget_policy(session, budget_id)
+    return _budget_record(item)
+
+
 @router.get("/budget-violations", response_model=list[BudgetViolationRecord])
 async def get_budget_violations(
     tenant_id: str | None = None,
     run_id: str | None = None,
+    resolution_status: str | None = None,
     limit: int = Query(default=100, ge=1, le=500),
     auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
@@ -1141,8 +1188,71 @@ async def get_budget_violations(
     tenant_id = _query_tenant(tenant_id, auth_context)
     return [
         _violation_record(item)
-        for item in await list_budget_violations(session, tenant_id=tenant_id, run_id=run_id, limit=limit)
+        for item in await list_budget_violations(
+            session,
+            tenant_id=tenant_id,
+            run_id=run_id,
+            resolution_status=resolution_status,
+            limit=limit,
+        )
     ]
+
+
+@router.get("/budget-violations/{violation_id}", response_model=BudgetViolationRecord)
+async def get_budget_violation_by_id(
+    violation_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    item = await get_budget_violation(session, violation_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Budget violation not found.")
+    _query_tenant(item.tenant_id, auth_context)
+    return _violation_record(item)
+
+
+@router.post("/budget-violations/{violation_id}/acknowledge", response_model=BudgetViolationRecord)
+async def post_acknowledge_budget_violation(
+    violation_id: str,
+    payload: BudgetViolationAcknowledgeRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "operator", "reviewer", "finops_admin", "tenant_admin", "super_admin", "admin")
+    existing = await get_budget_violation(session, violation_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Budget violation not found.")
+    _query_tenant(existing.tenant_id, auth_context)
+    item = await acknowledge_budget_violation(
+        session,
+        violation_id,
+        resolved_by=payload.acknowledged_by or payload.resolved_by or _actor(auth_context),
+        notes=payload.note or payload.notes,
+    )
+    return _violation_record(item)
+
+
+@router.post("/budget-violations/{violation_id}/resolve", response_model=BudgetViolationRecord)
+async def post_resolve_budget_violation(
+    violation_id: str,
+    payload: BudgetViolationResolveRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "finops_admin", "super_admin", "admin")
+    existing = await get_budget_violation(session, violation_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Budget violation not found.")
+    _query_tenant(existing.tenant_id, auth_context)
+    item = await resolve_budget_violation(
+        session,
+        violation_id,
+        resolution_status=payload.resolution_status,
+        resolved_by=payload.resolved_by or _actor(auth_context),
+        notes=payload.resolution_note or payload.note or payload.notes,
+    )
+    return _violation_record(item)
 
 
 @router.post("/agent/submit", response_model=AgentResponse)
@@ -1244,7 +1354,7 @@ async def submit_agent_request(
             resume_cursor=_resume_cursor_for_status(run.status),
             created_by=_actor(auth_context),
         )
-        await record_submit_usage(session, run=run, plan=plan)
+        await record_submit_usage(session, run=run, plan=plan, result=result)
     await state_store.set_run_state(result.response.run_id, result.response.status)
     if result.response.status == "queued":
         event = make_event(
@@ -1364,7 +1474,7 @@ async def submit_agent_request_with_details(
             resume_cursor=_resume_cursor_for_status(run.status),
             created_by=_actor(auth_context),
         )
-        await record_submit_usage(session, run=run, plan=plan)
+        await record_submit_usage(session, run=run, plan=plan, result=result)
     await state_store.set_run_state(result.response.run_id, result.response.status)
     if result.response.status == "queued":
         event = make_event(
@@ -1698,6 +1808,7 @@ async def get_observability_summary(
         "approvals": summary.approvals,
         "evaluator": summary.evaluator,
         "slo": summary.slo,
+        "finops": summary.finops,
     }
 
 

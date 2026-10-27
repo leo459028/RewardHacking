@@ -1,6 +1,6 @@
 # Observability, Metrics & SLOs
 
-> **Observability Baseline**: `v1.5.2`  
+> **Observability Baseline**: `v1.5.3`
 > **Metrics Engine**: Prometheus Client  
 > **Endpoint**: `GET /v1/metrics`
 
@@ -25,6 +25,10 @@ RewardHacking provides deep observability across API gateways, background worker
 | `agent_worker_dlq_total` | Counter | None | Total exhausted tasks routed to the Dead Letter Queue |
 | `agent_evaluator_verdicts_total`| Counter | `verdict` | Evaluation outcome counts (`pass`, `review`) |
 | `agent_incidents_total` | Counter | `severity`, `code` | Security incident creation count partitioned by severity |
+| `agent_finops_usage_events_total` | Counter | `provider`, `model`, `resource_type`, `phase` | FinOps usage events ingested by provider, model, resource type, and phase |
+| `agent_finops_cost_usd_total` | Counter | `tenant_id`, `provider`, `model`, `phase` | Cumulative FinOps expenditure in USD partitioned by tenant, provider, model, and phase |
+| `agent_finops_budget_violations_total` | Counter | `scope_type`, `severity`, `action_taken` | Triggered FinOps budget violations partitioned by scope, severity, and enforcement action |
+| `agent_finops_pricing_imports_total` | Counter | `mode`, `status` | Pricing catalog import validations and applications (`dry_run`, `apply`) |
 
 ---
 

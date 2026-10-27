@@ -32,20 +32,24 @@
     .sidebar {
       background: #17202b;
       color: #eef4f3;
-      padding: 22px 18px;
+      padding: 18px 16px;
       position: sticky;
       top: 0;
       height: 100vh;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: #344054 #17202b;
     }
-    .brand { font-size: 18px; font-weight: 700; line-height: 1.2; margin-bottom: 24px; }
+    .brand { font-size: 18px; font-weight: 700; line-height: 1.2; margin-bottom: 16px; }
     .brand span { display: block; color: #9fb7b4; font-size: 12px; font-weight: 600; margin-top: 4px; }
-    .nav { display: grid; gap: 6px; }
+    .nav { display: grid; gap: 4px; }
     .nav a {
       border-radius: 6px;
       color: #cdd7d6;
       display: block;
       font-size: 14px;
-      padding: 10px 12px;
+      padding: 8px 12px;
     }
     .nav a.active, .nav a:hover { background: #23313e; color: #ffffff; }
     main { padding: 26px 30px 40px; }

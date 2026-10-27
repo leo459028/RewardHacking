@@ -8,6 +8,7 @@
     <div class="muted">Dry-run first, then apply versioned pricing rows with audit records.</div>
   </div>
   <div class="inline-form">
+    <a class="button secondary" href="/dashboard/admin/finops/budgets">Budget Policies</a>
     <a class="button secondary" href="/dashboard/admin/finops/pricing">Catalog</a>
     <a class="button secondary" href="/dashboard/admin/finops/pricing/sources">Source Audit</a>
   </div>
@@ -19,11 +20,19 @@
     <label>File Path
       <input name="file_path" value="{{ file_path }}" placeholder="app/seeds/model_pricing_seed.yaml">
     </label>
-    <label>&nbsp;
-      <button class="button secondary" type="submit" name="mode" value="dry_run">Dry Run</button>
+    <label class="checkline">
+      <input type="checkbox" name="strict">
+      Strict mode
+    </label>
+    <label class="checkline">
+      <input type="checkbox" name="allow_warnings">
+      Allow warnings
     </label>
     <label>&nbsp;
-      <button class="button" type="submit" name="mode" value="apply">Apply Import</button>
+      <div class="inline-form">
+        <button class="button secondary" type="submit" name="mode" value="dry_run">Dry Run</button>
+        <button class="button" type="submit" name="mode" value="apply">Apply Import</button>
+      </div>
     </label>
   </form>
 </section>
@@ -47,6 +56,7 @@
       <tr><th>Source Hash</th><td>{{ report.source_file_hash }}</td></tr>
       <tr><th>Invalid Rows</th><td>{{ report.invalid_rows|length }}</td></tr>
       <tr><th>Warnings</th><td>{{ report.warnings|length }}</td></tr>
+      <tr><th>Stale Sources</th><td>{{ report.stale_sources|length }}</td></tr>
       <tr><th>Missing Optional Fields</th><td>{{ report.missing_optional_fields|length }}</td></tr>
       <tr><th>Duplicate Keys</th><td>{{ report.duplicate_keys|length }}</td></tr>
       <tr><th>Unsupported Enums</th><td>{{ report.unsupported_enum_values|length }}</td></tr>

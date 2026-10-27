@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}Admin FinOps | Budget Policies{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Budget Policies</h1>
+    <div class="title-note">Dashboard > Admin > FinOps > Budgets</div>
+    <div class="muted">Active FinOps budget enforcement across run, tenant, workflow, project, model, and tool scopes.</div>
+  </div>
+  <div class="inline-form">
+    <a class="button secondary" href="/dashboard/admin/finops/pricing">Pricing Catalog</a>
+    <a class="button secondary" href="/dashboard/admin/finops/pricing/import">Import</a>
+    <a class="button secondary" href="/dashboard/admin/finops/pricing/sources">Source Audit</a>
+    <a class="button secondary" href="/dashboard/costs">Tenant Costs</a>
+  </div>
+</div>
+
+<section class="panel">
+  <h2>Create Budget Policy <span class="heading-note">新增預算治理政策</span></h2>
+  <form method="post" action="/dashboard/admin/finops/budgets" class="form-grid">
+    <label>Policy Name
+      <input name="name" placeholder="Tenant Monthly Hard Gate" required>
+    </label>
+    <label>Tenant ID
+      <input name="tenant_id" value="{{ tenant_id or 'default' }}" placeholder="default">
+    </label>
+    <label>Scope Type
+      <select name="scope_type">
+        <option value="tenant">tenant</option>
+        <option value="run">run</option>
+        <option value="workflow">workflow</option>
+        <option value="project">project</option>
+        <option value="model">model</option>
+        <option value="tool">tool</option>
+      </select>
+    </label>
+    <label>Scope ID
+      <input name="scope_id" value="default" placeholder="default">
+    </label>
+    <label>Period
+      <select name="period">
+        <option value="per_run">per_run</option>
+        <option value="daily">daily</option>
+        <option value="weekly">weekly</option>
+        <option value="monthly" selected>monthly</option>
+        <option value="quarterly">quarterly</option>
+        <option value="yearly">yearly</option>
+      </select>
+    </label>
+    <label>Soft Limit Amount (USD)
+      <input name="soft_limit_amount" placeholder="0.00050000">
+    </label>
+    <label>Hard Limit Amount (USD)
+      <input name="hard_limit_amount" value="0.00100000" required>
+    </label>
+    <label>Fallback Model Tier
+      <select name="fallback_model_tier">
+        <option value="">(none)</option>
+        <option value="economy">economy</option>
+        <option value="balanced">balanced</option>
+      </select>
+    </label>
+    <label>Actions on Soft Limit
+      <input name="actions_on_soft_limit" value="warn,record_violation,degrade_model">
+    </label>
+    <label>Actions on Hard Limit
+      <input name="actions_on_hard_limit" value="record_violation,fail_closed">
+    </label>
+    <label>Currency
+      <input name="currency" value="USD">
+    </label>
+    <label>&nbsp;
+      <button class="button" type="submit">Create Budget Policy</button>
+    </label>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Budget Policies <span class="heading-note">現有預算政策</span></h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Budget ID</th>
+        <th>Name</th>
+        <th>Scope</th>
+        <th>Period</th>
+        <th>Soft Limit</th>
+        <th>Hard Limit</th>
+        <th>Actions (Soft / Hard)</th>
+        <th>Fallback Tier</th>
+        <th>Status</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for budget in budgets %}
+      <tr>
+        <td>{{ budget.budget_id }}</td>
+        <td>{{ budget.name }}<br><span class="muted">tenant={{ budget.tenant_id }}</span></td>
+        <td>{{ budget.scope_type }}<br><span class="muted">{{ budget.scope_id }}</span></td>
+        <td>{{ budget.period }}</td>
+        <td>{{ (budget.soft_limit_amount|decimal_plain) if budget.soft_limit_amount is not none else "-" }} {{ budget.currency }}</td>
+        <td>{{ budget.hard_limit_amount|decimal_plain }} {{ budget.currency }}</td>
+        <td>
+          soft: {{ ", ".join(budget.actions_on_soft_limit or []) }}<br>
+          hard: {{ ", ".join(budget.actions_on_hard_limit or []) }}
+        </td>
+        <td>{{ budget.fallback_model_tier or "-" }}</td>
+        <td><span class="status {{ 'completed' if budget.is_active else 'denied' }}">{{ "active" if budget.is_active else "disabled" }}</span></td>
+        <td>
+          {% if budget.is_active %}
+          <form method="post" action="/dashboard/admin/finops/budgets/{{ budget.budget_id }}/disable">
+            <button class="button danger" type="submit">Disable</button>
+          </form>
+          {% else %}
+          <span class="muted">Disabled</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="10" class="muted">No budget policies configured.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Recent Budget Violations <span class="heading-note">最新預算違規紀錄</span></h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Violation</th>
+        <th>Run</th>
+        <th>Budget</th>
+        <th>Type / Severity</th>
+        <th>Decision</th>
+        <th>Spend / Limit</th>
+        <th>Resolution</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for v in violations %}
+      <tr>
+        <td>{{ v.violation_id }}</td>
+        <td><a href="/dashboard/runs/{{ v.run_id }}">{{ v.run_id }}</a></td>
+        <td>{{ v.budget_id }}</td>
+        <td>{{ v.violation_type }}<br><span class="muted">{{ v.severity }}</span></td>
+        <td>{{ v.decision }}<br><span class="muted">{{ v.action_taken }}</span></td>
+        <td>{{ v.current_spend|decimal_plain }} / {{ v.threshold_amount|decimal_plain }} {{ v.currency }}</td>
+        <td>{{ v.resolution_status }}<br><span class="muted">{{ v.resolved_by or "-" }}</span></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="muted">No budget violations recorded.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

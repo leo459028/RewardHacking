@@ -16,6 +16,11 @@
   <div class="stat"><div class="stat-label">Approval Pending</div><div class="stat-value">{{ summary.approvals.pending }}</div></div>
   <div class="stat"><div class="stat-label">Eval Pass</div><div class="stat-value">{{ summary.evaluator.pass }}</div></div>
   <div class="stat"><div class="stat-label">Eval Review</div><div class="stat-value">{{ summary.evaluator.review }}</div></div>
+  {% if summary.finops %}
+  <div class="stat"><div class="stat-label">FinOps Cost Events</div><div class="stat-value">{{ summary.finops.cost_events }}</div></div>
+  <div class="stat"><div class="stat-label">Open Budget Violations</div><div class="stat-value">{{ summary.finops.open_violations }}</div></div>
+  <div class="stat"><div class="stat-label">Budget Blocked Runs</div><div class="stat-value">{{ summary.finops.budget_blocked_runs }}</div></div>
+  {% endif %}
 </section>
 
 <section class="panel">

@@ -3,13 +3,18 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, model_validator
+
+SerializedDecimal = Annotated[
+    Decimal,
+    PlainSerializer(lambda v: format(v, "f"), return_type=str, when_used="json"),
+]
 
 
 def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc).replace(microsecond=0)
 
 
 class Provider(str, Enum):
@@ -192,7 +197,7 @@ class CostType(str, Enum):
 
 
 class FinOpsBaseModel(BaseModel):
-    model_config = ConfigDict(use_enum_values=True, json_encoders={Decimal: str})
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class PricingCatalogCreateRequest(FinOpsBaseModel):
@@ -214,20 +219,20 @@ class PricingCatalogCreateRequest(FinOpsBaseModel):
     service_tier: str = "standard"
     token_type: TokenType = TokenType.not_applicable
     price_unit: PriceUnit
-    unit_price: Decimal = Field(ge=0)
+    unit_price: SerializedDecimal = Field(ge=0)
     currency: str = Field(default="USD", min_length=1, max_length=8)
     tax_included: bool = False
-    discount_rate: Decimal = Field(default=Decimal("0"), ge=0)
-    multiplier: Decimal = Field(default=Decimal("1"), ge=0)
-    minimum_billable_quantity: Decimal = Field(default=Decimal("0"), ge=0)
-    free_quota_quantity: Decimal = Field(default=Decimal("0"), ge=0)
+    discount_rate: SerializedDecimal = Field(default=Decimal("0"), ge=0)
+    multiplier: SerializedDecimal = Field(default=Decimal("1"), ge=0)
+    minimum_billable_quantity: SerializedDecimal = Field(default=Decimal("0"), ge=0)
+    free_quota_quantity: SerializedDecimal = Field(default=Decimal("0"), ge=0)
     free_quota_period: str = ""
     input_threshold_tokens_min: int | None = None
     input_threshold_tokens_max: int | None = None
     context_window_tokens: int | None = None
     max_output_tokens: int | None = None
     cache_ttl_seconds: int | None = None
-    cache_storage_unit_price: Decimal = Field(default=Decimal("0"), ge=0)
+    cache_storage_unit_price: SerializedDecimal = Field(default=Decimal("0"), ge=0)
     supports_cache: bool | None = None
     supports_batch: bool | None = None
     supports_tools: bool | None = None
@@ -273,20 +278,20 @@ class PricingCatalogUpdateRequest(FinOpsBaseModel):
     service_tier: str | None = None
     token_type: TokenType | None = None
     price_unit: PriceUnit | None = None
-    unit_price: Decimal | None = Field(default=None, ge=0)
+    unit_price: SerializedDecimal | None = Field(default=None, ge=0)
     currency: str | None = None
     tax_included: bool | None = None
-    discount_rate: Decimal | None = Field(default=None, ge=0)
-    multiplier: Decimal | None = Field(default=None, ge=0)
-    minimum_billable_quantity: Decimal | None = Field(default=None, ge=0)
-    free_quota_quantity: Decimal | None = Field(default=None, ge=0)
+    discount_rate: SerializedDecimal | None = Field(default=None, ge=0)
+    multiplier: SerializedDecimal | None = Field(default=None, ge=0)
+    minimum_billable_quantity: SerializedDecimal | None = Field(default=None, ge=0)
+    free_quota_quantity: SerializedDecimal | None = Field(default=None, ge=0)
     free_quota_period: str | None = None
     input_threshold_tokens_min: int | None = None
     input_threshold_tokens_max: int | None = None
     context_window_tokens: int | None = None
     max_output_tokens: int | None = None
     cache_ttl_seconds: int | None = None
-    cache_storage_unit_price: Decimal | None = Field(default=None, ge=0)
+    cache_storage_unit_price: SerializedDecimal | None = Field(default=None, ge=0)
     supports_cache: bool | None = None
     supports_batch: bool | None = None
     supports_tools: bool | None = None
@@ -310,6 +315,7 @@ class PricingCatalogUpdateRequest(FinOpsBaseModel):
     change_reason: str | None = None
     updated_by: str | None = None
     is_active: bool | None = None
+    supersede_existing: bool = False
     metadata: dict[str, Any] | None = None
 
 
@@ -318,7 +324,7 @@ class PricingCatalogRecord(PricingCatalogCreateRequest):
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
-    model_config = ConfigDict(from_attributes=True, use_enum_values=True, json_encoders={Decimal: str})
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
 
 class UsageEventCreateRequest(FinOpsBaseModel):
@@ -348,8 +354,11 @@ class UsageEventCreateRequest(FinOpsBaseModel):
     pricing_id: str = ""
     resource_type: ResourceType
     resource_subtype: ResourceSubtype = ResourceSubtype.other
-    usage_unit: str
-    quantity: Decimal = Field(ge=0)
+    usage_unit: str = ""
+    unit: str = ""
+    token_type: str = ""
+    pricing_mode: str = ""
+    quantity: SerializedDecimal = Field(ge=0)
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     cached_input_tokens: int = Field(default=0, ge=0)
@@ -359,7 +368,7 @@ class UsageEventCreateRequest(FinOpsBaseModel):
     audio_output_tokens: int = Field(default=0, ge=0)
     image_input_count: int = Field(default=0, ge=0)
     image_output_count: int = Field(default=0, ge=0)
-    video_input_seconds: Decimal = Field(default=Decimal("0"), ge=0)
+    video_input_seconds: SerializedDecimal = Field(default=Decimal("0"), ge=0)
     tool_id: str = ""
     tool_name: str = ""
     tool_provider: str = ""
@@ -368,10 +377,10 @@ class UsageEventCreateRequest(FinOpsBaseModel):
     tool_risk_level: str = ""
     dry_run: bool = False
     external_side_effect: bool = False
-    container_seconds: Decimal = Field(default=Decimal("0"), ge=0)
-    worker_seconds: Decimal = Field(default=Decimal("0"), ge=0)
-    storage_gb_seconds: Decimal = Field(default=Decimal("0"), ge=0)
-    network_egress_gb: Decimal = Field(default=Decimal("0"), ge=0)
+    container_seconds: SerializedDecimal = Field(default=Decimal("0"), ge=0)
+    worker_seconds: SerializedDecimal = Field(default=Decimal("0"), ge=0)
+    storage_gb_seconds: SerializedDecimal = Field(default=Decimal("0"), ge=0)
+    network_egress_gb: SerializedDecimal = Field(default=Decimal("0"), ge=0)
     phase: str = "manual"
     status: UsageStatus = UsageStatus.success
     error_code: str = ""
@@ -382,12 +391,26 @@ class UsageEventCreateRequest(FinOpsBaseModel):
     idempotency_key: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    @model_validator(mode="after")
+    def _normalize_usage_fields(self) -> UsageEventCreateRequest:
+        if not self.usage_unit and self.unit:
+            self.usage_unit = self.unit
+        if not self.usage_unit:
+            self.usage_unit = "tokens"
+        if not self.unit:
+            self.unit = self.usage_unit
+        if self.token_type and "token_type" not in self.metadata:
+            self.metadata["token_type"] = self.token_type
+        if self.pricing_mode and "pricing_mode" not in self.metadata:
+            self.metadata["pricing_mode"] = self.pricing_mode
+        return self
+
 
 class UsageEventRecord(UsageEventCreateRequest):
     usage_id: str
     created_at: datetime | None = None
 
-    model_config = ConfigDict(from_attributes=True, use_enum_values=True, json_encoders={Decimal: str})
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
 
 class CostEventRecord(FinOpsBaseModel):
@@ -416,20 +439,21 @@ class CostEventRecord(FinOpsBaseModel):
     model_version: str
     cost_type: str
     usage_unit: str
-    quantity: Decimal
-    unit_price: Decimal
-    gross_cost: Decimal
-    discount_rate: Decimal
-    discount_amount: Decimal
-    multiplier: Decimal
-    net_cost: Decimal
-    tax_amount: Decimal
-    estimated_cost: Decimal
-    actual_cost: Decimal
+    quantity: SerializedDecimal
+    unit_price: SerializedDecimal
+    unit_price_snapshot: SerializedDecimal | None = None
+    gross_cost: SerializedDecimal
+    discount_rate: SerializedDecimal
+    discount_amount: SerializedDecimal
+    multiplier: SerializedDecimal
+    net_cost: SerializedDecimal
+    tax_amount: SerializedDecimal
+    estimated_cost: SerializedDecimal
+    actual_cost: SerializedDecimal
     currency: str
     base_currency: str
-    base_currency_cost: Decimal
-    fx_rate: Decimal
+    base_currency_cost: SerializedDecimal
+    fx_rate: SerializedDecimal
     fx_rate_source: str
     billing_period_start: datetime | None = None
     billing_period_end: datetime | None = None
@@ -440,31 +464,33 @@ class CostEventRecord(FinOpsBaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime | None = None
 
-    model_config = ConfigDict(from_attributes=True, use_enum_values=True, json_encoders={Decimal: str})
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
 
 class RunCostSummaryResponse(FinOpsBaseModel):
     run_id: str
     tenant_id: str
     base_currency: str = "USD"
-    estimated_cost: Decimal
-    actual_cost: Decimal
-    cost_delta: Decimal
-    cost_delta_percent: Decimal = Decimal("0")
+    estimated_cost: SerializedDecimal
+    actual_cost: SerializedDecimal
+    cost_delta: SerializedDecimal
+    cost_delta_percent: SerializedDecimal = Decimal("0")
     currency: str
     budget_status: str
     budget_policy_id: str = ""
-    budget_remaining: Decimal = Decimal("0")
-    provider_breakdown: dict[str, Decimal] = Field(default_factory=dict)
-    model_breakdown: dict[str, Decimal] = Field(default_factory=dict)
-    tool_breakdown: dict[str, Decimal] = Field(default_factory=dict)
-    step_breakdown: dict[str, Decimal] = Field(default_factory=dict)
-    cost_type_breakdown: dict[str, Decimal] = Field(default_factory=dict)
-    resource_breakdown: dict[str, Decimal] = Field(default_factory=dict)
-    breakdown: dict[str, Decimal] = Field(default_factory=dict)
-    replay_cost: Decimal = Decimal("0")
-    resume_incremental_cost: Decimal = Decimal("0")
-    failed_retry_cost: Decimal = Decimal("0")
+    budget_remaining: SerializedDecimal = Decimal("0")
+    provider_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
+    model_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
+    tool_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
+    step_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
+    cost_type_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
+    resource_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
+    breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
+    replay_cost: SerializedDecimal = Decimal("0")
+    resume_incremental_cost: SerializedDecimal = Decimal("0")
+    failed_retry_cost: SerializedDecimal = Decimal("0")
+    cache_savings: SerializedDecimal = Decimal("0")
+    batch_savings: SerializedDecimal = Decimal("0")
     usage_events: list[UsageEventRecord] = Field(default_factory=list)
     cost_events: list[CostEventRecord] = Field(default_factory=list)
 
@@ -475,41 +501,46 @@ class TenantCostSummaryResponse(FinOpsBaseModel):
     period_end: datetime | None = None
     timezone: str = "UTC"
     base_currency: str = "USD"
-    today_cost: Decimal
-    month_to_date_cost: Decimal
-    budget_used_percent: Decimal
+    today_cost: SerializedDecimal
+    month_to_date_cost: SerializedDecimal
+    budget_used_percent: SerializedDecimal
     violation_count: int
-    provider_breakdown: dict[str, Decimal] = Field(default_factory=dict)
-    resource_type_breakdown: dict[str, Decimal] = Field(default_factory=dict)
-    environment_breakdown: dict[str, Decimal] = Field(default_factory=dict)
-    project_breakdown: dict[str, Decimal] = Field(default_factory=dict)
+    provider_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
+    resource_type_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
+    environment_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
+    project_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
     top_runs: list[dict[str, Any]] = Field(default_factory=list)
     top_models: list[dict[str, Any]] = Field(default_factory=list)
     top_workflows: list[dict[str, Any]] = Field(default_factory=list)
     top_tools: list[dict[str, Any]] = Field(default_factory=list)
     top_users: list[dict[str, Any]] = Field(default_factory=list)
-    failed_run_cost: Decimal = Decimal("0")
-    replay_cost: Decimal = Decimal("0")
-    cache_savings: Decimal = Decimal("0")
-    batch_savings: Decimal = Decimal("0")
+    failed_run_cost: SerializedDecimal = Decimal("0")
+    replay_cost: SerializedDecimal = Decimal("0")
+    cache_savings: SerializedDecimal = Decimal("0")
+    batch_savings: SerializedDecimal = Decimal("0")
 
 
 class BudgetPolicyCreateRequest(FinOpsBaseModel):
     budget_id: str | None = None
     tenant_id: str = "default"
     scope: str = "tenant"
+    scope_type: str = ""
     scope_id: str = ""
     project_id: str = ""
     environment: str = "prod"
-    policy_name: str = Field(min_length=1, max_length=128)
+    policy_name: str = ""
+    name: str = ""
     policy_version: str = "1"
     period: BudgetPeriod = BudgetPeriod.monthly
     period_start: datetime | None = None
     period_end: datetime | None = None
     timezone: str = "UTC"
-    limit_amount: Decimal | None = Field(default=None, ge=0)
-    soft_limit_amount: Decimal | None = Field(default=None, ge=0)
-    hard_limit_amount: Decimal | None = Field(default=None, ge=0)
+    limit_amount: SerializedDecimal | None = Field(default=None, ge=0)
+    soft_limit_amount: SerializedDecimal | None = Field(default=None, ge=0)
+    hard_limit_amount: SerializedDecimal | None = Field(default=None, ge=0)
+    soft_limit: SerializedDecimal | None = Field(default=None, ge=0, exclude=True)
+    hard_limit: SerializedDecimal | None = Field(default=None, ge=0, exclude=True)
+    action_on_exceed: str | None = Field(default=None, exclude=True)
     currency: str = "USD"
     base_currency: str = "USD"
     resource_type: str = "all"
@@ -528,13 +559,49 @@ class BudgetPolicyCreateRequest(FinOpsBaseModel):
     notification_channels: list[str] = Field(default_factory=list)
     approval_required: bool = False
     approver_role: str = ""
-    fallback_model_tier: str = ""
+    fallback_model_tier: str | None = ""
     effective_from: datetime = Field(default_factory=_now_utc)
     effective_to: datetime | None = None
     created_by: str = ""
     updated_by: str = ""
     is_active: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _normalize_budget_fields(self) -> BudgetPolicyCreateRequest:
+        if not self.policy_name and self.name:
+            self.policy_name = self.name
+        if not self.name and self.policy_name:
+            self.name = self.policy_name
+        if not self.policy_name:
+            self.policy_name = "Budget Policy"
+            self.name = "Budget Policy"
+        if self.scope_type and (self.scope == "tenant" or not self.scope):
+            self.scope = self.scope_type
+        if not self.scope_type:
+            self.scope_type = self.scope
+        if self.fallback_model_tier is None:
+            self.fallback_model_tier = ""
+        if self.soft_limit_amount is None and self.soft_limit is not None:
+            self.soft_limit_amount = self.soft_limit
+        if self.hard_limit_amount is None and self.hard_limit is not None:
+            self.hard_limit_amount = self.hard_limit
+        if self.action_on_exceed:
+            act_map = {
+                "block": [BudgetAction.record_violation, BudgetAction.fail_closed],
+                "fail_closed": [BudgetAction.record_violation, BudgetAction.fail_closed],
+                "require_approval": [BudgetAction.record_violation, BudgetAction.require_approval],
+                "degrade_model": [BudgetAction.record_violation, BudgetAction.degrade_model],
+                "warn_only": [BudgetAction.record_violation, BudgetAction.warn],
+                "warn": [BudgetAction.record_violation, BudgetAction.warn],
+            }
+            mapped = act_map.get(self.action_on_exceed.lower())
+            if mapped:
+                self.actions_on_hard_limit = mapped
+                self.actions = mapped
+            if self.action_on_exceed.lower() == "require_approval":
+                self.approval_required = True
+        return self
 
 
 class BudgetPolicyUpdateRequest(FinOpsBaseModel):
@@ -548,9 +615,12 @@ class BudgetPolicyUpdateRequest(FinOpsBaseModel):
     period_start: datetime | None = None
     period_end: datetime | None = None
     timezone: str | None = None
-    limit_amount: Decimal | None = Field(default=None, ge=0)
-    soft_limit_amount: Decimal | None = Field(default=None, ge=0)
-    hard_limit_amount: Decimal | None = Field(default=None, ge=0)
+    limit_amount: SerializedDecimal | None = Field(default=None, ge=0)
+    soft_limit_amount: SerializedDecimal | None = Field(default=None, ge=0)
+    hard_limit_amount: SerializedDecimal | None = Field(default=None, ge=0)
+    soft_limit: SerializedDecimal | None = Field(default=None, ge=0, exclude=True)
+    hard_limit: SerializedDecimal | None = Field(default=None, ge=0, exclude=True)
+    action_on_exceed: str | None = Field(default=None, exclude=True)
     currency: str | None = None
     base_currency: str | None = None
     resource_type: str | None = None
@@ -582,7 +652,22 @@ class BudgetPolicyRecord(BudgetPolicyCreateRequest):
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
-    model_config = ConfigDict(from_attributes=True, use_enum_values=True, json_encoders={Decimal: str})
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
+
+class BudgetViolationAcknowledgeRequest(FinOpsBaseModel):
+    acknowledged_by: str = ""
+    resolved_by: str = ""
+    note: str = ""
+    notes: str = ""
+
+
+class BudgetViolationResolveRequest(FinOpsBaseModel):
+    resolution_status: ResolutionStatus = ResolutionStatus.resolved
+    resolved_by: str = ""
+    resolution_note: str = ""
+    note: str = ""
+    notes: str = ""
 
 
 class BudgetViolationRecord(FinOpsBaseModel):
@@ -604,12 +689,12 @@ class BudgetViolationRecord(FinOpsBaseModel):
     violation_type: str
     severity: str
     threshold_type: str
-    estimated_amount: Decimal
-    actual_amount: Decimal
-    limit_amount: Decimal
-    remaining_budget_before: Decimal
-    overage_amount: Decimal
-    overage_percent: Decimal
+    estimated_amount: SerializedDecimal
+    actual_amount: SerializedDecimal
+    limit_amount: SerializedDecimal
+    remaining_budget_before: SerializedDecimal
+    overage_amount: SerializedDecimal
+    overage_percent: SerializedDecimal
     currency: str
     decision: str
     recommended_action: str
@@ -623,7 +708,7 @@ class BudgetViolationRecord(FinOpsBaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime | None = None
 
-    model_config = ConfigDict(from_attributes=True, use_enum_values=True, json_encoders={Decimal: str})
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
 
 class PricingImportRequest(FinOpsBaseModel):
@@ -664,7 +749,7 @@ class PricingImportBatchRecord(FinOpsBaseModel):
     summary: dict[str, Any] = Field(default_factory=dict)
     error_details: dict[str, Any] = Field(default_factory=dict)
 
-    model_config = ConfigDict(from_attributes=True, use_enum_values=True, json_encoders={Decimal: str})
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
 
 class PricingChangeLogRecord(FinOpsBaseModel):
@@ -672,8 +757,8 @@ class PricingChangeLogRecord(FinOpsBaseModel):
     pricing_id_old: str
     pricing_id_new: str
     change_type: str
-    old_unit_price: Decimal | None = None
-    new_unit_price: Decimal | None = None
+    old_unit_price: SerializedDecimal | None = None
+    new_unit_price: SerializedDecimal | None = None
     currency: str
     change_reason: str
     source_url: str
@@ -681,7 +766,7 @@ class PricingChangeLogRecord(FinOpsBaseModel):
     changed_at: datetime | None = None
     import_batch_id: str
 
-    model_config = ConfigDict(from_attributes=True, use_enum_values=True, json_encoders={Decimal: str})
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
 
 class PricingSourceDocumentRecord(FinOpsBaseModel):
@@ -695,4 +780,4 @@ class PricingSourceDocumentRecord(FinOpsBaseModel):
     notes: str
     created_at: datetime | None = None
 
-    model_config = ConfigDict(from_attributes=True, use_enum_values=True, json_encoders={Decimal: str})
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)

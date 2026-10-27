@@ -151,6 +151,7 @@ class ControlPlanePlanner:
         trace_id: str = "",
         workflows: list[dict] | None = None,
         tools: list[dict] | None = None,
+        budget_outcome: object | dict | None = None,
     ) -> ExecutionPlanDraft:
         workflow = self._select_workflow(request.task_type, workflows or BUILTIN_WORKFLOWS)
         requested_tools = request.allowed_tools or ["summarize"]
@@ -194,6 +195,32 @@ class ControlPlanePlanner:
                     }
                 )
 
+        model_route: dict = {
+            "model": "deterministic-control-plane",
+            "routing_reason": f"V1.5.3 deterministic route for {request.task_type}.",
+        }
+        if budget_outcome is not None:
+            outcome_data = budget_outcome if isinstance(budget_outcome, dict) else getattr(budget_outcome, "__dict__", {})
+            fallback_tier = outcome_data.get("fallback_model_tier")
+            degraded = bool(outcome_data.get("degraded") or fallback_tier)
+            if degraded and fallback_tier:
+                model_route = {
+                    "model": f"deterministic-{fallback_tier}",
+                    "model_tier": str(fallback_tier),
+                    "fallback_model_tier": str(fallback_tier),
+                    "degraded_from": "deterministic-control-plane",
+                    "routing_reason": f"V1.5.3 FinOps budget soft-limit degraded model route to {fallback_tier} tier.",
+                }
+            if outcome_data.get("require_approval"):
+                approval_gates.append(
+                    {
+                        "gate_type": "finops_budget_gate",
+                        "status": "pending",
+                        "budget_id": outcome_data.get("budget_id", ""),
+                        "reason": outcome_data.get("reason") or "FinOps budget policy requires human approval.",
+                    }
+                )
+
         status = "planned" if not approval_gates else "requires_approval"
         steps = [
             {
@@ -232,10 +259,7 @@ class ControlPlanePlanner:
             workflow_id=workflow["workflow_id"],
             workflow_version=workflow["version"],
             status=status,
-            model_route={
-                "model": "deterministic-control-plane",
-                "routing_reason": f"V1.5 deterministic route for {request.task_type}.",
-            },
+            model_route=model_route,
             selected_tools=selected_tools,
             steps=steps,
             approval_gates=approval_gates,

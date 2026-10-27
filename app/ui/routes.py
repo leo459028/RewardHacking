@@ -64,18 +64,24 @@ from app.services.checkpoint import (
     persist_run_checkpoint,
 )
 from app.services.finops import (
+    acknowledge_budget_violation,
+    create_budget_policy,
+    disable_budget_policy,
+    disable_pricing_item,
+    format_decimal_plain,
     get_pricing_item,
+    list_budget_policies,
     list_budget_violations,
     list_pricing_items,
     record_submit_usage,
+    resolve_budget_violation,
     run_cost_summary,
     tenant_cost_summary,
     update_pricing_item,
-    disable_pricing_item,
 )
 from app.models.finops import PricingChangeLog, PricingImportBatch, PricingSourceDocument
 from app.services.orchestrator import OrchestrationResult
-from app.schemas.finops import PricingCatalogUpdateRequest
+from app.schemas.finops import BudgetPolicyCreateRequest, PricingCatalogUpdateRequest
 from app.services.pricing_import import apply_pricing_seed, dry_run_pricing_seed, load_pricing_seed
 from app.services.run_state import RunStateStore
 from app.workers.producer import make_event
@@ -112,6 +118,7 @@ def _json_pretty(value: object) -> str:
 
 
 templates.env.filters["json_pretty"] = _json_pretty
+templates.env.filters["decimal_plain"] = format_decimal_plain
 
 
 async def _attach_execution_plan(
@@ -331,12 +338,19 @@ async def dashboard_governance(
 async def dashboard_costs(
     request: Request,
     tenant_id: str | None = None,
+    resolution_status: str | None = None,
     session: AsyncSession = Depends(get_session),
 ):
     selected_tenant = tenant_id or "default"
     summary = await tenant_cost_summary(session, tenant_id=selected_tenant)
     pricing = await list_pricing_items(session)
-    violations = await list_budget_violations(session, tenant_id=selected_tenant, limit=25)
+    violations = await list_budget_violations(
+        session,
+        tenant_id=selected_tenant,
+        resolution_status=resolution_status or None,
+        limit=25,
+    )
+    budgets = await list_budget_policies(session, tenant_id=selected_tenant)
     return templates.TemplateResponse(
         request,
         "costs.html",
@@ -344,10 +358,132 @@ async def dashboard_costs(
             "summary": summary,
             "pricing": pricing,
             "violations": violations,
+            "budgets": budgets,
             "tenant_id": selected_tenant,
+            "resolution_status": resolution_status or "",
             "active": "costs",
         },
     )
+
+
+@router.post("/dashboard/costs/violations/{violation_id}/acknowledge", response_class=HTMLResponse)
+async def dashboard_acknowledge_violation(
+    request: Request,
+    violation_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    form = await request.form()
+    notes = str(form.get("notes", "Acknowledged from dashboard"))
+    resolved_by = str(form.get("resolved_by", "dashboard-operator"))
+    await acknowledge_budget_violation(
+        session,
+        violation_id,
+        resolved_by=resolved_by,
+        notes=notes,
+    )
+    return RedirectResponse("/dashboard/costs", status_code=303)
+
+
+@router.post("/dashboard/costs/violations/{violation_id}/resolve", response_class=HTMLResponse)
+async def dashboard_resolve_violation(
+    request: Request,
+    violation_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    form = await request.form()
+    resolution_status = str(form.get("resolution_status", "resolved"))
+    if resolution_status not in {"resolved", "ignored"}:
+        resolution_status = "resolved"
+    notes = str(form.get("notes", f"Marked {resolution_status} from dashboard"))
+    resolved_by = str(form.get("resolved_by", "dashboard-finops-admin"))
+    await resolve_budget_violation(
+        session,
+        violation_id,
+        resolution_status=resolution_status,
+        resolved_by=resolved_by,
+        notes=notes,
+    )
+    return RedirectResponse("/dashboard/costs", status_code=303)
+
+
+@router.get("/dashboard/admin/finops/budgets", response_class=HTMLResponse)
+async def dashboard_admin_finops_budgets(
+    request: Request,
+    tenant_id: str | None = None,
+    active_only: bool = False,
+    session: AsyncSession = Depends(get_session),
+):
+    budgets = await list_budget_policies(
+        session,
+        tenant_id=tenant_id or None,
+        active_only=active_only,
+    )
+    violations = await list_budget_violations(
+        session,
+        tenant_id=tenant_id or None,
+        limit=25,
+    )
+    return templates.TemplateResponse(
+        request,
+        "admin_finops_budgets.html",
+        {
+            "budgets": budgets,
+            "violations": violations,
+            "tenant_id": tenant_id or "",
+            "active_only": active_only,
+            "active": "admin-finops",
+        },
+    )
+
+
+@router.post("/dashboard/admin/finops/budgets", response_class=HTMLResponse)
+async def dashboard_admin_finops_budgets_create(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    form = await request.form()
+    soft_actions = [
+        item.strip()
+        for item in str(form.get("actions_on_soft_limit", "warn,record_violation")).split(",")
+        if item.strip()
+    ]
+    hard_actions = [
+        item.strip()
+        for item in str(form.get("actions_on_hard_limit", "record_violation,fail_closed")).split(",")
+        if item.strip()
+    ]
+    soft_val = str(form.get("soft_limit_amount", "")).strip()
+    hard_val = str(form.get("hard_limit_amount", "")).strip()
+    fallback_tier = str(form.get("fallback_model_tier", "")).strip() or None
+    await create_budget_policy(
+        session,
+        BudgetPolicyCreateRequest(
+            name=str(form.get("name", "Dashboard Budget Policy")),
+            tenant_id=str(form.get("tenant_id", "default")) or "default",
+            scope_type=str(form.get("scope_type", "tenant")) or "tenant",
+            scope_id=str(form.get("scope_id", "default")) or "default",
+            period=str(form.get("period", "monthly")) or "monthly",
+            soft_limit_amount=soft_val if soft_val else None,
+            hard_limit_amount=hard_val if hard_val else "0",
+            currency=str(form.get("currency", "USD")) or "USD",
+            actions_on_soft_limit=soft_actions,
+            actions_on_hard_limit=hard_actions,
+            fallback_model_tier=fallback_tier,
+            include_dev_environment=True,
+            is_active=True,
+        ),
+        supersede_existing=True,
+    )
+    return RedirectResponse("/dashboard/admin/finops/budgets", status_code=303)
+
+
+@router.post("/dashboard/admin/finops/budgets/{budget_id}/disable", response_class=HTMLResponse)
+async def dashboard_admin_finops_budgets_disable(
+    budget_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    await disable_budget_policy(session, budget_id)
+    return RedirectResponse("/dashboard/admin/finops/budgets", status_code=303)
 
 
 @router.get("/dashboard/admin/finops/pricing", response_class=HTMLResponse)
@@ -423,11 +559,25 @@ async def dashboard_admin_finops_import_post(
     form = await request.form()
     file_path = str(form.get("file_path", "app/seeds/model_pricing_seed.yaml"))
     mode = str(form.get("mode", "dry_run"))
+    strict = str(form.get("strict", "")) == "on"
+    allow_warnings = str(form.get("allow_warnings", "")) == "on" if strict else True
     seed = load_pricing_seed(file_path)
     if mode == "apply":
-        report = await apply_pricing_seed(session, seed, created_by="dashboard")
+        report = await apply_pricing_seed(
+            session,
+            seed,
+            created_by="dashboard",
+            strict=strict,
+            allow_warnings=allow_warnings,
+        )
     else:
-        report = await dry_run_pricing_seed(session, seed, created_by="dashboard")
+        report = await dry_run_pricing_seed(
+            session,
+            seed,
+            created_by="dashboard",
+            strict=strict,
+            allow_warnings=allow_warnings,
+        )
     batches = list(
         (
             await session.scalars(
@@ -516,7 +666,7 @@ async def dashboard_admin_finops_pricing_edit(
     session: AsyncSession = Depends(get_session),
 ):
     form = await request.form()
-    await update_pricing_item(
+    updated = await update_pricing_item(
         session,
         pricing_id,
         PricingCatalogUpdateRequest(
@@ -527,9 +677,12 @@ async def dashboard_admin_finops_pricing_edit(
             is_active=str(form.get("is_active", "")) == "on",
             change_reason=str(form.get("change_reason", "")),
             updated_by="dashboard",
+            supersede_existing=str(form.get("supersede_existing", "")) == "on",
         ),
+        updated_by="dashboard",
     )
-    return RedirectResponse(f"/dashboard/admin/finops/pricing/{pricing_id}", status_code=303)
+    target_id = updated.pricing_id if updated is not None else pricing_id
+    return RedirectResponse(f"/dashboard/admin/finops/pricing/{target_id}", status_code=303)
 
 
 @router.post("/dashboard/admin/finops/pricing/{pricing_id}/disable", response_class=HTMLResponse)
@@ -592,7 +745,7 @@ async def dashboard_operations_release_gate(
     readiness = await compute_operations_readiness(session, settings=get_settings())
     await persist_release_gate(
         session,
-        release_version=str(form.get("release_version", "v1.5.2")),
+        release_version=str(form.get("release_version", "v1.5.3")),
         created_by=str(form.get("created_by", "dashboard")),
         trace_id=str(getattr(request.state, "trace_id", "")),
         readiness=readiness,
@@ -700,7 +853,7 @@ async def submit_playground(
                 resume_cursor="worker_queue" if run.status == "queued" else "approval_queue",
                 created_by="dashboard",
             )
-            await record_submit_usage(session, run=run, plan=plan)
+            await record_submit_usage(session, run=run, plan=plan, result=result)
         await state_store.set_run_state(result.response.run_id, result.response.status)
         if result.response.status == "queued":
             event = make_event(
