@@ -13,6 +13,79 @@
   <div class="stat"><div class="stat-label">Workflows</div><div class="stat-value">{{ workflows|length }}</div></div>
   <div class="stat"><div class="stat-label">Tools</div><div class="stat-value">{{ tools|length }}</div></div>
   <div class="stat"><div class="stat-label">Plans</div><div class="stat-value">{{ plans|length }}</div></div>
+  <div class="stat"><div class="stat-label">Open Breakers</div><div class="stat-value">{{ open_breakers|length }}</div></div>
+</section>
+
+<section class="detail-grid">
+  <div class="panel">
+    <h2>Register / Update Workflow <span class="heading-note">工作流動態註冊</span></h2>
+    <form method="post" action="/dashboard/control-plane/workflows" class="form-grid">
+      <label>Workflow ID
+        <input name="workflow_id" value="analysis-v156" required>
+      </label>
+      <label>Version
+        <input name="version" value="v1" required>
+      </label>
+      <label>Task Type
+        <select name="task_type">
+          <option value="analysis">analysis</option>
+          <option value="code_fix">code_fix</option>
+          <option value="data_query">data_query</option>
+          <option value="workflow">workflow</option>
+          <option value="other">other</option>
+        </select>
+      </label>
+      <label>Display Name
+        <input name="display_name" value="Analysis V1.5.6 Workflow" required>
+      </label>
+      <label>Status
+        <select name="status">
+          <option value="active">active</option>
+          <option value="deprecated">deprecated</option>
+        </select>
+      </label>
+      <label>Steps (CSV)
+        <input name="steps" value="sanitize_input,policy_evaluation,execute_tools">
+      </label>
+      <label>&nbsp;
+        <button class="button" type="submit">Save Workflow</button>
+      </label>
+    </form>
+  </div>
+  <div class="panel">
+    <h2>Register / Update Tool <span class="heading-note">工具動態註冊與限流配置</span></h2>
+    <form method="post" action="/dashboard/control-plane/tools" class="form-grid">
+      <label>Tool Name
+        <input name="tool_name" value="qa_custom_tool" required>
+      </label>
+      <label>Display Name
+        <input name="display_name" value="QA Custom Tool" required>
+      </label>
+      <label>Task Types (CSV)
+        <input name="task_types" value="analysis,retrieval">
+      </label>
+      <label>Risk Level
+        <select name="risk_level">
+          <option value="low">low</option>
+          <option value="medium">medium</option>
+          <option value="high">high</option>
+          <option value="critical">critical</option>
+        </select>
+      </label>
+      <label>Quota / Min
+        <input name="quota_per_minute" type="number" value="60" min="1">
+      </label>
+      <label>Requires Approval
+        <select name="requires_approval">
+          <option value="">false</option>
+          <option value="true">true</option>
+        </select>
+      </label>
+      <label>&nbsp;
+        <button class="button" type="submit">Save Tool</button>
+      </label>
+    </form>
+  </div>
 </section>
 
 <section class="panel">
@@ -36,20 +109,45 @@
 </section>
 
 <section class="panel">
-  <h2>Tool Registry <span class="heading-note">工具註冊表</span></h2>
+  <h2>Tool Registry <span class="heading-note">工具註冊表與熔斷器控制</span></h2>
   <table>
-    <thead><tr><th>Tool</th><th>Tasks</th><th>Risk</th><th>Approval</th><th>Status</th></tr></thead>
+    <thead><tr><th>Tool</th><th>Tasks</th><th>Risk</th><th>Approval</th><th>Quota / Min</th><th>Circuit Breaker</th><th>Status</th><th>Actions</th></tr></thead>
     <tbody>
     {% for tool in tools %}
+      {% set t_name = tool.tool_name if tool.tool_name is defined else tool.get("tool_name") %}
+      {% set t_meta = tool.metadata if tool.metadata is defined else tool.get("metadata", {}) %}
+      {% set is_open = t_name in open_breakers %}
       <tr>
-        <td>{{ tool.tool_name if tool.tool_name is defined else tool.get("tool_name") }}</td>
+        <td>{{ t_name }}</td>
         <td>{{ tool.task_types if tool.task_types is defined else tool.get("task_types") }}</td>
         <td>{{ tool.risk_level if tool.risk_level is defined else tool.get("risk_level") }}</td>
         <td>{{ tool.requires_approval if tool.requires_approval is defined else tool.get("requires_approval") }}</td>
+        <td>{{ t_meta.get("quota_per_minute", "default") }}</td>
+        <td>
+          {% if is_open %}
+          <span class="status failed">OPEN</span><br><span class="muted">{{ open_breakers.get(t_name) }}</span>
+          {% else %}
+          <span class="status completed">CLOSED</span>
+          {% endif %}
+        </td>
         <td>{{ tool.status if tool.status is defined else tool.get("status") }}</td>
+        <td>
+          <div class="inline-form">
+            <form method="post" action="/dashboard/control-plane/tools/{{ t_name }}/breaker/open">
+              <input type="hidden" name="reason" value="Manual trip from Control Plane portal">
+              <button class="button danger" type="submit">Trip Breaker</button>
+            </form>
+            {% if is_open %}
+            <form method="post" action="/dashboard/control-plane/tools/{{ t_name }}/breaker/close">
+              <input type="hidden" name="reason" value="Manual reset from Control Plane portal">
+              <button class="button secondary" type="submit">Reset Breaker</button>
+            </form>
+            {% endif %}
+          </div>
+        </td>
       </tr>
     {% else %}
-      <tr><td colspan="5" class="muted">No tools.</td></tr>
+      <tr><td colspan="8" class="muted">No tools.</td></tr>
     {% endfor %}
     </tbody>
   </table>

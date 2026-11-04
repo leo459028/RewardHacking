@@ -1,8 +1,8 @@
 # Project Roadmap: Evolutionary Milestones
 
-> **Roadmap Baseline**: `v1.5.5`
+> **Roadmap Baseline**: `v1.5.6`
 > **Status**: Active Open-Source Track (`v1.5.x` Continuous Governance & FinOps Series)
-> **Next Target**: `v1.5.6` (FinOps Burn-Rate Forecasting, Interactive Governance Portal, Fine-Grained Quotas & Token Broker)
+> **Next Target**: `v1.5.7` (Safe MCP Gateway MVP & Tool Schema Guardrails)
 
 This roadmap outlines the past development trajectory, the active `v1.5.x` incremental release track (`v1.5.4`, `v1.5.5`, `v1.5.6`, `v1.5.7`...), and long-term architectural milestones for the **RewardHacking** platform.
 
@@ -29,35 +29,29 @@ This roadmap outlines the past development trajectory, the active `v1.5.x` incre
 | `v1.5.2` | Completed | Open-Source & Codex OSS Baseline | Full English internationalization, Apache-2.0 licensing, community governance standards, secret scan automation. |
 | `v1.5.3` | Completed | Active FinOps Governance & Budget Enforcement | Multi-scope/period active budget enforcement (`block`, `require_approval`, `degrade_model`), context-tier pricing, savings accounting, and FinOps Budget Governance Portal. |
 | `v1.5.4` | Completed | Model-Aware FinOps Routing, Step Audit Closure & Recovery Portal | Dynamic catalog model routing & re-pricing, `user`/`project` scope & `dry_run_only` enforcement, `failed_retry` cost accounting, `ExecutionPlanStep` runtime sync, and interactive Run Replay/Resume, DLQ & Approval TTL recovery UI. |
-| `v1.5.5` | **Current** | **FinOps Settled Ledger, Multi-Currency FX, Tax & Reconciliation Export** | Settled cost deduplication (eliminating estimated/actual double-counting), multi-currency FX conversion (`fx_rate`, `base_currency_cost`), tax accounting, `cost_center` attribution, manual adjustments (`cost_adj_`), and CSV/JSON ledger exports. |
-| `v1.5.6` | **Next** | **Burn-Rate Forecasting, Interactive Governance Portal, Fine-Grained Quotas & Token Broker** | Real-time tenant/project burn-rate forecasting & exhaustion alerts, interactive Tenant/API-Key/Control-Plane CRUD portals, per-user and per-tool sliding-window quotas, manual circuit-breaker controls, and pre-execution token budget leasing (Dynamic Token Broker). |
-| `v1.5.7` | Planned | Safe MCP Gateway MVP & Tool Schema Guardrails | Model Context Protocol (MCP) server registry, tool input/output JSON schema validation, argument sanitization, and per-MCP-server cost and risk attribution (`mcp_server_id`). |
+| `v1.5.5` | Completed | FinOps Settled Ledger, Multi-Currency FX, Tax & Reconciliation Export | Settled cost deduplication (eliminating estimated/actual double-counting), multi-currency FX conversion (`fx_rate`, `base_currency_cost`), tax accounting, `cost_center` attribution, manual adjustments (`cost_adj_`), and CSV/JSON ledger exports. |
+| `v1.5.6` | **Current** | **Burn-Rate Forecasting, Interactive Governance Portal, Fine-Grained Quotas & Token Broker** | Real-time tenant/project burn-rate forecasting & exhaustion alerts, interactive Tenant/API-Key/Control-Plane CRUD portals, per-user and per-tool sliding-window quotas, manual circuit-breaker controls, and pre-execution token budget leasing (Dynamic Token Broker). |
+| `v1.5.7` | **Next** | **Safe MCP Gateway MVP & Tool Schema Guardrails** | Model Context Protocol (MCP) server registry, tool input/output JSON schema validation, argument sanitization, and per-MCP-server cost and risk attribution (`mcp_server_id`). |
 | `v1.5.8+`| Planned | Pluggable LLM-as-Judge, Evaluation Benchmarks & OTLP Exporter | Configurable external/local judge providers, red-team dataset benchmark runner with precision/recall tracking, OpenTelemetry (OTLP) span export, and automated audit retention purge drills. |
 | `v1.6.0+`| Long-Term | Isolated Sandbox Runtime & Stateful Graph Replay | Ephemeral container/microVM tool sandboxing (e.g., gVisor / Firecracker) replacing simulated bounded execution, and stateful graph-level time-travel execution. |
 
 ---
 
-## Current Release: `v1.5.5` FinOps Settled Ledger, Multi-Currency FX, Tax & Reconciliation Export
+## Current Release: `v1.5.6` Burn-Rate Forecasting, Interactive Governance Portal, Fine-Grained Quotas & Token Broker
 
-The `v1.5.5` milestone upgrades Agent FinOps Core into an audit-ready multi-currency financial reconciliation ledger:
-1. **Settled Ledger Correctness (Zero Double-Counting)**: Deduplicates pre-execution `estimated` cost events once `actual` or `failed_retry` worker cost events arrive for the same `(run_id, replay_attempt_id, resume_attempt_id, resource_type, usage_unit)` group.
-2. **Multi-Currency FX Normalization & Tax Accounting**: Normalizes foreign-currency pricing rows (`TWD`, `CNY`, `EUR`, `JPY`, `GBP`) into `FINOPS_BASE_CURRENCY` (`USD` by default) using `fx_rate`, `tax_rate`, `tax_inclusive`, `tax_amount`, and `base_currency_cost`, with pre-tax base-currency budget evaluation and fail-open `missing_fx_rate` violation tracking.
-3. **Cost-Center Attribution & Manual Adjustments**: Extracts `cost_center`, `org_id`, `business_unit`, and `environment` into `ExecutionPlan.model_route["allocation"]` and `CostEvent.allocation_tags`, and enables `POST /v1/cost/adjustments` (`cost_adj_...`) for credits, discounts, and invoice true-ups.
-4. **Reconciliation CSV/JSON Ledger Export**: Provides `GET /v1/cost/tenants/{tenant_id}/export?format=csv|json` with formula-injection protection and interactive dashboard export and adjustment tools on `/dashboard/costs`.
+The `v1.5.6` milestone closes the pre-execution financial and operational governance loop across four domains:
+1. **Burn-Rate & Exhaustion Forecasting**: Computes hourly/daily tenant and project burn rates, projected end-of-period spend, and estimated time-to-hard-limit exhaustion warnings (`normal | elevated_burn | critical_burn | exhausted`, `finops_burn_rate_warning`) via `GET /v1/cost/tenants/{tenant_id}/forecast` and `/dashboard/costs`.
+2. **Dynamic Token Broker (Pre-Execution Budget Leasing)**: Reserves estimated token/cost leases (`lease_...`) in Redis and `AgentRun.evaluation_summary["token_budget_lease"]` while runs are queued or awaiting approval so concurrent requests cannot overshoot shared budgets, settling on worker completion or releasing on denial/manual operator action (`POST /v1/cost/leases/{run_id}/release`).
+3. **Per-User & Per-Tool Quotas & Self-Healing Circuit Breakers**: Enforces Redis sliding-window rate limits per user and per tool, automatically trips tool circuit breakers after consecutive worker failures, escalates runs requesting open-breaker tools (`tool_circuit_breaker_open` -> `awaiting_approval`), and provides manual trip/reset APIs (`POST /v1/control-plane/tools/{name}/breaker/open|close`).
+4. **Interactive Tenant, API Key & Control-Plane Portals**: Upgrades `/dashboard/governance`, `/dashboard/control-plane`, and `/dashboard/costs` with interactive forms for Tenant upsert, API key issuance (with one-time plaintext banner) and revocation, Tool/Workflow registration, Circuit Breaker management, and Token Lease lifecycle controls.
 
 ---
 
-## Active `v1.5.x` Evolution Track (`v1.5.6` – `v1.5.8+`)
+## Active `v1.5.x` Evolution Track (`v1.5.7` – `v1.5.8+`)
 
 Rather than jumping directly to a monolithic `v1.6.0` rewrite, the `v1.5.x` release train delivers focused, verifiable governance and FinOps closures in incremental minor releases:
 
-### `v1.5.6` (Next Target): Burn-Rate Forecasting, Interactive Governance Portal, Fine-Grained Quotas & Token Broker
-- **Burn-Rate & Exhaustion Forecasting**: Computes hourly/daily tenant and project burn rates, projected end-of-period spend, and estimated time-to-hard-limit exhaustion warnings on `/dashboard/costs`.
-- **Interactive Tenant, API Key & Control-Plane Portals**: Upgrades `/dashboard/governance` and `/dashboard/control-plane` from read-only views into full management portals for tenant quotas, API key issuance/revocation, and tool/workflow registration.
-- **Per-User & Per-Tool Quotas & Circuit Breakers**: Extends Redis sliding-window rate limits to individual users and tools, with interactive circuit-breaker trip/reset controls.
-- **Dynamic Token Broker (Pre-Execution Budget Leasing)**: Reserves estimated token/cost leases in Redis/Postgres while runs are queued or running to prevent concurrent requests from overshooting shared tenant budgets.
-
-### `v1.5.7` (Planned): Safe MCP Gateway MVP & Tool Schema Guardrails
+### `v1.5.7` (Next Target): Safe MCP Gateway MVP & Tool Schema Guardrails
 - **MCP Server Registry & Trust Tiers**: Registers Model Context Protocol (MCP) servers, versions, transport policies, and risk levels in the Control Plane.
 - **MCP Schema Boundary Validation & Cost Attribution**: Enforces strict input/output JSON schema checks, redacts sensitive arguments before tool invocation, and tracks per-MCP-server usage and costs via `UsageEvent.mcp_server_id`.
 

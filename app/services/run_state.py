@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from redis.asyncio import Redis
 
 from app.infra.redis import get_json, set_json
+from app.observability.metrics import TOOL_BREAKER_EVENTS_TOTAL
 
 
 class RunStateStore(Protocol):
@@ -32,7 +33,45 @@ class RunStateStore(Protocol):
     ) -> None:
         ...
 
+    async def close_breaker(self, tool_name: str) -> bool:
+        ...
+
     async def get_open_breakers(self, tool_names: list[str]) -> dict[str, dict[str, Any]]:
+        ...
+
+    async def list_open_breakers(self) -> dict[str, dict[str, Any]]:
+        ...
+
+    async def record_tool_failure(
+        self,
+        tool_name: str,
+        *,
+        reason: str,
+        threshold: int = 3,
+        ttl_seconds: int = 1800,
+    ) -> dict[str, Any]:
+        ...
+
+    async def acquire_token_lease(
+        self,
+        lease: dict[str, Any],
+        ttl_seconds: int = 7200,
+    ) -> dict[str, Any]:
+        ...
+
+    async def release_token_lease(
+        self,
+        tenant_id: str,
+        run_id: str,
+        status: str = "released",
+        reason: str = "",
+    ) -> dict[str, Any] | None:
+        ...
+
+    async def list_active_token_leases(
+        self,
+        tenant_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         ...
 
     async def increment_quota(
@@ -56,8 +95,50 @@ class QuotaResult:
     allowed: bool
 
 
+@dataclass(frozen=True)
+class TokenBudgetLease:
+    lease_id: str
+    run_id: str
+    tenant_id: str
+    user_id: str
+    project_id: str
+    model_name: str
+    estimated_tokens: int
+    estimated_base_cost: str
+    currency: str
+    status: str
+    created_at: str
+    expires_at: str
+    ttl_seconds: int
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return _now_utc().isoformat()
+
+
+def _five_minute_bucket(now: datetime | None = None) -> str:
+    dt = now or _now_utc()
+    return f"{dt.strftime('%Y%m%d%H')}{(dt.minute // 5) * 5:02d}"
+
+
+def _is_breaker_active(breaker: dict[str, Any] | None) -> bool:
+    if not breaker or breaker.get("status") != "open":
+        return False
+    expires_at_str = breaker.get("expires_at")
+    if expires_at_str:
+        try:
+            exp = datetime.fromisoformat(str(expires_at_str))
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if exp <= _now_utc():
+                return False
+        except ValueError:
+            pass
+    return True
 
 
 class InMemoryRunStateStore:
@@ -65,6 +146,8 @@ class InMemoryRunStateStore:
         self.run_states: dict[str, dict[str, Any]] = {}
         self.idempotency_keys: set[str] = set()
         self.breakers: dict[str, dict[str, Any]] = {}
+        self.breaker_failures: dict[str, int] = {}
+        self.token_leases: dict[str, dict[str, Any]] = {}
         self.quota_counters: dict[str, int] = {}
 
     async def set_run_state(
@@ -95,19 +178,144 @@ class InMemoryRunStateStore:
         reason: str,
         ttl_seconds: int = 1800,
     ) -> None:
+        now = _now_utc()
         self.breakers[tool_name] = {
+            "tool_name": tool_name,
             "status": "open",
             "reason": reason,
-            "opened_at": _now_iso(),
+            "opened_at": now.isoformat(),
+            "expires_at": (now + timedelta(seconds=ttl_seconds)).isoformat(),
             "ttl_seconds": ttl_seconds,
         }
+        TOOL_BREAKER_EVENTS_TOTAL.labels(tool_name=tool_name, action="opened").inc()
+
+    async def close_breaker(self, tool_name: str) -> bool:
+        existed = tool_name in self.breakers and self.breakers[tool_name].get("status") == "open"
+        self.breakers.pop(tool_name, None)
+        prefix = f"breaker_failures:{tool_name}:"
+        for k in [k for k in self.breaker_failures if k.startswith(prefix)]:
+            self.breaker_failures.pop(k, None)
+        TOOL_BREAKER_EVENTS_TOTAL.labels(tool_name=tool_name, action="closed").inc()
+        return existed
 
     async def get_open_breakers(self, tool_names: list[str]) -> dict[str, dict[str, Any]]:
+        target = set(tool_names)
+        result: dict[str, dict[str, Any]] = {}
+        for tool_name, breaker in list(self.breakers.items()):
+            if not _is_breaker_active(breaker):
+                self.breakers.pop(tool_name, None)
+                continue
+            if tool_name in target:
+                result[tool_name] = breaker
+        return result
+
+    async def list_open_breakers(self) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for tool_name, breaker in list(self.breakers.items()):
+            if not _is_breaker_active(breaker):
+                self.breakers.pop(tool_name, None)
+                continue
+            result[tool_name] = breaker
+        return result
+
+    async def record_tool_failure(
+        self,
+        tool_name: str,
+        *,
+        reason: str,
+        threshold: int = 3,
+        ttl_seconds: int = 1800,
+    ) -> dict[str, Any]:
+        bucket_key = f"breaker_failures:{tool_name}:{_five_minute_bucket()}"
+        count = self.breaker_failures.get(bucket_key, 0) + 1
+        self.breaker_failures[bucket_key] = count
+        tripped = False
+        if count >= max(1, threshold):
+            await self.open_breaker(
+                tool_name,
+                reason=f"Auto-tripped after {count} failures: {reason}",
+                ttl_seconds=ttl_seconds,
+            )
+            self.breakers[tool_name]["failure_count"] = count
+            tripped = True
         return {
-            tool_name: breaker
-            for tool_name, breaker in self.breakers.items()
-            if tool_name in set(tool_names) and breaker.get("status") == "open"
+            "tool_name": tool_name,
+            "failure_count": count,
+            "threshold": threshold,
+            "tripped": tripped,
+            "status": "open" if tripped else "closed",
+            "reason": reason,
         }
+
+    async def acquire_token_lease(
+        self,
+        lease: dict[str, Any],
+        ttl_seconds: int = 7200,
+    ) -> dict[str, Any]:
+        now = _now_utc()
+        tenant_id = str(lease.get("tenant_id") or "default")
+        run_id = str(lease.get("run_id") or "")
+        record = {
+            **lease,
+            "tenant_id": tenant_id,
+            "run_id": run_id,
+            "status": str(lease.get("status") or "active"),
+            "created_at": str(lease.get("created_at") or now.isoformat()),
+            "expires_at": str(lease.get("expires_at") or (now + timedelta(seconds=ttl_seconds)).isoformat()),
+            "ttl_seconds": int(ttl_seconds),
+        }
+        key = f"tenant:{tenant_id}:lease:{run_id}"
+        self.token_leases[key] = record
+        return record
+
+    async def release_token_lease(
+        self,
+        tenant_id: str,
+        run_id: str,
+        status: str = "released",
+        reason: str = "",
+    ) -> dict[str, Any] | None:
+        key = f"tenant:{tenant_id}:lease:{run_id}"
+        existing = self.token_leases.pop(key, None)
+        if existing is None:
+            for k, val in list(self.token_leases.items()):
+                if val.get("run_id") == run_id:
+                    existing = self.token_leases.pop(k, None)
+                    break
+        if existing is None:
+            return None
+        return {
+            **existing,
+            "status": status,
+            "released_reason": reason,
+            "updated_at": _now_iso(),
+        }
+
+    async def list_active_token_leases(
+        self,
+        tenant_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        now = _now_utc()
+        active: list[dict[str, Any]] = []
+        for key, record in list(self.token_leases.items()):
+            if record.get("status") != "active":
+                self.token_leases.pop(key, None)
+                continue
+            exp_str = record.get("expires_at")
+            if exp_str:
+                try:
+                    exp = datetime.fromisoformat(str(exp_str))
+                    if exp.tzinfo is None:
+                        exp = exp.replace(tzinfo=timezone.utc)
+                    if exp <= now:
+                        self.token_leases.pop(key, None)
+                        continue
+                except ValueError:
+                    pass
+            if tenant_id and record.get("tenant_id") != tenant_id:
+                continue
+            active.append(record)
+        return active
 
     async def increment_quota(
         self,
@@ -161,20 +369,132 @@ class RedisRunStateStore:
         reason: str,
         ttl_seconds: int = 1800,
     ) -> None:
+        now = _now_utc()
         await set_json(
             self.redis,
             f"breaker:{tool_name}",
-            {"status": "open", "reason": reason, "opened_at": _now_iso()},
+            {
+                "tool_name": tool_name,
+                "status": "open",
+                "reason": reason,
+                "opened_at": now.isoformat(),
+                "expires_at": (now + timedelta(seconds=ttl_seconds)).isoformat(),
+                "ttl_seconds": ttl_seconds,
+            },
             ttl_seconds=ttl_seconds,
         )
+        TOOL_BREAKER_EVENTS_TOTAL.labels(tool_name=tool_name, action="opened").inc()
+
+    async def close_breaker(self, tool_name: str) -> bool:
+        deleted = int(await self.redis.delete(f"breaker:{tool_name}"))
+        async for key in self.redis.scan_iter(match=f"breaker_failures:{tool_name}:*"):
+            await self.redis.delete(key)
+        TOOL_BREAKER_EVENTS_TOTAL.labels(tool_name=tool_name, action="closed").inc()
+        return deleted > 0
 
     async def get_open_breakers(self, tool_names: list[str]) -> dict[str, dict[str, Any]]:
         open_breakers: dict[str, dict[str, Any]] = {}
         for tool_name in tool_names:
             breaker = await get_json(self.redis, f"breaker:{tool_name}")
-            if breaker and breaker.get("status") == "open":
+            if _is_breaker_active(breaker):
                 open_breakers[tool_name] = breaker
         return open_breakers
+
+    async def list_open_breakers(self) -> dict[str, dict[str, Any]]:
+        open_breakers: dict[str, dict[str, Any]] = {}
+        async for raw_key in self.redis.scan_iter(match="breaker:*"):
+            key_str = raw_key.decode("utf-8") if isinstance(raw_key, bytes) else str(raw_key)
+            tool_name = key_str.split("breaker:", 1)[-1]
+            breaker = await get_json(self.redis, key_str)
+            if _is_breaker_active(breaker):
+                open_breakers[tool_name] = {"tool_name": tool_name, **breaker}
+        return open_breakers
+
+    async def record_tool_failure(
+        self,
+        tool_name: str,
+        *,
+        reason: str,
+        threshold: int = 3,
+        ttl_seconds: int = 1800,
+    ) -> dict[str, Any]:
+        bucket_key = f"breaker_failures:{tool_name}:{_five_minute_bucket()}"
+        count = int(await self.redis.incr(bucket_key))
+        if count == 1:
+            await self.redis.expire(bucket_key, 300)
+        tripped = False
+        if count >= max(1, threshold):
+            await self.open_breaker(
+                tool_name,
+                reason=f"Auto-tripped after {count} failures: {reason}",
+                ttl_seconds=ttl_seconds,
+            )
+            tripped = True
+        return {
+            "tool_name": tool_name,
+            "failure_count": count,
+            "threshold": threshold,
+            "tripped": tripped,
+            "status": "open" if tripped else "closed",
+            "reason": reason,
+        }
+
+    async def acquire_token_lease(
+        self,
+        lease: dict[str, Any],
+        ttl_seconds: int = 7200,
+    ) -> dict[str, Any]:
+        now = _now_utc()
+        tenant_id = str(lease.get("tenant_id") or "default")
+        run_id = str(lease.get("run_id") or "")
+        record = {
+            **lease,
+            "tenant_id": tenant_id,
+            "run_id": run_id,
+            "status": str(lease.get("status") or "active"),
+            "created_at": str(lease.get("created_at") or now.isoformat()),
+            "expires_at": str(lease.get("expires_at") or (now + timedelta(seconds=ttl_seconds)).isoformat()),
+            "ttl_seconds": int(ttl_seconds),
+        }
+        await set_json(
+            self.redis,
+            f"tenant:{tenant_id}:lease:{run_id}",
+            record,
+            ttl_seconds=ttl_seconds,
+        )
+        return record
+
+    async def release_token_lease(
+        self,
+        tenant_id: str,
+        run_id: str,
+        status: str = "released",
+        reason: str = "",
+    ) -> dict[str, Any] | None:
+        key = f"tenant:{tenant_id}:lease:{run_id}"
+        existing = await get_json(self.redis, key)
+        await self.redis.delete(key)
+        if existing is None:
+            return None
+        return {
+            **existing,
+            "status": status,
+            "released_reason": reason,
+            "updated_at": _now_iso(),
+        }
+
+    async def list_active_token_leases(
+        self,
+        tenant_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        pattern = f"tenant:{tenant_id}:lease:*" if tenant_id else "tenant:*:lease:*"
+        active: list[dict[str, Any]] = []
+        async for raw_key in self.redis.scan_iter(match=pattern):
+            key_str = raw_key.decode("utf-8") if isinstance(raw_key, bytes) else str(raw_key)
+            record = await get_json(self.redis, key_str)
+            if record and record.get("status") == "active":
+                active.append(record)
+        return active
 
     async def increment_quota(
         self,

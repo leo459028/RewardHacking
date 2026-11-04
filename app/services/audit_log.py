@@ -20,7 +20,7 @@ from app.models.worker_attempt import WorkerAttempt
 from app.observability.metrics import INCIDENTS_TOTAL
 from app.schemas.agent import AgentRequest
 from app.schemas.audit import ApprovalDecisionRequest
-from app.services.control_plane import sync_execution_plan_on_approval
+from app.services.control_plane import get_execution_plan_for_run, sync_execution_plan_on_approval
 from app.services.orchestrator import OrchestrationResult
 
 
@@ -384,7 +384,12 @@ async def governance_summary(
             .where(
                 GovernanceEvent.tenant_id == tenant_id,
                 GovernanceEvent.event_type.in_(
-                    ["request_quota_exceeded", "high_risk_quota_exceeded"]
+                    [
+                        "request_quota_exceeded",
+                        "high_risk_quota_exceeded",
+                        "user_request_quota_exceeded",
+                        "tool_quota_exceeded",
+                    ]
                 ),
             )
         )
@@ -504,12 +509,20 @@ async def get_tenant_api_key(
     tenant_id: str,
     key_id: str,
 ) -> TenantApiKey | None:
-    return await session.scalar(
+    found = await session.scalar(
         select(TenantApiKey).where(
             TenantApiKey.tenant_id == tenant_id,
-            TenantApiKey.key_id == key_id,
+            TenantApiKey.key_id == str(key_id),
         )
     )
+    if found is None and str(key_id).isdigit():
+        found = await session.scalar(
+            select(TenantApiKey).where(
+                TenantApiKey.tenant_id == tenant_id,
+                TenantApiKey.id == int(key_id),
+            )
+        )
+    return found
 
 
 async def revoke_tenant_api_key(
@@ -763,6 +776,23 @@ async def apply_approval_decision(
         reviewer=decision.reviewer,
         reason=decision.reason,
     )
+    from app.services.finops import acquire_run_budget_lease, release_run_budget_lease
+
+    if decision.decision == "deny":
+        await release_run_budget_lease(
+            session,
+            None,
+            run_id=run.run_id,
+            tenant_id=run.tenant_id,
+            reason=run.decision_reason,
+        )
+    elif decision.decision == "approve_once":
+        await acquire_run_budget_lease(
+            session,
+            None,
+            run=run,
+            plan=await get_execution_plan_for_run(session, run.run_id),
+        )
     summary = dict(run.evaluation_summary or {})
     run.result = {
         "response": {
@@ -827,6 +857,15 @@ async def expire_stale_approvals(session: AsyncSession) -> list[str]:
                 reviewer="system_ttl_sweeper",
                 reason=reason,
             )
+            from app.services.finops import release_run_budget_lease
+
+            await release_run_budget_lease(
+                session,
+                None,
+                run_id=run.run_id,
+                tenant_id=run.tenant_id,
+                reason=reason,
+            )
             summary = dict(run.evaluation_summary or {})
             run.result = {
                 "response": {
@@ -878,6 +917,14 @@ async def requeue_dlq_run(session: AsyncSession, run_id: str) -> AgentRun | None
         "execution_output": run.execution_output,
         "evaluation_summary": summary,
     }
+    from app.services.finops import acquire_run_budget_lease
+
+    await acquire_run_budget_lease(
+        session,
+        None,
+        run=run,
+        plan=await get_execution_plan_for_run(session, run.run_id),
+    )
     await session.commit()
     await session.refresh(run)
     return run
@@ -898,6 +945,25 @@ async def resolve_dlq_run(
         attempt.status = "dlq_resolved"
         base_reason = (attempt.failure_reason or "").strip()
         attempt.failure_reason = f"{base_reason} | resolved: {reason}".strip(" |")
+    actual_cost_count = (
+        await session.scalar(
+            select(func.count())
+            .select_from(CostEvent)
+            .where(CostEvent.run_id == run_id, CostEvent.cost_type == "actual")
+        )
+        or 0
+    )
+    if actual_cost_count == 0:
+        from app.services.finops import release_run_budget_lease
+
+        run = await get_run(session, run_id)
+        await release_run_budget_lease(
+            session,
+            None,
+            run_id=run_id,
+            tenant_id=run.tenant_id if run is not None else None,
+            reason=f"DLQ resolved without actual execution: {reason}",
+        )
     await session.commit()
     return attempts
 

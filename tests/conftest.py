@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 import asyncio
 
+from app.core.config import get_settings
 from app.infra.postgres import get_session
 from app.main import app
 from app.models.base import Base
@@ -28,6 +29,7 @@ def session_factory():
 
 @pytest.fixture
 def client(session_factory):
+    get_settings.cache_clear()
     state_store = InMemoryRunStateStore()
     event_publisher = InMemoryEventPublisher()
 
@@ -43,6 +45,7 @@ def client(session_factory):
         client.event_publisher = event_publisher
         yield client
     app.dependency_overrides.clear()
+    get_settings.cache_clear()
 
 
 @pytest.fixture

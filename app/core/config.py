@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     quota_enabled: bool = True
     tenant_request_limit_per_minute: int = 60
     tenant_high_risk_limit_per_hour: int = 10
+    user_request_limit_per_minute: int = 30
+    tool_call_limit_per_minute: int = 60
+    tool_breaker_failure_threshold: int = 3
+    tool_breaker_ttl_seconds: int = 1800
     audit_retention_days: int = 90
     operations_evidence_max_age_days: int = 30
     secret_rotation_max_age_days: int = 90
@@ -67,6 +71,10 @@ class Settings(BaseSettings):
     finops_fx_rates: dict[str, Decimal] = Field(default_factory=lambda: dict(DEFAULT_FINOPS_FX_RATES))
     finops_fx_rates_as_of: str = "2026-10-01"
     finops_export_max_rows: int = 10000
+    finops_burn_rate_window_hours: int = 24
+    finops_burn_rate_min_elapsed_hours: Decimal = Decimal("6")
+    finops_burn_rate_min_samples: int = 2
+    finops_token_lease_ttl_seconds: int = 7200
 
     @model_validator(mode="after")
     def _validate_finops_currency_settings(self) -> Settings:
@@ -89,6 +97,22 @@ class Settings(BaseSettings):
             raise ValueError(f"FX rate for base currency {base} must be 1.")
         normalized[base] = Decimal("1")
         self.finops_fx_rates = normalized
+        if self.finops_burn_rate_window_hours < 1:
+            raise ValueError("FINOPS_BURN_RATE_WINDOW_HOURS must be >= 1.")
+        if self.finops_burn_rate_min_elapsed_hours < Decimal("0"):
+            raise ValueError("FINOPS_BURN_RATE_MIN_ELAPSED_HOURS must be >= 0.")
+        if self.finops_burn_rate_min_samples < 1:
+            raise ValueError("FINOPS_BURN_RATE_MIN_SAMPLES must be >= 1.")
+        if self.finops_token_lease_ttl_seconds < self.approval_ttl_seconds:
+            raise ValueError("FINOPS_TOKEN_LEASE_TTL_SECONDS must be >= APPROVAL_TTL_SECONDS.")
+        if self.user_request_limit_per_minute < 1:
+            raise ValueError("USER_REQUEST_LIMIT_PER_MINUTE must be >= 1.")
+        if self.tool_call_limit_per_minute < 1:
+            raise ValueError("TOOL_CALL_LIMIT_PER_MINUTE must be >= 1.")
+        if self.tool_breaker_failure_threshold < 1:
+            raise ValueError("TOOL_BREAKER_FAILURE_THRESHOLD must be >= 1.")
+        if self.tool_breaker_ttl_seconds < 1:
+            raise ValueError("TOOL_BREAKER_TTL_SECONDS must be >= 1.")
         return self
 
 

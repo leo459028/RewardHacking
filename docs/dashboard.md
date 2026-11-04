@@ -1,7 +1,7 @@
 # Operational Dashboard Guide
 
-> **Dashboard Version**: `v1.5.5`
-> **Previous Versions**: `v1.5.4`, `v1.5.3`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.4.0`
+> **Dashboard Version**: `v1.5.6`
+> **Previous Versions**: `v1.5.5`, `v1.5.4`, `v1.5.3`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.4.0`
 > **Access URL**: `http://localhost:8000/dashboard`
 
 RewardHacking includes a lightweight, server-rendered (Jinja2) web dashboard providing full observability, human-in-the-loop governance, and FinOps administration without requiring separate Node.js or React build pipelines.
@@ -18,14 +18,14 @@ RewardHacking includes a lightweight, server-rendered (Jinja2) web dashboard pro
 | `/dashboard/approvals` | **Approval Queue** | Actionable queue for high-risk / destructive runs. Operators can execute `approve_once`, `deny`, `request_changes`, or **Expire Stale Approvals**. |
 | `/dashboard/worker` | **Worker Operations** | Background worker telemetry: active attempts, retry backoffs, and Dead Letter Queue (DLQ) with inline **Requeue Run** and **Resolve DLQ** controls. |
 | `/dashboard/observability` | **Observability & SLOs** | Aggregated SLI/SLO trends, incident resolution rates, evaluator scores, approval turnaround latencies, and FinOps summary. |
-| `/dashboard/governance` | **Tenant Governance** | Multi-tenant overview: tenant quotas, active hashed API keys, and governance security audit logs. |
-| `/dashboard/control-plane` | **Control Plane** | Workflow registry, registered tools, pre-execution plans, trace IDs, live step completion (`3/3 completed`, `healthy`), and resumable checkpoints. |
-| `/dashboard/costs` | **FinOps Costs** | Tenant settled cost totals (`Settled MTD`, `Tax`, `Billed`, `Adjustments`, `Reconciled MTD`), cost center & currency breakdowns, manual reconciliation adjustment form, **Export CSV** / **Export JSON** ledger downloads, model expense rankings, active budget policies, and inline budget violation triage (`Acknowledge`, `Resolve`, `Ignore`). |
+| `/dashboard/governance` | **Tenant Governance** | Interactive multi-tenant governance portal: Tenant Upsert form (`request_limit_per_minute`, `high_risk_limit_per_hour`), API Key Issuance form (with one-time plaintext key banner) & Revoke buttons, and governance security audit logs. |
+| `/dashboard/control-plane` | **Control Plane** | Interactive Control Plane registry: Tool Registry Upsert form, Circuit Breaker status badges (`open`/`closed`), failure counters & inline **Trip Breaker** / **Reset Breaker** buttons, Workflow Registry Upsert form, pre-execution plans, live step completion (`3/3 completed`, `healthy`), and resumable checkpoints. |
+| `/dashboard/costs` | **FinOps Costs** | Tenant settled cost totals (`Settled MTD`, `Tax`, `Billed`, `Adjustments`, `Reconciled MTD`), **Burn-Rate & Exhaustion Forecast** cards and policy table (`Hourly Burn`, `Projected Month-End`, `Burn Status`), **Dynamic Token Broker** active lease table with inline **Release Lease** buttons, cost center & currency breakdowns, manual reconciliation adjustment form, **Export CSV** / **Export JSON** ledger downloads, model expense rankings, active budget policies, and inline budget violation triage (`Acknowledge`, `Resolve`, `Ignore`). |
 | `/dashboard/admin/finops/pricing` | **Pricing Catalog** | Admin management interface for the model pricing catalog (`currency`, `fx_rate`, `tax_rate`, `tax_inclusive` editing on Pricing Detail). |
 | `/dashboard/admin/finops/pricing/import` | **Pricing Import** | Dry-run validation, stale source detection, and application of official model pricing YAML seeds. |
 | `/dashboard/admin/finops/pricing/sources` | **Source Audit** | Versioned pricing change logs, stale source badges, and official documentation source tracking. |
 | `/dashboard/admin/finops/budgets` | **Budget Policies** | FinOps budget governance portal for creating, superseding, and disabling multi-scope/period budget policies. |
-| `/dashboard/operations` | **Operations Gate** | Production release gate checklist (including FinOps pricing catalog and critical violation checks), operational evidence logging, and `v1.5.5` release snapshot management. |
+| `/dashboard/operations` | **Operations Gate** | Production release gate checklist (including FinOps pricing catalog and critical violation checks), operational evidence logging, and `v1.5.6` release snapshot management. |
 | `/dashboard/playground` | **Interactive Playground** | Rapid experimentation console with FinOps model routing (`provider`, `model_name`, `pricing_mode`, `project_id`, `cost_center`, `org_id`) to submit test prompts and inspect guardrail verdicts in real time. |
 
 ---

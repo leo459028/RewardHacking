@@ -261,6 +261,12 @@ def run_manual_test_suite(
             f"[Scenario 3.1] Isolated QA Pricing ({norm_curr}) edited & Change Log verified at /dashboard/admin/finops/pricing/{qa_pricing_id}"
         )
 
+        # Ensure clean budget state for finops-qa-tenant before Scenario 3.1b
+        existing_budgets = context.request.get(f"{base_url}/v1/budgets?tenant_id=finops-qa-tenant&active_only=true")
+        if existing_budgets.status == 200:
+            for b in existing_budgets.json():
+                context.request.post(f"{base_url}/v1/budgets/{b['budget_id']}/disable")
+
         # Submit a run with QA FX model and cost_center / org_id attribution
         page.goto(f"{base_url}/dashboard/playground")
         page.fill('input[name="tenant_id"]', "finops-qa-tenant")
@@ -286,7 +292,8 @@ def run_manual_test_suite(
         time.sleep(1.5)
         page.reload()
         fx_detail_html = page.content()
-        assert "V1.5.5 FinOps ledger" in fx_detail_html
+        assert "V1.5.6 FinOps ledger" in fx_detail_html
+        assert "Token Lease" in fx_detail_html
         assert "cc-ai-core" in fx_detail_html
         assert "org-tw" in fx_detail_html
         assert qa_cfg["fx_rate"] in fx_detail_html
@@ -335,6 +342,8 @@ def run_manual_test_suite(
         page.goto(f"{base_url}/dashboard/costs?tenant_id=finops-qa-tenant")
         costs_html = page.content()
         assert "Settled MTD (Pre-Tax)" in costs_html
+        assert "Burn-Rate" in costs_html and "Exhaustion Forecast" in costs_html
+        assert "Active Pre-Execution Token Leases" in costs_html
         assert "Cost Center Breakdown" in costs_html
         assert "Currency Breakdown" in costs_html
         assert "cc-ai-core" in costs_html
@@ -386,14 +395,86 @@ def run_manual_test_suite(
             page.locator('button:has-text("Disable")').first.click()
             print("[Scenario 3.4] Disabled 'QA Hard Daily Cap' budget policy via browser")
 
+        # Submit an awaiting_approval run for finops-qa-tenant to verify Active Token Lease & Release Lease button
+        lease_sub_resp = context.request.post(
+            f"{base_url}/v1/agent/submit",
+            data={
+                "tenant_id": "finops-qa-tenant",
+                "user_id": "finops-tester",
+                "task_type": "workflow",
+                "prompt": "Prepare production deployment plan for lease broker verification.",
+                "goal": "Verify active token lease and release",
+                "allowed_tools": ["deploy_service"],
+            },
+        )
+        assert lease_sub_resp.status == 200
+        lease_run_id = lease_sub_resp.json()["run_id"]
+        page.goto(f"{base_url}/dashboard/costs?tenant_id=finops-qa-tenant")
+        assert f"lease_{lease_run_id}" in page.content()
+        release_form = f'form[action="/dashboard/costs/leases/{lease_run_id}/release"]'
+        page.wait_for_selector(release_form)
+        page.click(f'{release_form} button:has-text("Release Lease")')
+        page.wait_for_load_state("networkidle")
+        assert "0E-8" not in page.content()
+        print(f"[Scenario 3.3b] Verified Active Token Lease & clicked 'Release Lease' for run {lease_run_id} via /dashboard/costs")
+
         # Disable QA tenant_override pricing items so we leave a clean state
         for qpid in qa_pricing_ids:
             context.request.post(f"{base_url}/v1/admin/finops/pricing/{qpid}/disable")
 
-        # 5. Scenario 4: Governance, Observability & Operations Release Gate
+        # 5. Scenario 4: Governance, Control Plane, Observability & Operations Release Gate
         page.goto(f"{base_url}/dashboard/governance")
         assert "Governance" in page.title()
-        print("[Scenario 4.1] Governance page verified")
+        gov_tenant_form = 'form[action="/dashboard/governance/tenants"]'
+        page.fill(f'{gov_tenant_form} input[name="tenant_id"]', "v156-gov-tenant")
+        page.fill(f'{gov_tenant_form} input[name="display_name"]', "V1.5.6 Governance Tenant")
+        page.fill(f'{gov_tenant_form} input[name="request_limit_per_minute"]', "60")
+        page.fill(f'{gov_tenant_form} input[name="high_risk_limit_per_hour"]', "10")
+        page.click(f'{gov_tenant_form} button:has-text("Save Tenant")')
+        page.wait_for_load_state("networkidle")
+        assert "V1.5.6 Governance Tenant" in page.content()
+
+        gov_key_form = 'form[action="/dashboard/governance/api-keys"]'
+        page.fill(f'{gov_key_form} input[name="tenant_id"]', "v156-gov-tenant")
+        page.fill(f'{gov_key_form} input[name="name"]', "v156-browser-key")
+        page.select_option(f'{gov_key_form} select[name="role"]', "operator")
+        page.click(f'{gov_key_form} button:has-text("Create API Key")')
+        page.wait_for_load_state("networkidle")
+        assert "One-Time API Key Issued" in page.content()
+        assert "rg_" in page.content()
+        if page.locator('button:has-text("Revoke Key")').count() > 0:
+            page.locator('button:has-text("Revoke Key")').first.click()
+            page.wait_for_load_state("networkidle")
+        print("[Scenario 4.1] Governance interactive portal (Save Tenant, Create API Key, Revoke Key) verified")
+
+        page.goto(f"{base_url}/dashboard/control-plane")
+        wf_form = 'form[action="/dashboard/control-plane/workflows"]'
+        page.fill(f'{wf_form} input[name="workflow_id"]', "analysis-v156")
+        page.fill(f'{wf_form} input[name="version"]', "v1")
+        page.select_option(f'{wf_form} select[name="task_type"]', "analysis")
+        page.fill(f'{wf_form} input[name="display_name"]', "Analysis V1.5.6 Workflow")
+        page.click(f'{wf_form} button:has-text("Save Workflow")')
+        page.wait_for_load_state("networkidle")
+        assert "analysis-v156" in page.content()
+
+        tool_form = 'form[action="/dashboard/control-plane/tools"]'
+        page.fill(f'{tool_form} input[name="tool_name"]', "qa_custom_tool")
+        page.fill(f'{tool_form} input[name="display_name"]', "QA Custom Tool")
+        page.fill(f'{tool_form} input[name="task_types"]', "analysis,data_query")
+        page.fill(f'{tool_form} input[name="quota_per_minute"]', "60")
+        page.click(f'{tool_form} button:has-text("Save Tool")')
+        page.wait_for_load_state("networkidle")
+        assert "qa_custom_tool" in page.content()
+
+        trip_form = 'form[action="/dashboard/control-plane/tools/qa_custom_tool/breaker/open"]'
+        page.click(f'{trip_form} button:has-text("Trip Breaker")')
+        page.wait_for_load_state("networkidle")
+        assert "OPEN" in page.content()
+
+        reset_form = 'form[action="/dashboard/control-plane/tools/qa_custom_tool/breaker/close"]'
+        page.click(f'{reset_form} button:has-text("Reset Breaker")')
+        page.wait_for_load_state("networkidle")
+        print("[Scenario 4.1b] Control Plane interactive portal (Save Workflow, Save Tool, Trip & Reset Breaker) verified")
 
         page.goto(f"{base_url}/dashboard/observability")
         obs_html = page.content()
@@ -408,27 +489,32 @@ def run_manual_test_suite(
         assert "agent_finops_base_currency_cost_total" in metrics_text
         assert "agent_finops_tax_total" in metrics_text
         assert "agent_finops_ledger_exports_total" in metrics_text
-        print("[Scenario 4.2] /v1/metrics verified in browser (including v1.5.5 FX, tax & export counters)")
+        assert "agent_finops_burn_rate_alerts_total" in metrics_text
+        assert "agent_finops_token_leases_total" in metrics_text
+        assert "agent_quota_decisions_total" in metrics_text
+        assert "agent_tool_breaker_events_total" in metrics_text
+        print("[Scenario 4.2] /v1/metrics verified in browser (including v1.5.6 burn-rate, lease, quota & breaker counters)")
 
         page.goto(f"{base_url}/dashboard/operations")
         ops_html = page.content()
         assert "finops_pricing_catalog_ready" in ops_html
         assert "finops_open_critical_violations" in ops_html
+        assert "finops_burn_rate_health" in ops_html
         release_ver = page.input_value('input[name="release_version"]')
-        assert release_ver == "v1.5.5"
+        assert release_ver == "v1.5.6"
 
         page.select_option('select[name="evidence_type"]', "safety_regression")
         page.select_option('select[name="status"]', "pass")
         page.fill('input[name="reference_url"]', "docs/manual_test.md")
-        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.5.5")
+        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.5.6")
         page.click('button:has-text("Save Evidence")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
         page.click('button:has-text("Create Release Gate Snapshot")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
-        assert "v1.5.5" in page.content()
-        print("[Scenario 4.3] Operations evidence saved & v1.5.5 Release Gate snapshot created via browser")
+        assert "v1.5.6" in page.content()
+        print("[Scenario 4.3] Operations evidence saved & v1.5.6 Release Gate snapshot created via browser")
 
         # 6. Check all primary navigation tabs for 0E-8 and HTTP 200
         nav_routes = [

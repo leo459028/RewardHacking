@@ -184,8 +184,36 @@ async def process_run_by_id(
         run=updated,
         plan=plan,
         is_failed_retry=bool(failure_reason),
+        state_store=state_store,
     )
     if failure_reason:
+        settings = get_settings()
+        for tool_name in dict.fromkeys(request.allowed_tools or []):
+            rec = await state_store.record_tool_failure(
+                tool_name,
+                reason=failure_reason,
+                threshold=settings.tool_breaker_failure_threshold,
+                ttl_seconds=settings.tool_breaker_ttl_seconds,
+            )
+            if rec.get("tripped"):
+                from app.models.governance_event import GovernanceEvent
+
+                session.add(
+                    GovernanceEvent(
+                        tenant_id=updated.tenant_id,
+                        user_id=updated.user_id,
+                        run_id=updated.run_id,
+                        event_type="tool_breaker.opened",
+                        decision="tripped",
+                        reason=f"Auto-tripped after {rec.get('failure_count')} failures: {failure_reason}",
+                        details={
+                            "tool_name": tool_name,
+                            "source": "worker_auto",
+                            "failure_count": rec.get("failure_count"),
+                            "threshold": rec.get("threshold"),
+                        },
+                    )
+                )
         attempt_status = "dlq" if updated.status == "failed" else "retry_scheduled"
         if attempt_status == "retry_scheduled":
             WORKER_RETRIES_TOTAL.inc()

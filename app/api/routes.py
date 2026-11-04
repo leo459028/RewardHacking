@@ -54,6 +54,8 @@ from app.schemas.control_plane import (
     ExecutionPlanStepRecord,
     ReplayBundleResponse,
     RunTraceResponse,
+    ToolBreakerActionRequest,
+    ToolBreakerRecord,
     ToolDefinitionCreateRequest,
     ToolDefinitionRecord,
     WorkflowDefinitionCreateRequest,
@@ -84,7 +86,11 @@ from app.schemas.finops import (
     PricingCatalogUpdateRequest,
     PricingSourceDocumentRecord,
     RunCostSummaryResponse,
+    TenantBurnRateForecastResponse,
     TenantCostSummaryResponse,
+    TenantTokenLeasesResponse,
+    TokenBudgetLeaseRecord,
+    TokenLeaseReleaseRequest,
     UsageEventCreateRequest,
     UsageEventRecord,
 )
@@ -126,7 +132,12 @@ from app.services.audit_log import (
     update_tenant,
 )
 from app.services.orchestrator import AgentOrchestrator
-from app.services.quota import check_high_risk_quota, check_request_quota
+from app.services.quota import (
+    check_high_risk_quota,
+    check_request_quota,
+    check_tool_quotas,
+    check_user_request_quota,
+)
 from app.services.run_state import RunStateStore
 from app.services.operations import (
     compute_operations_readiness,
@@ -160,7 +171,9 @@ from app.services.checkpoint import (
 )
 from app.services.finops import (
     acknowledge_budget_violation,
+    acquire_run_budget_lease,
     budget_to_dict,
+    compute_tenant_burn_rate_forecast,
     cost_to_dict,
     create_budget_policy,
     create_cost_adjustment,
@@ -174,6 +187,7 @@ from app.services.finops import (
     list_budget_policies,
     list_budget_violations,
     list_pricing_items,
+    list_tenant_token_leases,
     list_usage_events,
     model_cost_ranking,
     pricing_to_dict,
@@ -181,6 +195,7 @@ from app.services.finops import (
     record_replay_usage,
     record_submit_usage,
     record_usage_event,
+    release_run_budget_lease,
     render_cost_ledger_csv,
     resolve_budget_violation,
     run_cost_summary,
@@ -232,6 +247,21 @@ async def _tenant_quota_limits(
     if tenant is None:
         return None, None
     return tenant.request_limit_per_minute, tenant.high_risk_limit_per_hour
+
+
+async def _tool_quota_limits(session: AsyncSession) -> dict[str, int]:
+    limits: dict[str, int] = {}
+    for item in await list_tool_definitions(session):
+        meta = dict(item.get("metadata") or {})
+        raw = meta.get("quota_per_minute")
+        if raw is not None:
+            try:
+                val = int(raw)
+                if val > 0:
+                    limits[str(item["tool_name"])] = val
+            except (TypeError, ValueError):
+                pass
+    return limits
 
 
 def _actor(auth_context: AuthContext) -> str:
@@ -449,6 +479,8 @@ def _run_cost_response(summary) -> RunCostSummaryResponse:
         failed_retry_cost=summary.failed_retry_cost,
         cache_savings=summary.cache_savings,
         batch_savings=summary.batch_savings,
+        token_lease_status=summary.token_lease_status,
+        token_lease_id=summary.token_lease_id,
         usage_events=[_usage_record(item) for item in summary.usage_events],
         cost_events=[_cost_record(item) for item in summary.cost_events],
     )
@@ -469,6 +501,14 @@ def _tenant_cost_response(summary) -> TenantCostSummaryResponse:
         reconciled_month_to_date_cost=summary.reconciled_month_to_date_cost,
         budget_used_percent=summary.budget_used_percent,
         violation_count=summary.violation_count,
+        hourly_burn_rate=summary.hourly_burn_rate,
+        daily_burn_rate=summary.daily_burn_rate,
+        projected_month_end_cost=summary.projected_month_end_cost,
+        burn_status=summary.burn_status,
+        burn_rate_forecasts=summary.burn_rate_forecasts,
+        active_lease_count=summary.active_lease_count,
+        active_leased_tokens=summary.active_leased_tokens,
+        active_leased_base_cost=summary.active_leased_base_cost,
         currency_breakdown=summary.currency_breakdown,
         cost_center_breakdown=summary.cost_center_breakdown,
         provider_breakdown=summary.provider_breakdown,
@@ -598,6 +638,93 @@ async def post_control_plane_tool(
         metadata=payload.metadata,
     )
     return _tool_record(tool_to_dict(tool))
+
+
+@router.get("/control-plane/breakers", response_model=list[ToolBreakerRecord])
+async def get_control_plane_breakers(
+    auth_context: AuthContext = Depends(get_auth_context),
+    state_store: RunStateStore = Depends(get_state_store),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    open_map = await state_store.list_open_breakers()
+    return [
+        ToolBreakerRecord(
+            tool_name=name,
+            status=str(info.get("status", "open")),
+            is_open=str(info.get("status", "open")) == "open",
+            reason=str(info.get("reason", "")),
+            opened_at=str(info.get("opened_at", "")),
+            ttl_seconds=int(info.get("ttl_seconds", 1800)),
+            failure_count=int(info.get("failure_count", 0)),
+        )
+        for name, info in sorted(open_map.items())
+    ]
+
+
+@router.post("/control-plane/tools/{tool_name}/breaker/open", response_model=ToolBreakerRecord)
+async def post_open_tool_breaker(
+    tool_name: str,
+    payload: ToolBreakerActionRequest | None = None,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+):
+    require_role(auth_context, "admin")
+    settings = get_settings()
+    reason = payload.reason if payload is not None else "Manual circuit breaker trip by admin"
+    ttl_seconds = payload.ttl_seconds if payload is not None else settings.tool_breaker_ttl_seconds
+    await state_store.open_breaker(tool_name, reason=reason, ttl_seconds=ttl_seconds)
+    await persist_governance_event(
+        session,
+        tenant_id=auth_context.tenant_id or "default",
+        user_id=_actor(auth_context),
+        event_type="tool_breaker.opened",
+        decision="tripped",
+        reason=reason,
+        details={"tool_name": tool_name, "ttl_seconds": ttl_seconds, "source": "api"},
+    )
+    open_map = await state_store.get_open_breakers([tool_name])
+    info = open_map.get(tool_name, {})
+    return ToolBreakerRecord(
+        tool_name=tool_name,
+        status="open",
+        is_open=True,
+        reason=reason,
+        opened_at=str(info.get("opened_at", "")),
+        ttl_seconds=ttl_seconds,
+        failure_count=int(info.get("failure_count", 0)),
+    )
+
+
+@router.post("/control-plane/tools/{tool_name}/breaker/close", response_model=ToolBreakerRecord)
+async def post_close_tool_breaker(
+    tool_name: str,
+    payload: ToolBreakerActionRequest | None = None,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+):
+    require_role(auth_context, "admin")
+    reason = payload.reason if payload is not None else "Manual circuit breaker reset by admin"
+    await state_store.close_breaker(tool_name)
+    await persist_governance_event(
+        session,
+        tenant_id=auth_context.tenant_id or "default",
+        user_id=_actor(auth_context),
+        event_type="tool_breaker.closed",
+        decision="reset",
+        reason=reason,
+        details={"tool_name": tool_name, "source": "api"},
+    )
+    return ToolBreakerRecord(
+        tool_name=tool_name,
+        status="closed",
+        is_open=False,
+        reason=reason,
+        opened_at="",
+        ttl_seconds=0,
+        failure_count=0,
+    )
 
 
 @router.get("/operations/readiness", response_model=OperationsReadinessResponse)
@@ -1116,6 +1243,77 @@ async def get_tenant_cost(
     )
 
 
+@router.get("/cost/tenants/{tenant_id}/forecast", response_model=TenantBurnRateForecastResponse)
+async def get_tenant_cost_forecast(
+    tenant_id: str,
+    project_id: str | None = None,
+    window_hours: int | None = Query(default=None, ge=1, le=720),
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    tenant_id = _query_tenant(tenant_id, auth_context) or tenant_id
+    return await compute_tenant_burn_rate_forecast(
+        session,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        window_hours=window_hours,
+    )
+
+
+@router.get("/cost/tenants/{tenant_id}/leases", response_model=TenantTokenLeasesResponse)
+async def get_tenant_cost_leases(
+    tenant_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    tenant_id = _query_tenant(tenant_id, auth_context) or tenant_id
+    return await list_tenant_token_leases(
+        session,
+        state_store,
+        tenant_id=tenant_id,
+    )
+
+
+@router.post("/cost/leases/{run_id}/release", response_model=TokenBudgetLeaseRecord)
+async def post_release_cost_lease(
+    run_id: str,
+    payload: TokenLeaseReleaseRequest | None = None,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+):
+    require_role(auth_context, "operator", "admin", "finops_admin", "super_admin")
+    run = await get_run(session, run_id)
+    if run is not None:
+        _query_tenant(run.tenant_id, auth_context)
+        if run.status == "running":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "run_currently_running",
+                    "message": "Cannot manually release budget lease while run is actively running.",
+                },
+            )
+    reason = payload.reason if payload is not None else "Manual lease release by operator"
+    actor = (payload.released_by if (payload and payload.released_by) else "") or _actor(auth_context)
+    released = await release_run_budget_lease(
+        session,
+        state_store,
+        run_id=run_id,
+        tenant_id=run.tenant_id if run is not None else None,
+        reason=reason,
+        actor=actor,
+        record_governance_event=True,
+    )
+    if released is None:
+        raise HTTPException(status_code=404, detail="Lease or run not found.")
+    await session.commit()
+    return released
+
+
 @router.get("/cost/tenants/{tenant_id}/export")
 async def export_tenant_cost(
     tenant_id: str,
@@ -1391,6 +1589,54 @@ async def submit_agent_request(
                 "tenant_request_quota_exceeded",
                 "Tenant request quota exceeded.",
             )
+        user_quota = await check_user_request_quota(
+            state_store,
+            settings=settings,
+            tenant_id=agent_request.tenant_id or "default",
+            user_id=agent_request.user_id,
+        )
+        if not user_quota.allowed:
+            await persist_governance_event(
+                session,
+                tenant_id=agent_request.tenant_id or "default",
+                user_id=agent_request.user_id,
+                event_type="user_request_quota_exceeded",
+                decision="blocked",
+                reason="User request quota exceeded.",
+                limit_value=user_quota.limit,
+                used=user_quota.used,
+                remaining=user_quota.remaining,
+                details={"bucket": user_quota.bucket},
+            )
+            return _quota_response(
+                "user_request_quota_exceeded",
+                "User request quota exceeded.",
+            )
+        tool_allowed, blocked_tool, tool_quota = await check_tool_quotas(
+            state_store,
+            settings=settings,
+            tenant_id=agent_request.tenant_id or "default",
+            user_id=agent_request.user_id,
+            allowed_tools=agent_request.allowed_tools,
+            tool_limits=await _tool_quota_limits(session),
+        )
+        if not tool_allowed and tool_quota is not None:
+            await persist_governance_event(
+                session,
+                tenant_id=agent_request.tenant_id or "default",
+                user_id=agent_request.user_id,
+                event_type="tool_quota_exceeded",
+                decision="blocked",
+                reason=f"Tool call quota exceeded for {blocked_tool}.",
+                limit_value=tool_quota.limit,
+                used=tool_quota.used,
+                remaining=tool_quota.remaining,
+                details={"bucket": tool_quota.bucket, "tool_name": blocked_tool},
+            )
+            return _quota_response(
+                "tool_quota_exceeded",
+                f"Tool call quota exceeded for {blocked_tool}.",
+            )
     disabled_tools = list((await state_store.get_open_breakers(agent_request.allowed_tools)).keys())
     result = orchestrator.submit(agent_request, disabled_tools=disabled_tools)
     if settings.quota_enabled:
@@ -1445,7 +1691,14 @@ async def submit_agent_request(
             resume_cursor=_resume_cursor_for_status(run.status),
             created_by=_actor(auth_context),
         )
-        await record_submit_usage(session, run=run, plan=plan, result=result)
+        if run.status != "denied":
+            await record_submit_usage(
+                session,
+                run=run,
+                plan=plan,
+                result=result,
+                state_store=state_store,
+            )
     await state_store.set_run_state(result.response.run_id, result.response.status)
     if result.response.status == "queued":
         event = make_event(
@@ -1511,6 +1764,54 @@ async def submit_agent_request_with_details(
                 "tenant_request_quota_exceeded",
                 "Tenant request quota exceeded.",
             )
+        user_quota = await check_user_request_quota(
+            state_store,
+            settings=settings,
+            tenant_id=agent_request.tenant_id or "default",
+            user_id=agent_request.user_id,
+        )
+        if not user_quota.allowed:
+            await persist_governance_event(
+                session,
+                tenant_id=agent_request.tenant_id or "default",
+                user_id=agent_request.user_id,
+                event_type="user_request_quota_exceeded",
+                decision="blocked",
+                reason="User request quota exceeded.",
+                limit_value=user_quota.limit,
+                used=user_quota.used,
+                remaining=user_quota.remaining,
+                details={"bucket": user_quota.bucket},
+            )
+            return _quota_response(
+                "user_request_quota_exceeded",
+                "User request quota exceeded.",
+            )
+        tool_allowed, blocked_tool, tool_quota = await check_tool_quotas(
+            state_store,
+            settings=settings,
+            tenant_id=agent_request.tenant_id or "default",
+            user_id=agent_request.user_id,
+            allowed_tools=agent_request.allowed_tools,
+            tool_limits=await _tool_quota_limits(session),
+        )
+        if not tool_allowed and tool_quota is not None:
+            await persist_governance_event(
+                session,
+                tenant_id=agent_request.tenant_id or "default",
+                user_id=agent_request.user_id,
+                event_type="tool_quota_exceeded",
+                decision="blocked",
+                reason=f"Tool call quota exceeded for {blocked_tool}.",
+                limit_value=tool_quota.limit,
+                used=tool_quota.used,
+                remaining=tool_quota.remaining,
+                details={"bucket": tool_quota.bucket, "tool_name": blocked_tool},
+            )
+            return _quota_response(
+                "tool_quota_exceeded",
+                f"Tool call quota exceeded for {blocked_tool}.",
+            )
     disabled_tools = list((await state_store.get_open_breakers(agent_request.allowed_tools)).keys())
     result = orchestrator.submit(agent_request, disabled_tools=disabled_tools)
     if settings.quota_enabled:
@@ -1565,7 +1866,14 @@ async def submit_agent_request_with_details(
             resume_cursor=_resume_cursor_for_status(run.status),
             created_by=_actor(auth_context),
         )
-        await record_submit_usage(session, run=run, plan=plan, result=result)
+        if run.status != "denied":
+            await record_submit_usage(
+                session,
+                run=run,
+                plan=plan,
+                result=result,
+                state_store=state_store,
+            )
     await state_store.set_run_state(result.response.run_id, result.response.status)
     if result.response.status == "queued":
         event = make_event(
@@ -1629,6 +1937,22 @@ async def decide_approval(
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
     _query_tenant(run.tenant_id, auth_context)
+    if decision.decision == "deny":
+        await state_store.release_token_lease(
+            run.tenant_id,
+            run.run_id,
+            status="released",
+            reason=run.decision_reason,
+        )
+    elif decision.decision == "approve_once":
+        await acquire_run_budget_lease(
+            session,
+            state_store,
+            run=run,
+            plan=await get_execution_plan_for_run(session, run.run_id),
+        )
+        await session.commit()
+        await session.refresh(run)
     await state_store.set_run_state(run.run_id, run.status)
     if run.status == "queued":
         event = make_event("agent.requested", run.run_id, {"request": run.request_payload})
@@ -1787,6 +2111,10 @@ async def post_run_resume(
     )
     await session.refresh(run)
     await record_checkpoint_usage(session, run=run, plan=plan, checkpoint=checkpoint)
+    await acquire_run_budget_lease(session, state_store, run=run, plan=plan)
+    await session.commit()
+    await session.refresh(run)
+    await session.refresh(checkpoint)
     await state_store.set_run_state(run.run_id, run.status)
     event = make_event("agent.requested", run.run_id, {"request": run.request_payload})
     await event_publisher.publish(get_settings().kafka_request_topic, run.run_id, event)
@@ -1882,6 +2210,14 @@ async def post_worker_dlq_requeue(
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
     _query_tenant(run.tenant_id, auth_context)
+    await acquire_run_budget_lease(
+        session,
+        state_store,
+        run=run,
+        plan=await get_execution_plan_for_run(session, run.run_id),
+    )
+    await session.commit()
+    await session.refresh(run)
     await state_store.set_run_state(run.run_id, run.status)
     event = make_event("agent.requested", run.run_id, {"request": run.request_payload})
     await event_publisher.publish(get_settings().kafka_request_topic, run.run_id, event)
@@ -1894,6 +2230,7 @@ async def post_worker_dlq_resolve(
     payload: DlqResolveRequest | None = None,
     auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
 ):
     require_role(auth_context, "operator", "admin")
     run = await get_run(session, run_id)
@@ -1901,7 +2238,14 @@ async def post_worker_dlq_resolve(
         raise HTTPException(status_code=404, detail="Run not found.")
     _query_tenant(run.tenant_id, auth_context)
     reason = payload.reason if payload is not None else "Resolved by operator"
-    return await resolve_dlq_run(session, run_id, reason=reason)
+    attempts = await resolve_dlq_run(session, run_id, reason=reason)
+    await state_store.release_token_lease(
+        run.tenant_id,
+        run.run_id,
+        status="released",
+        reason=f"DLQ resolved: {reason}",
+    )
+    return attempts
 
 
 @router.post("/approvals/expire-stale", response_model=ExpireStaleApprovalsResponse)
@@ -1913,6 +2257,13 @@ async def post_expire_stale_approvals(
     require_role(auth_context, "operator", "admin")
     expired_run_ids = await expire_stale_approvals(session)
     for rid in expired_run_ids:
+        exp_run = await get_run(session, rid)
+        await state_store.release_token_lease(
+            exp_run.tenant_id if exp_run else "default",
+            rid,
+            status="released",
+            reason="Approval TTL expired without reviewer decision.",
+        )
         await state_store.set_run_state(rid, "denied")
     return ExpireStaleApprovalsResponse(
         expired_count=len(expired_run_ids),

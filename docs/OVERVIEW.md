@@ -1,17 +1,18 @@
 # Project Documentation Overview
 
-> **Current Version**: `v1.5.5`
-> **Previous Version**: `v1.5.4`
+> **Current Version**: `v1.5.6`
+> **Previous Version**: `v1.5.5`
 
 This directory contains the comprehensive technical documentation for the **RewardHacking Guardrail** platform.
 
 ---
 
-## Release Baseline: `v1.5.5`
+## Release Baseline: `v1.5.6`
 
 ### Release Evolution
 
-- **`v1.5.5` (Current)**: FinOps Settled Ledger Correctness, Multi-Currency FX & Tax Accounting, and Reconciliation Ledger Export. Eliminates estimated/actual double-counting via settled cost deduplication (`_settled_cost_events`), activates multi-currency FX conversion (`fx_rate`, `fx_rate_source`, `base_currency_cost`) and tax accounting (`tax_rate`, `tax_inclusive`, `tax_amount`) with pre-tax base-currency budget enforcement, adds `cost_center`/`org_id` allocation attribution (`finops_missing_cost_center`), supports manual reconciliation adjustments (`POST /v1/cost/adjustments`), and provides RFC 4180 CSV/JSON tenant ledger exports (`GET /v1/cost/tenants/{tenant_id}/export`).
+- **`v1.5.6` (Current)**: FinOps Burn-Rate Forecasting, Dynamic Token Broker, Per-User/Per-Tool Quotas & Interactive Governance Portals. Adds real-time tenant/project burn-rate and time-to-exhaustion forecasting (`GET /v1/cost/tenants/{tenant_id}/forecast`, `finops_burn_rate_warning`), pre-execution token budget leasing (`lease_...`) with concurrent sibling-lease reservation in `evaluate_budget_policies()` and automatic/manual lease release (`POST /v1/cost/leases/{run_id}/release`), per-user and per-tool Redis sliding-window rate limits, automatic worker-failure circuit-breaker tripping and manual trip/reset endpoints (`POST /v1/control-plane/tools/{name}/breaker/open|close`), and interactive management forms across `/dashboard/governance`, `/dashboard/control-plane`, and `/dashboard/costs`.
+- **`v1.5.5` (Historical)**: FinOps Settled Ledger Correctness, Multi-Currency FX & Tax Accounting, and Reconciliation Ledger Export. Eliminates estimated/actual double-counting via settled cost deduplication (`_settled_cost_events`), activates multi-currency FX conversion (`fx_rate`, `fx_rate_source`, `base_currency_cost`) and tax accounting (`tax_rate`, `tax_inclusive`, `tax_amount`) with pre-tax base-currency budget enforcement, adds `cost_center`/`org_id` allocation attribution (`finops_missing_cost_center`), supports manual reconciliation adjustments (`POST /v1/cost/adjustments`), and provides RFC 4180 CSV/JSON tenant ledger exports (`GET /v1/cost/tenants/{tenant_id}/export`).
 - **`v1.5.4` (Historical)**: Model-Aware FinOps Routing, Step-Level Execution Audit Closure & Interactive Operations Recovery Portal. Added dynamic `provider`/`model_name`/`pricing_mode`/`project_id` routing and catalog pricing in submit/worker flows, `user`/`project`/`model` budget scope isolation, `dry_run_only` enforcement, `failed_retry` cost accounting, automatic `ExecutionPlanStep` lifecycle synchronization (`healthy` plan health), and interactive Run Replay/Resume, Worker DLQ Requeue/Resolve, and Stale Approval TTL sweep endpoints and UI controls.
 - **`v1.5.3` (Historical)**: Active FinOps Budget Enforcement, Context-Aware Pricing Engine & FinOps Governance Portal. Added pre-execution and runtime budget enforcement (`block`, `require_approval`, `degrade_model`, `warn_only`) across `run`/`tenant`/`workflow`/`user` scopes and `per_run`/`daily`/`monthly` windows, context-tier pricing resolution, cache/batch savings calculation, `/dashboard/admin/finops/budgets` governance portal, violation triage lifecycle (`acknowledge`, `resolve`, `ignore`), stale source guardrails, FinOps Prometheus metrics, and Pydantic V2 `PlainSerializer` zero-warning serialization.
 - **`v1.5.2` (Historical)**: Open-Source Readiness, Internationalization & OpenAI Codex for OSS Alignment. Complete documentation rewrite in English, standardized open-source licensing (Apache-2.0), community governance documents (`CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`), automated secret scanning, and operations release gate version synchronization.

@@ -770,7 +770,7 @@ def test_dashboard_v155_views_and_metrics(client):
     # 2. Run detail view
     rd_res = client.get(f"/dashboard/runs/{run_id}")
     assert rd_res.status_code == 200
-    assert "V1.5.5 FinOps ledger" in rd_res.text
+    assert "FinOps ledger" in rd_res.text
     assert "cc-ui-team" in rd_res.text
     assert "0E-8" not in rd_res.text
 
@@ -790,7 +790,7 @@ def test_dashboard_v155_views_and_metrics(client):
         follow_redirects=True,
     )
     assert adj_res.status_code == 200
-    assert "V1.5.5 Agent FinOps Core" in adj_res.text
+    assert "Agent FinOps Core" in adj_res.text
     assert "cc-ui-team" in adj_res.text
     assert "0E-8" not in adj_res.text
 

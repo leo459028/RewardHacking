@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -23,11 +24,16 @@ from app.infra.postgres import get_session
 from app.schemas.audit import ApprovalDecisionRequest
 from app.services.events import EventPublisher
 from app.schemas.agent import AgentConstraints, AgentRequest
+from app.services.auth import generate_api_key, hash_api_key
 from app.services.audit_log import (
     apply_approval_decision,
+    create_tenant,
+    create_tenant_api_key,
     dashboard_summary,
     expire_stale_approvals,
     get_run,
+    get_tenant,
+    get_tenant_api_key,
     governance_summary,
     incidents_for_run,
     list_approvals,
@@ -39,11 +45,20 @@ from app.services.audit_log import (
     list_tool_executions,
     list_worker_attempts,
     observability_summary,
+    persist_governance_event,
     persist_orchestration_result,
     requeue_dlq_run,
     resolve_dlq_run,
+    revoke_tenant_api_key,
+    update_tenant,
 )
 from app.services.orchestrator import AgentOrchestrator
+from app.services.quota import (
+    check_high_risk_quota,
+    check_request_quota,
+    check_tool_quotas,
+    check_user_request_quota,
+)
 from app.services.operations import (
     compute_operations_readiness,
     list_operations_evidence,
@@ -54,6 +69,8 @@ from app.services.operations import (
 )
 from app.services.control_plane import (
     ControlPlanePlanner,
+    create_tool_definition,
+    create_workflow_definition,
     execution_plan_step_summaries,
     get_execution_plan_for_run,
     latest_execution_plans,
@@ -71,6 +88,7 @@ from app.services.checkpoint import (
 )
 from app.services.finops import (
     acknowledge_budget_violation,
+    acquire_run_budget_lease,
     create_budget_policy,
     create_cost_adjustment,
     disable_budget_policy,
@@ -81,9 +99,11 @@ from app.services.finops import (
     list_budget_policies,
     list_budget_violations,
     list_pricing_items,
+    list_tenant_token_leases,
     record_checkpoint_usage,
     record_replay_usage,
     record_submit_usage,
+    release_run_budget_lease,
     render_cost_ledger_csv,
     resolve_budget_violation,
     run_cost_summary,
@@ -259,11 +279,16 @@ async def dashboard_run_detail(
 
 
 @router.get("/dashboard/control-plane", response_class=HTMLResponse)
-async def dashboard_control_plane(request: Request, session: AsyncSession = Depends(get_session)):
+async def dashboard_control_plane(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+):
     workflows = await list_workflow_definitions(session)
     tools = await list_tool_definitions(session)
     plans = await latest_execution_plans(session, limit=25)
     step_summaries = await execution_plan_step_summaries(session, [plan.run_id for plan in plans])
+    open_breakers = await state_store.list_open_breakers()
     return templates.TemplateResponse(
         request,
         "control_plane.html",
@@ -272,9 +297,125 @@ async def dashboard_control_plane(request: Request, session: AsyncSession = Depe
             "tools": tools,
             "plans": plans,
             "step_summaries": step_summaries,
+            "open_breakers": open_breakers,
             "active": "control-plane",
         },
     )
+
+
+@router.post("/dashboard/control-plane/workflows", response_class=HTMLResponse)
+async def dashboard_control_plane_workflow_upsert(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    form = await request.form()
+    workflow_id = str(form.get("workflow_id", "")).strip() or "custom-workflow"
+    version = str(form.get("version", "1.0")).strip() or "1.0"
+    task_type = str(form.get("task_type", "analysis")).strip() or "analysis"
+    if task_type not in {"code_fix", "analysis", "data_query", "workflow", "other"}:
+        task_type = "other"
+    display_name = str(form.get("display_name", "")).strip() or workflow_id
+    status = str(form.get("status", "active")).strip() or "active"
+    raw_steps = str(form.get("steps", "policy_check,tool_execution,evaluation"))
+    steps = [s.strip() for s in raw_steps.split(",") if s.strip()] or [
+        "policy_check",
+        "tool_execution",
+        "evaluation",
+    ]
+    await create_workflow_definition(
+        session,
+        workflow_id=workflow_id,
+        version=version,
+        task_type=task_type,
+        display_name=display_name,
+        status=status,
+        definition={"steps": steps},
+    )
+    return RedirectResponse("/dashboard/control-plane", status_code=303)
+
+
+@router.post("/dashboard/control-plane/tools", response_class=HTMLResponse)
+async def dashboard_control_plane_tool_upsert(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    form = await request.form()
+    tool_name = str(form.get("tool_name", "")).strip() or "custom_tool"
+    display_name = str(form.get("display_name", "")).strip() or tool_name
+    status = str(form.get("status", "active")).strip() or "active"
+    raw_task_types = str(form.get("task_types", "analysis"))
+    task_types = [t.strip() for t in raw_task_types.split(",") if t.strip()] or ["analysis"]
+    risk_level = str(form.get("risk_level", "low")).strip() or "low"
+    requires_approval = str(form.get("requires_approval", "")).lower() in {"on", "true", "1", "yes"}
+    quota_str = str(form.get("quota_per_minute", "")).strip()
+    metadata: dict[str, object] = {"source": "dashboard"}
+    if quota_str:
+        try:
+            q_val = int(quota_str)
+            if q_val > 0:
+                metadata["quota_per_minute"] = q_val
+        except ValueError:
+            pass
+    await create_tool_definition(
+        session,
+        tool_name=tool_name,
+        display_name=display_name,
+        status=status,
+        task_types=task_types,
+        requires_approval=requires_approval,
+        risk_level=risk_level,
+        metadata=metadata,
+    )
+    return RedirectResponse("/dashboard/control-plane", status_code=303)
+
+
+@router.post("/dashboard/control-plane/tools/{tool_name}/breaker/open", response_class=HTMLResponse)
+async def dashboard_control_plane_breaker_open(
+    tool_name: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+):
+    form = await request.form()
+    reason = str(form.get("reason", "Manual circuit breaker trip from Control Plane Dashboard")).strip() or "Manual circuit breaker trip"
+    settings = get_settings()
+    await state_store.open_breaker(
+        tool_name,
+        reason=reason,
+        ttl_seconds=settings.tool_breaker_ttl_seconds,
+    )
+    await persist_governance_event(
+        session,
+        tenant_id="default",
+        user_id="dashboard-admin",
+        event_type="tool_breaker.opened",
+        decision="tripped",
+        reason=reason,
+        details={"tool_name": tool_name, "source": "dashboard"},
+    )
+    return RedirectResponse("/dashboard/control-plane", status_code=303)
+
+
+@router.post("/dashboard/control-plane/tools/{tool_name}/breaker/close", response_class=HTMLResponse)
+async def dashboard_control_plane_breaker_close(
+    tool_name: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+):
+    form = await request.form()
+    reason = str(form.get("reason", "Manual circuit breaker reset from Control Plane Dashboard")).strip() or "Manual circuit breaker reset"
+    await state_store.close_breaker(tool_name)
+    await persist_governance_event(
+        session,
+        tenant_id="default",
+        user_id="dashboard-admin",
+        event_type="tool_breaker.closed",
+        decision="reset",
+        reason=reason,
+        details={"tool_name": tool_name, "source": "dashboard"},
+    )
+    return RedirectResponse("/dashboard/control-plane", status_code=303)
 
 
 @router.get("/dashboard/approvals", response_class=HTMLResponse)
@@ -344,9 +485,214 @@ async def dashboard_governance(
             "api_keys": api_keys,
             "tenant_ids": tenant_ids,
             "tenant_id": tenant_id or "",
+            "selected_tenant": selected_tenant,
+            "newly_created_key": "",
+            "newly_created_key_name": "",
             "active": "governance",
         },
     )
+
+
+@router.post("/dashboard/governance/tenants", response_class=HTMLResponse)
+async def dashboard_governance_tenant_upsert(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    form = await request.form()
+    tenant_id = str(form.get("tenant_id", "default")).strip() or "default"
+    display_name = str(form.get("display_name", "")).strip() or tenant_id
+    status = str(form.get("status", "active")).strip() or "active"
+    try:
+        req_limit = max(1, int(str(form.get("request_limit_per_minute", "60")).strip() or "60"))
+    except ValueError:
+        req_limit = 60
+    try:
+        hr_limit = max(1, int(str(form.get("high_risk_limit_per_hour", "10")).strip() or "10"))
+    except ValueError:
+        hr_limit = 10
+
+    existing = await get_tenant(session, tenant_id)
+    if existing is None:
+        await create_tenant(
+            session,
+            tenant_id=tenant_id,
+            display_name=display_name,
+            request_limit_per_minute=req_limit,
+            high_risk_limit_per_hour=hr_limit,
+        )
+        if status != "active":
+            await update_tenant(
+                session,
+                tenant_id,
+                display_name=display_name,
+                status=status,
+                request_limit_per_minute=req_limit,
+                high_risk_limit_per_hour=hr_limit,
+            )
+        await persist_governance_event(
+            session,
+            tenant_id=tenant_id,
+            user_id="dashboard-admin",
+            event_type="tenant.created",
+            decision="created",
+            reason=f"Tenant {tenant_id} created from Governance Dashboard.",
+            limit_value=req_limit,
+            used=0,
+            remaining=req_limit,
+            details={"high_risk_limit_per_hour": hr_limit, "status": status},
+        )
+    else:
+        await update_tenant(
+            session,
+            tenant_id,
+            display_name=display_name,
+            status=status,
+            request_limit_per_minute=req_limit,
+            high_risk_limit_per_hour=hr_limit,
+        )
+        await persist_governance_event(
+            session,
+            tenant_id=tenant_id,
+            user_id="dashboard-admin",
+            event_type="tenant.updated",
+            decision="updated",
+            reason=f"Tenant {tenant_id} updated from Governance Dashboard.",
+            limit_value=req_limit,
+            used=0,
+            remaining=req_limit,
+            details={"high_risk_limit_per_hour": hr_limit, "status": status},
+        )
+    return RedirectResponse(f"/dashboard/governance?tenant_id={tenant_id}", status_code=303)
+
+
+async def _issue_tenant_api_key_and_render(
+    request: Request,
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    name: str,
+    role: str,
+) -> HTMLResponse:
+    settings = get_settings()
+    existing_tenant = await get_tenant(session, tenant_id)
+    if existing_tenant is None:
+        await create_tenant(
+            session,
+            tenant_id=tenant_id,
+            display_name=tenant_id,
+            request_limit_per_minute=settings.tenant_request_limit_per_minute,
+            high_risk_limit_per_hour=settings.tenant_high_risk_limit_per_hour,
+        )
+    raw_key = generate_api_key()
+    key_prefix = raw_key[:8]
+    key_hash = hash_api_key(raw_key)
+    key_id = f"key_{uuid.uuid4().hex[:12]}"
+    record = await create_tenant_api_key(
+        session,
+        tenant_id=tenant_id,
+        key_id=key_id,
+        name=name,
+        key_prefix=key_prefix,
+        key_hash=key_hash,
+        role=role,
+    )
+    await persist_governance_event(
+        session,
+        tenant_id=tenant_id,
+        user_id="dashboard-admin",
+        event_type="api_key.created",
+        decision="created",
+        reason=f"API key {name} ({role}) issued for tenant {tenant_id}.",
+        details={"key_id": record.key_id, "role": role, "key_prefix": key_prefix},
+    )
+    runs = await list_runs(session, tenant_id=tenant_id, limit=100)
+    tenants = await list_tenants(session)
+    tenant_ids = [t.tenant_id for t in tenants]
+    summary = await governance_summary(session, tenant_id=tenant_id)
+    events = await list_governance_events(session, tenant_id=tenant_id, limit=25)
+    api_keys = await list_tenant_api_keys(session, tenant_id=tenant_id)
+    response = templates.TemplateResponse(
+        request,
+        "governance.html",
+        {
+            "summary": summary,
+            "events": events,
+            "runs": runs,
+            "tenants": tenants,
+            "api_keys": api_keys,
+            "tenant_ids": tenant_ids,
+            "tenant_id": tenant_id,
+            "selected_tenant": tenant_id,
+            "newly_created_key": raw_key,
+            "newly_created_key_name": name,
+            "active": "governance",
+        },
+        status_code=200,
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@router.post("/dashboard/governance/api-keys", response_class=HTMLResponse)
+async def dashboard_governance_api_key_create_form(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    form = await request.form()
+    tenant_id = str(form.get("tenant_id", "default")).strip() or "default"
+    name = str(form.get("name", "dashboard-key")).strip() or "dashboard-key"
+    role = str(form.get("role", "operator")).strip() or "operator"
+    if role not in {"admin", "operator", "viewer", "finops_admin", "reviewer"}:
+        role = "operator"
+    return await _issue_tenant_api_key_and_render(
+        request,
+        session,
+        tenant_id=tenant_id,
+        name=name,
+        role=role,
+    )
+
+
+@router.post("/dashboard/governance/tenants/{tenant_id}/api-keys", response_class=HTMLResponse)
+async def dashboard_governance_api_key_create(
+    tenant_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    form = await request.form()
+    eff_tenant = str(form.get("tenant_id", "")).strip() or tenant_id or "default"
+    name = str(form.get("name", "dashboard-key")).strip() or "dashboard-key"
+    role = str(form.get("role", "operator")).strip() or "operator"
+    if role not in {"admin", "operator", "viewer", "finops_admin", "reviewer"}:
+        role = "operator"
+    return await _issue_tenant_api_key_and_render(
+        request,
+        session,
+        tenant_id=eff_tenant,
+        name=name,
+        role=role,
+    )
+
+
+@router.post("/dashboard/governance/tenants/{tenant_id}/api-keys/{key_id}/revoke", response_class=HTMLResponse)
+async def dashboard_governance_api_key_revoke(
+    tenant_id: str,
+    key_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    api_key = await get_tenant_api_key(session, tenant_id=tenant_id, key_id=key_id)
+    if api_key is not None:
+        revoked = await revoke_tenant_api_key(session, api_key)
+        await persist_governance_event(
+            session,
+            tenant_id=tenant_id,
+            user_id="dashboard-admin",
+            event_type="api_key.revoked",
+            decision="revoked",
+            reason=f"API key {revoked.name} (id={revoked.key_id}) revoked from Governance Dashboard.",
+            details={"key_id": revoked.key_id, "key_prefix": revoked.key_prefix},
+        )
+    return RedirectResponse(f"/dashboard/governance?tenant_id={tenant_id}", status_code=303)
 
 
 @router.get("/dashboard/costs", response_class=HTMLResponse)
@@ -357,6 +703,7 @@ async def dashboard_costs(
     cost_center: str | None = None,
     resolution_status: str | None = None,
     session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
 ):
     selected_tenant = tenant_id or "default"
     summary = await tenant_cost_summary(
@@ -365,6 +712,7 @@ async def dashboard_costs(
         project_id=project_id or None,
         cost_center=cost_center or None,
     )
+    leases = await list_tenant_token_leases(session, state_store, tenant_id=selected_tenant)
     pricing = await list_pricing_items(session)
     violations = await list_budget_violations(
         session,
@@ -378,6 +726,7 @@ async def dashboard_costs(
         "costs.html",
         {
             "summary": summary,
+            "leases": leases,
             "pricing": pricing,
             "violations": violations,
             "budgets": budgets,
@@ -388,6 +737,39 @@ async def dashboard_costs(
             "active": "costs",
         },
     )
+
+
+@router.post("/dashboard/costs/leases/{run_id}/release", response_class=HTMLResponse)
+async def dashboard_costs_lease_release(
+    run_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+):
+    form = await request.form()
+    tenant_id = str(form.get("tenant_id", "default")).strip() or "default"
+    reason = str(form.get("reason", "Manual lease release from Costs Dashboard")).strip() or "Manual lease release"
+    run = await get_run(session, run_id)
+    if run is not None and run.status == "running":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "run_currently_running",
+                "message": "Cannot manually release budget lease while run is actively running.",
+            },
+        )
+    released = await release_run_budget_lease(
+        session,
+        state_store,
+        run_id=run_id,
+        tenant_id=run.tenant_id if run is not None else tenant_id,
+        reason=reason,
+        actor="dashboard-finops-admin",
+        record_governance_event=True,
+    )
+    await session.commit()
+    eff_tenant = released.tenant_id if released is not None else tenant_id
+    return RedirectResponse(f"/dashboard/costs?tenant_id={eff_tenant}", status_code=303)
 
 
 @router.get("/dashboard/costs/export")
@@ -857,7 +1239,7 @@ async def dashboard_operations_release_gate(
     readiness = await compute_operations_readiness(session, settings=get_settings())
     await persist_release_gate(
         session,
-        release_version=str(form.get("release_version", "v1.5.5")),
+        release_version=str(form.get("release_version", "v1.5.6")),
         created_by=str(form.get("created_by", "dashboard")),
         trace_id=str(getattr(request.state, "trace_id", "")),
         readiness=readiness,
@@ -920,6 +1302,8 @@ async def dashboard_run_resume(
     )
     await session.refresh(run)
     await record_checkpoint_usage(session, run=run, plan=plan, checkpoint=checkpoint)
+    await acquire_run_budget_lease(session, state_store, run=run, plan=plan)
+    await session.commit()
     await state_store.set_run_state(run.run_id, run.status)
     event = make_event("agent.requested", run.run_id, {"request": run.request_payload})
     await event_publisher.publish(get_settings().kafka_request_topic, run.run_id, event)
@@ -939,6 +1323,13 @@ async def dashboard_worker_dlq_requeue(
     run = await requeue_dlq_run(session, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
+    await acquire_run_budget_lease(
+        session,
+        state_store,
+        run=run,
+        plan=await get_execution_plan_for_run(session, run.run_id),
+    )
+    await session.commit()
     await state_store.set_run_state(run.run_id, run.status)
     event = make_event("agent.requested", run.run_id, {"request": run.request_payload})
     await event_publisher.publish(get_settings().kafka_request_topic, run.run_id, event)
@@ -970,6 +1361,13 @@ async def dashboard_expire_stale_approvals(
 ):
     expired_run_ids = await expire_stale_approvals(session)
     for rid in expired_run_ids:
+        exp_run = await get_run(session, rid)
+        await state_store.release_token_lease(
+            exp_run.tenant_id if exp_run else "default",
+            rid,
+            status="released",
+            reason="Approval TTL expired without reviewer decision.",
+        )
         await state_store.set_run_state(rid, "denied")
     return HTMLResponse(
         '<meta http-equiv="refresh" content="0; url=/dashboard/approvals">'
@@ -994,6 +1392,21 @@ async def dashboard_approval_decision(
     run = await apply_approval_decision(session, run_id, decision)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
+    if decision.decision == "deny":
+        await state_store.release_token_lease(
+            run.tenant_id,
+            run.run_id,
+            status="released",
+            reason=run.decision_reason,
+        )
+    elif decision.decision == "approve_once":
+        await acquire_run_budget_lease(
+            session,
+            state_store,
+            run=run,
+            plan=await get_execution_plan_for_run(session, run.run_id),
+        )
+        await session.commit()
     await state_store.set_run_state(run.run_id, run.status)
     if run.status == "queued":
         event = make_event("agent.requested", run.run_id, {"request": run.request_payload})
@@ -1083,8 +1496,145 @@ async def submit_playground(
                 ),
             },
         )
+        settings = get_settings()
+        tenant_row = await get_tenant(session, agent_request.tenant_id or "default")
+        req_limit = tenant_row.request_limit_per_minute if tenant_row else None
+        hr_limit = tenant_row.high_risk_limit_per_hour if tenant_row else None
+        if settings.quota_enabled:
+            q_res = await check_request_quota(
+                state_store,
+                settings=settings,
+                tenant_id=agent_request.tenant_id or "default",
+                limit=req_limit,
+            )
+            if not q_res.allowed:
+                await persist_governance_event(
+                    session,
+                    tenant_id=agent_request.tenant_id or "default",
+                    user_id=agent_request.user_id,
+                    event_type="request_quota_exceeded",
+                    decision="blocked",
+                    reason="Tenant request quota exceeded.",
+                    limit_value=q_res.limit,
+                    used=q_res.used,
+                    remaining=q_res.remaining,
+                    details={"bucket": q_res.bucket, "source": "playground"},
+                )
+                return templates.TemplateResponse(
+                    request,
+                    "playground.html",
+                    {
+                        "active": "playground",
+                        "submitted": False,
+                        "error": "tenant_request_quota_exceeded: Tenant request quota exceeded.",
+                        "result": None,
+                        "form": form,
+                    },
+                )
+            u_res = await check_user_request_quota(
+                state_store,
+                settings=settings,
+                tenant_id=agent_request.tenant_id or "default",
+                user_id=agent_request.user_id,
+            )
+            if not u_res.allowed:
+                await persist_governance_event(
+                    session,
+                    tenant_id=agent_request.tenant_id or "default",
+                    user_id=agent_request.user_id,
+                    event_type="user_request_quota_exceeded",
+                    decision="blocked",
+                    reason="User request quota exceeded.",
+                    limit_value=u_res.limit,
+                    used=u_res.used,
+                    remaining=u_res.remaining,
+                    details={"bucket": u_res.bucket, "source": "playground"},
+                )
+                return templates.TemplateResponse(
+                    request,
+                    "playground.html",
+                    {
+                        "active": "playground",
+                        "submitted": False,
+                        "error": "user_request_quota_exceeded: User request quota exceeded.",
+                        "result": None,
+                        "form": form,
+                    },
+                )
+            tool_limits: dict[str, int] = {}
+            for item in await list_tool_definitions(session):
+                raw_q = (item.get("metadata") or {}).get("quota_per_minute")
+                if raw_q is not None:
+                    try:
+                        if int(raw_q) > 0:
+                            tool_limits[str(item["tool_name"])] = int(raw_q)
+                    except (TypeError, ValueError):
+                        pass
+            t_allowed, blocked_tool, t_res = await check_tool_quotas(
+                state_store,
+                settings=settings,
+                tenant_id=agent_request.tenant_id or "default",
+                user_id=agent_request.user_id,
+                allowed_tools=agent_request.allowed_tools,
+                tool_limits=tool_limits,
+            )
+            if not t_allowed and t_res is not None:
+                await persist_governance_event(
+                    session,
+                    tenant_id=agent_request.tenant_id or "default",
+                    user_id=agent_request.user_id,
+                    event_type="tool_quota_exceeded",
+                    decision="blocked",
+                    reason=f"Tool call quota exceeded for {blocked_tool}.",
+                    limit_value=t_res.limit,
+                    used=t_res.used,
+                    remaining=t_res.remaining,
+                    details={"bucket": t_res.bucket, "tool_name": blocked_tool, "source": "playground"},
+                )
+                return templates.TemplateResponse(
+                    request,
+                    "playground.html",
+                    {
+                        "active": "playground",
+                        "submitted": False,
+                        "error": f"tool_quota_exceeded: Tool call quota exceeded for {blocked_tool}.",
+                        "result": None,
+                        "form": form,
+                    },
+                )
         disabled_tools = list((await state_store.get_open_breakers(agent_request.allowed_tools)).keys())
         result = orchestrator.submit(agent_request, disabled_tools=disabled_tools)
+        if settings.quota_enabled:
+            hr_res = await check_high_risk_quota(
+                state_store,
+                settings=settings,
+                request=agent_request,
+                risk_score=result.response.risk_score,
+                limit=hr_limit,
+            )
+            if hr_res is not None and not hr_res.allowed:
+                result.response.status = "awaiting_approval"
+                result.response.decision_reason = "Tenant high-risk quota exceeded."
+                if "tenant_high_risk_quota_exceeded" not in result.response.policy_flags:
+                    result.response.policy_flags.append("tenant_high_risk_quota_exceeded")
+                result.evaluation_summary["run_state"] = {"status": "awaiting_approval"}
+                result.evaluation_summary["approval"] = {
+                    "status": "pending",
+                    "reason": result.response.decision_reason,
+                }
+                await persist_governance_event(
+                    session,
+                    tenant_id=agent_request.tenant_id or "default",
+                    user_id=agent_request.user_id,
+                    run_id=result.response.run_id,
+                    event_type="high_risk_quota_exceeded",
+                    decision="approval_required",
+                    reason=result.response.decision_reason,
+                    limit_value=hr_res.limit,
+                    used=hr_res.used,
+                    remaining=hr_res.remaining,
+                    details={"bucket": hr_res.bucket, "source": "playground"},
+                )
         await _attach_execution_plan(
             session,
             planner=planner,
@@ -1104,7 +1654,14 @@ async def submit_playground(
                 resume_cursor="worker_queue" if run.status == "queued" else "approval_queue",
                 created_by="dashboard",
             )
-            await record_submit_usage(session, run=run, plan=plan, result=result)
+            if run.status != "denied":
+                await record_submit_usage(
+                    session,
+                    run=run,
+                    plan=plan,
+                    result=result,
+                    state_store=state_store,
+                )
         await state_store.set_run_state(result.response.run_id, result.response.status)
         if result.response.status == "queued":
             event = make_event(

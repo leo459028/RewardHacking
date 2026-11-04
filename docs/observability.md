@@ -1,6 +1,6 @@
 # Observability, Metrics & SLOs
 
-> **Observability Baseline**: `v1.5.5`
+> **Observability Baseline**: `v1.5.6`
 > **Metrics Engine**: Prometheus Client  
 > **Endpoint**: `GET /v1/metrics`
 
@@ -32,6 +32,10 @@ RewardHacking provides deep observability across API gateways, background worker
 | `agent_finops_ledger_exports_total` | Counter | `tenant_id`, `format` | Total tenant FinOps ledger export requests (`json`, `csv`) |
 | `agent_finops_budget_violations_total` | Counter | `scope_type`, `severity`, `action_taken` | Triggered FinOps budget violations partitioned by scope, severity, and enforcement action |
 | `agent_finops_pricing_imports_total` | Counter | `mode`, `status` | Pricing catalog import validations and applications (`dry_run`, `apply`) |
+| `agent_finops_burn_rate_alerts_total` | Counter | `tenant_id`, `scope`, `burn_status` | Total burn-rate exhaustion alerts emitted (`elevated_burn`, `critical_burn`, `exhausted`) |
+| `agent_finops_token_leases_total` | Counter | `tenant_id`, `action` | Dynamic Token Broker lease lifecycle transitions (`acquired`, `settled`, `released`, `expired`) |
+| `agent_quota_rejections_total` | Counter | `tenant_id`, `quota_scope` | Total HTTP 429 rate-limit rejections partitioned by scope (`tenant_minute`, `tenant_high_risk_hour`, `user_minute`, `tool_minute`) |
+| `agent_tool_breaker_transitions_total` | Counter | `tool_name`, `state`, `trigger` | Tool circuit breaker state transitions (`open`, `closed`; trigger `auto_worker_failure`, `manual`) |
 
 ---
 

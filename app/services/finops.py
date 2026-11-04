@@ -31,9 +31,11 @@ from app.models.incident import Incident
 from app.observability.metrics import (
     FINOPS_BASE_CURRENCY_COST_TOTAL,
     FINOPS_BUDGET_VIOLATIONS_TOTAL,
+    FINOPS_BURN_RATE_ALERTS_TOTAL,
     FINOPS_COST_USD_TOTAL,
     FINOPS_LEDGER_EXPORTS_TOTAL,
     FINOPS_TAX_TOTAL,
+    FINOPS_TOKEN_LEASES_TOTAL,
     FINOPS_USAGE_EVENTS_TOTAL,
     INCIDENTS_TOTAL,
 )
@@ -43,13 +45,18 @@ from app.schemas.finops import (
     BudgetPolicyUpdateRequest,
     CostAdjustmentCreateRequest,
     CostEventRecord,
+    PolicyBurnRateForecastRecord,
     PricingCatalogCreateRequest,
     PricingCatalogUpdateRequest,
+    TenantBurnRateForecastResponse,
     TenantCostExportResponse,
+    TenantTokenLeasesResponse,
+    TokenBudgetLeaseRecord,
     UsageEventCreateRequest,
 )
+from app.services.run_state import RunStateStore
 
-FINOPS_CALCULATION_VERSION = "v1.5.5"
+FINOPS_CALCULATION_VERSION = "v1.5.6"
 _ATTRIBUTION_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _ALLOCATION_TAG_KEY_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 _VALID_ENVIRONMENTS = {"dev", "staging", "prod"}
@@ -151,6 +158,8 @@ class RunCostSummary:
     failed_retry_cost: Decimal = Decimal("0")
     cache_savings: Decimal = Decimal("0")
     batch_savings: Decimal = Decimal("0")
+    token_lease_status: str = ""
+    token_lease_id: str = ""
     usage_events: list[UsageEvent] = field(default_factory=list)
     cost_events: list[CostEvent] = field(default_factory=list)
 
@@ -182,6 +191,14 @@ class TenantCostSummary:
     total_billed_base_cost: Decimal = Decimal("0")
     adjustment_total: Decimal = Decimal("0")
     reconciled_month_to_date_cost: Decimal = Decimal("0")
+    hourly_burn_rate: Decimal = Decimal("0")
+    daily_burn_rate: Decimal = Decimal("0")
+    projected_month_end_cost: Decimal = Decimal("0")
+    burn_status: str = "normal"
+    burn_rate_forecasts: list[PolicyBurnRateForecastRecord] = field(default_factory=list)
+    active_lease_count: int = 0
+    active_leased_tokens: int = 0
+    active_leased_base_cost: Decimal = Decimal("0")
     currency_breakdown: dict[str, Decimal] = field(default_factory=dict)
     cost_center_breakdown: dict[str, Decimal] = field(default_factory=dict)
     provider_breakdown: dict[str, Decimal] = field(default_factory=dict)
@@ -1596,7 +1613,10 @@ async def record_submit_usage(
     run: AgentRun,
     plan: ExecutionPlan | None,
     result: object | None = None,
+    state_store: RunStateStore | None = None,
 ) -> BudgetEnforcementOutcome:
+    if run.status == "denied":
+        return BudgetEnforcementOutcome(decision="allow")
     request = AgentRequest.model_validate(run.request_payload)
     workflow_id = plan.workflow_id if plan is not None else request.task_type
     trace_id = (plan.trace_id if plan is not None else request.metadata.get("trace_id", "")) or ""
@@ -1684,7 +1704,7 @@ async def record_submit_usage(
             metadata={"source": "replay_bundle_placeholder", **alloc_meta_extra},
         ),
     ]
-    return await _record_events_and_budget(
+    outcome = await _record_events_and_budget(
         session,
         run=run,
         plan=plan,
@@ -1692,6 +1712,23 @@ async def record_submit_usage(
         events=events,
         enforce_active_guardrails=True,
     )
+    if run.status == "denied" or outcome.decision == "fail_closed":
+        await release_run_budget_lease(
+            session,
+            state_store,
+            run_id=run.run_id,
+            tenant_id=run.tenant_id,
+            reason=outcome.reason or run.decision_reason or "finops_fail_closed",
+        )
+    elif run.status in {"queued", "awaiting_approval"}:
+        await acquire_run_budget_lease(
+            session,
+            state_store,
+            run=run,
+            plan=plan,
+        )
+    await session.commit()
+    return outcome
 
 
 async def record_actual_usage(
@@ -1700,6 +1737,7 @@ async def record_actual_usage(
     run: AgentRun,
     plan: ExecutionPlan | None,
     is_failed_retry: bool = False,
+    state_store: RunStateStore | None = None,
 ) -> None:
     request = AgentRequest.model_validate(run.request_payload)
     workflow_id = plan.workflow_id if plan is not None else request.task_type
@@ -1796,6 +1834,8 @@ async def record_actual_usage(
         ),
     ]
     outcome = await _record_events_and_budget(session, run=run, plan=plan, events=events)
+    if run.status in {"completed", "failed"}:
+        await settle_run_budget_lease(session, state_store, run=run, plan=plan)
     if outcome.decision == "fail_closed":
         flags = list(run.policy_flags or [])
         if "finops_runtime_budget_exceeded" not in flags:
@@ -1810,7 +1850,7 @@ async def record_actual_usage(
             )
         )
         INCIDENTS_TOTAL.labels(severity="high", code="finops_runtime_budget_exceeded").inc()
-        await session.commit()
+    await session.commit()
 
 
 async def record_checkpoint_usage(
@@ -2177,6 +2217,8 @@ def _settled_cost_events(costs: list[CostEvent]) -> list[CostEvent]:
         if not item.run_id or item.cost_type == "adjustment":
             settled.append(item)
             continue
+        if item.cost_type == "estimated" and str((item.metadata_payload or {}).get("lease_status") or "") == "released":
+            continue
         key = _settlement_key(item)
         if has_actual_by_key.get(key, False):
             if item.cost_type in {"actual", "failed_retry"}:
@@ -2220,6 +2262,312 @@ def _cost_in_period(item: CostEvent, policy: BudgetPolicy, now: datetime, run_id
     if policy.period == "yearly":
         return dt.year == now.year
     return True
+
+
+def _resolve_period_bounds(
+    policy: BudgetPolicy,
+    now: datetime,
+) -> tuple[datetime, datetime, Decimal] | None:
+    if policy.scope == "run" or policy.period == "per_run":
+        return None
+    now_utc = _ensure_utc(now) or datetime.now(timezone.utc)
+    p_start = _ensure_utc(policy.period_start)
+    p_end = _ensure_utc(policy.period_end)
+    if p_start is not None and p_end is not None and p_end > p_start:
+        total_hours = Decimal(str(max(1.0, (p_end - p_start).total_seconds() / 3600.0)))
+        return p_start, p_end, total_hours
+
+    if policy.period == "daily":
+        start = datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc)
+        end = start + timedelta(days=1)
+    elif policy.period == "weekly":
+        monday = (now_utc - timedelta(days=now_utc.weekday())).date()
+        start = datetime(monday.year, monday.month, monday.day, tzinfo=timezone.utc)
+        end = start + timedelta(days=7)
+    elif policy.period == "quarterly":
+        q_month = ((now_utc.month - 1) // 3) * 3 + 1
+        start = datetime(now_utc.year, q_month, 1, tzinfo=timezone.utc)
+        end = (
+            datetime(now_utc.year + 1, 1, 1, tzinfo=timezone.utc)
+            if q_month == 10
+            else datetime(now_utc.year, q_month + 3, 1, tzinfo=timezone.utc)
+        )
+    elif policy.period == "yearly":
+        start = datetime(now_utc.year, 1, 1, tzinfo=timezone.utc)
+        end = datetime(now_utc.year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        start = datetime(now_utc.year, now_utc.month, 1, tzinfo=timezone.utc)
+        end = (
+            datetime(now_utc.year + 1, 1, 1, tzinfo=timezone.utc)
+            if now_utc.month == 12
+            else datetime(now_utc.year, now_utc.month + 1, 1, tzinfo=timezone.utc)
+        )
+
+    if p_start is not None and p_start > start:
+        start = p_start
+    if p_end is not None and p_end < end and p_end > start:
+        end = p_end
+    total_hours = Decimal(str(max(1.0, (end - start).total_seconds() / 3600.0)))
+    return start, end, total_hours
+
+
+def _matching_costs_for_policy(
+    tenant_costs: list[CostEvent],
+    policy: BudgetPolicy,
+    now: datetime,
+    run_id: str = "",
+    bounds: tuple[datetime, datetime] | None = None,
+) -> list[CostEvent]:
+    matching_costs: list[CostEvent] = []
+    for item in tenant_costs:
+        if item.cost_type == "adjustment":
+            continue
+        if bounds is not None:
+            dt = _ensure_utc(item.created_at) or now
+            if dt < bounds[0] or dt > bounds[1] or dt > now:
+                continue
+        else:
+            if not _cost_in_period(item, policy, now, run_id):
+                continue
+        if policy.scope == "user":
+            target_user = policy.scope_id
+            if target_user and item.user_id != target_user:
+                continue
+        elif policy.scope == "workflow":
+            target_wf = policy.workflow_id or policy.scope_id
+            if target_wf and item.workflow_id != target_wf:
+                continue
+        elif policy.scope == "project":
+            target_proj = policy.project_id or policy.scope_id
+            if target_proj and item.project_id != target_proj:
+                continue
+        elif policy.scope == "model":
+            target_model = policy.model_name or policy.scope_id
+            if target_model and item.model_name != target_model:
+                continue
+        elif policy.scope == "tool":
+            if item.resource_type != "tool":
+                continue
+        if policy.provider and item.provider != policy.provider:
+            continue
+        if policy.model_name and item.model_name and item.model_name != policy.model_name:
+            continue
+        if policy.workflow_id and item.workflow_id and item.workflow_id != policy.workflow_id:
+            continue
+        if policy.resource_type and policy.resource_type != "all" and item.resource_type != policy.resource_type:
+            continue
+        if not policy.include_replay_runs and item.replay_attempt_id:
+            continue
+        if not policy.include_failed_runs and item.cost_type == "failed_retry":
+            continue
+        if not policy.include_dev_environment and (item.metadata_payload or {}).get("explicit_environment") == "dev":
+            continue
+        matching_costs.append(item)
+    return matching_costs
+
+
+def _compute_burn_rate_forecasts_from_data(
+    policies: list[BudgetPolicy],
+    tenant_costs: list[CostEvent],
+    *,
+    tenant_id: str,
+    project_id: str | None = None,
+    window_hours: int | None = None,
+    now: datetime | None = None,
+    record_metrics: bool = False,
+) -> TenantBurnRateForecastResponse:
+    settings = get_settings()
+    base_currency = settings.finops_base_currency
+    eff_now = _ensure_utc(now) or datetime.now(timezone.utc)
+    eff_window_hours = int(window_hours if window_hours is not None else settings.finops_burn_rate_window_hours)
+    min_elapsed = Decimal(str(settings.finops_burn_rate_min_elapsed_hours))
+    min_samples = int(settings.finops_burn_rate_min_samples)
+    window_start = eff_now - timedelta(hours=eff_window_hours)
+
+    forecasts: list[PolicyBurnRateForecastRecord] = []
+    status_priority = {"normal": 0, "elevated_burn": 1, "critical_burn": 2}
+    overall_status = "normal"
+
+    for policy in policies:
+        eff_from = _ensure_utc(policy.effective_from)
+        eff_to = _ensure_utc(policy.effective_to)
+        if eff_from is not None and eff_from > eff_now:
+            continue
+        if eff_to is not None and eff_to < eff_now:
+            continue
+        if project_id and policy.scope == "project" and (policy.project_id or policy.scope_id) not in {"", project_id}:
+            continue
+        bounds_info = _resolve_period_bounds(policy, eff_now)
+        if bounds_info is None:
+            continue
+        p_start, p_end, _ = bounds_info
+        matching = _matching_costs_for_policy(tenant_costs, policy, eff_now, bounds=(p_start, p_end))
+        settled_matching = _settled_cost_events(matching)
+        settled_period_spend = _money(
+            sum((_cost_for_basis(c, policy.budget_basis) for c in settled_matching), Decimal("0"))
+        )
+        window_events = [
+            c
+            for c in settled_matching
+            if (_ensure_utc(c.created_at) or eff_now) >= window_start
+        ]
+        window_spend = _money(
+            sum((_cost_for_basis(c, policy.budget_basis) for c in window_events), Decimal("0"))
+        )
+
+        elapsed_seconds = max(0.0, (eff_now - p_start).total_seconds())
+        elapsed_hours = Decimal(str(elapsed_seconds / 3600.0))
+        remaining_seconds = max(0.0, (p_end - eff_now).total_seconds())
+        remaining_period_hours = Decimal(str(remaining_seconds / 3600.0))
+
+        eff_elapsed = max(elapsed_hours, Decimal("0.01"))
+        period_avg_rate = settled_period_spend / eff_elapsed
+        recent_denom = min(Decimal(str(eff_window_hours)), eff_elapsed)
+        recent_window_rate = window_spend / recent_denom
+        hourly_burn_rate = _money(max(period_avg_rate, recent_window_rate))
+        daily_burn_rate = _money(hourly_burn_rate * Decimal("24"))
+        projected_period_cost = _money(settled_period_spend + hourly_burn_rate * remaining_period_hours)
+
+        policy_curr = (policy.currency or base_currency).strip().upper()
+        limit_fx_rate = (
+            settings.finops_fx_rates.get(policy_curr, Decimal("1"))
+            if policy_curr != base_currency
+            else Decimal("1")
+        )
+        hard_limit = _money(_money(policy.hard_limit_amount) * limit_fx_rate)
+        soft_limit = _money(_money(policy.soft_limit_amount) * limit_fx_rate)
+        if hard_limit == Decimal("0") and soft_limit == Decimal("0") and policy.limit_amount:
+            hard_limit = _money(_money(policy.limit_amount) * limit_fx_rate)
+
+        insufficient_data = (elapsed_hours < min_elapsed) or (len(settled_matching) < min_samples)
+        estimated_hours_to_hard_limit: Decimal | None = None
+        estimated_exhaustion_at: datetime | None = None
+        if hard_limit > Decimal("0") and hourly_burn_rate > Decimal("0"):
+            remaining_hard_budget = max(Decimal("0"), hard_limit - settled_period_spend)
+            estimated_hours_to_hard_limit = _money(remaining_hard_budget / hourly_burn_rate)
+            exhaust_secs = min(float(estimated_hours_to_hard_limit * Decimal("3600")), 315360000.0)
+            estimated_exhaustion_at = eff_now + timedelta(seconds=exhaust_secs)
+
+        burn_status = "normal"
+        if not insufficient_data:
+            if hard_limit > Decimal("0") and (
+                settled_period_spend > hard_limit
+                or (estimated_exhaustion_at is not None and estimated_exhaustion_at <= p_end)
+            ):
+                burn_status = "critical_burn"
+            elif (soft_limit > Decimal("0") and projected_period_cost > soft_limit) or (
+                hard_limit > Decimal("0") and projected_period_cost >= hard_limit * Decimal("0.85")
+            ):
+                burn_status = "elevated_burn"
+
+        if record_metrics and burn_status in {"elevated_burn", "critical_burn"}:
+            FINOPS_BURN_RATE_ALERTS_TOTAL.labels(
+                tenant_id=tenant_id,
+                scope=policy.scope,
+                burn_status=burn_status,
+            ).inc()
+
+        if status_priority[burn_status] > status_priority[overall_status]:
+            overall_status = burn_status
+
+        forecasts.append(
+            PolicyBurnRateForecastRecord(
+                budget_id=policy.budget_id,
+                policy_name=policy.policy_name,
+                scope=policy.scope,
+                scope_id=policy.scope_id or "",
+                period=policy.period,
+                period_start=p_start,
+                period_end=p_end,
+                settled_period_spend=settled_period_spend,
+                soft_limit_amount=soft_limit,
+                hard_limit_amount=hard_limit,
+                hourly_burn_rate=hourly_burn_rate,
+                daily_burn_rate=daily_burn_rate,
+                projected_period_cost=projected_period_cost,
+                estimated_hours_to_hard_limit=estimated_hours_to_hard_limit,
+                estimated_exhaustion_at=estimated_exhaustion_at,
+                burn_status=burn_status,
+                insufficient_data=insufficient_data,
+            )
+        )
+
+    tenant_monthly = next(
+        (f for f in forecasts if f.scope == "tenant" and f.period == "monthly"),
+        None,
+    )
+    if tenant_monthly is not None:
+        summary_hourly = tenant_monthly.hourly_burn_rate
+        summary_daily = tenant_monthly.daily_burn_rate
+        summary_projected_month = tenant_monthly.projected_period_cost
+    else:
+        m_start = datetime(eff_now.year, eff_now.month, 1, tzinfo=timezone.utc)
+        m_end = (
+            datetime(eff_now.year + 1, 1, 1, tzinfo=timezone.utc)
+            if eff_now.month == 12
+            else datetime(eff_now.year, eff_now.month + 1, 1, tzinfo=timezone.utc)
+        )
+        op_costs = [
+            c
+            for c in tenant_costs
+            if c.cost_type != "adjustment"
+            and m_start <= (_ensure_utc(c.created_at) or eff_now) <= eff_now
+        ]
+        settled_m = _settled_cost_events(op_costs)
+        m_spend = _money(sum((_pre_tax_base_cost(c) for c in settled_m), Decimal("0")))
+        w_spend = _money(
+            sum(
+                (
+                    _pre_tax_base_cost(c)
+                    for c in settled_m
+                    if (_ensure_utc(c.created_at) or eff_now) >= window_start
+                ),
+                Decimal("0"),
+            )
+        )
+        m_elapsed = max(Decimal(str(max(0.0, (eff_now - m_start).total_seconds()) / 3600.0)), Decimal("0.01"))
+        m_rem = Decimal(str(max(0.0, (m_end - eff_now).total_seconds()) / 3600.0))
+        m_avg = m_spend / m_elapsed
+        m_rec = w_spend / min(Decimal(str(eff_window_hours)), m_elapsed)
+        summary_hourly = _money(max(m_avg, m_rec))
+        if summary_hourly == Decimal("0") and forecasts:
+            summary_hourly = max((f.hourly_burn_rate for f in forecasts), default=Decimal("0"))
+        summary_daily = _money(summary_hourly * Decimal("24"))
+        summary_projected_month = _money(m_spend + summary_hourly * m_rem)
+
+    return TenantBurnRateForecastResponse(
+        tenant_id=tenant_id,
+        project_id=project_id or "",
+        base_currency=base_currency,
+        window_hours=eff_window_hours,
+        as_of=eff_now,
+        hourly_burn_rate=summary_hourly,
+        daily_burn_rate=summary_daily,
+        projected_month_end_cost=summary_projected_month,
+        burn_status=overall_status,
+        burn_rate_forecasts=forecasts,
+    )
+
+
+async def compute_tenant_burn_rate_forecast(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    project_id: str | None = None,
+    window_hours: int | None = None,
+    now: datetime | None = None,
+) -> TenantBurnRateForecastResponse:
+    policies = await list_budget_policies(session, tenant_id=tenant_id, active_only=True)
+    tenant_costs = await _list_cost_events(session, tenant_id=tenant_id, project_id=project_id)
+    return _compute_burn_rate_forecasts_from_data(
+        policies,
+        tenant_costs,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        window_hours=window_hours,
+        now=now,
+        record_metrics=True,
+    )
 
 
 async def evaluate_budget_policies(
@@ -2301,47 +2649,7 @@ async def evaluate_budget_policies(
             if target_tool and target_tool not in allowed_tools:
                 continue
 
-        matching_costs: list[CostEvent] = []
-        for item in tenant_costs:
-            if item.cost_type == "adjustment":
-                continue
-            if not _cost_in_period(item, policy, now, run.run_id):
-                continue
-            if policy.scope == "user":
-                target_user = policy.scope_id
-                if target_user and item.user_id != target_user:
-                    continue
-            elif policy.scope == "workflow":
-                target_wf = policy.workflow_id or policy.scope_id
-                if target_wf and item.workflow_id != target_wf:
-                    continue
-            elif policy.scope == "project":
-                target_proj = policy.project_id or policy.scope_id
-                if target_proj and item.project_id != target_proj:
-                    continue
-            elif policy.scope == "model":
-                target_model = policy.model_name or policy.scope_id
-                if target_model and item.model_name != target_model:
-                    continue
-            elif policy.scope == "tool":
-                if item.resource_type != "tool":
-                    continue
-            if policy.provider and item.provider != policy.provider:
-                continue
-            if policy.model_name and item.model_name and item.model_name != policy.model_name:
-                continue
-            if policy.workflow_id and item.workflow_id and item.workflow_id != policy.workflow_id:
-                continue
-            if policy.resource_type and policy.resource_type != "all" and item.resource_type != policy.resource_type:
-                continue
-            if not policy.include_replay_runs and item.replay_attempt_id:
-                continue
-            if not policy.include_failed_runs and item.cost_type == "failed_retry":
-                continue
-            if not policy.include_dev_environment and (item.metadata_payload or {}).get("explicit_environment") == "dev":
-                continue
-            matching_costs.append(item)
-
+        matching_costs = _matching_costs_for_policy(tenant_costs, policy, now, run_id=run.run_id)
         settled_matching = _settled_cost_events(matching_costs)
         spent_before = _money(
             sum(_cost_for_basis(c, policy.budget_basis) for c in settled_matching if c.run_id != run.run_id)
@@ -2506,6 +2814,17 @@ async def evaluate_budget_policies(
                 f"{format_decimal_plain(total_amount)} > {format_decimal_plain(limit_used)} {base_currency}."
             )
 
+    forecast_resp = _compute_burn_rate_forecasts_from_data(
+        policies,
+        tenant_costs,
+        tenant_id=run.tenant_id,
+        now=now,
+        record_metrics=True,
+    )
+    if forecast_resp.burn_status in {"elevated_burn", "critical_burn"}:
+        if "finops_burn_rate_warning" not in outcome.policy_flags:
+            outcome.policy_flags.append("finops_burn_rate_warning")
+
     return outcome
 
 
@@ -2668,6 +2987,13 @@ async def apply_budget_enforcement_to_run(
         if result is not None and hasattr(result, "response"):
             result.response.status = "denied"
             result.response.decision_reason = reason
+        await release_run_budget_lease(
+            session,
+            None,
+            run_id=run.run_id,
+            tenant_id=run.tenant_id,
+            reason=reason,
+        )
 
     run.evaluation_summary = summary
     run.result = {
@@ -2683,6 +3009,331 @@ async def apply_budget_enforcement_to_run(
     }
     if result is not None and hasattr(result, "evaluation_summary"):
         result.evaluation_summary = summary
+
+
+async def acquire_run_budget_lease(
+    session: AsyncSession,
+    state_store: RunStateStore | None = None,
+    *,
+    run: AgentRun,
+    plan: ExecutionPlan | None = None,
+) -> TokenBudgetLeaseRecord:
+    settings = get_settings()
+    base_currency = settings.finops_base_currency
+    ttl_seconds = int(settings.finops_token_lease_ttl_seconds)
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(seconds=ttl_seconds)
+
+    costs = await _list_cost_events(session, run_id=run.run_id)
+    est_costs = [c for c in costs if c.cost_type == "estimated"]
+    lease_id = f"lease_{run.run_id}"
+    estimated_base_cost = _money(sum((_pre_tax_base_cost(c) for c in est_costs), Decimal("0")))
+    estimated_tokens = sum(
+        int(_decimal(c.quantity))
+        for c in est_costs
+        if c.resource_type == "model"
+    )
+    model_name = next((c.model_name for c in est_costs if c.model_name), "")
+    project_id = next((c.project_id for c in est_costs if c.project_id), "")
+
+    for item in est_costs:
+        meta = dict(item.metadata_payload or {})
+        meta.pop("lease_released_reason", None)
+        meta.pop("lease_released_at", None)
+        meta.update(
+            {
+                "lease_id": lease_id,
+                "lease_status": "active",
+                "lease_created_at": now.isoformat(),
+                "lease_expires_at": expires_at.isoformat(),
+                "lease_ttl_seconds": ttl_seconds,
+            }
+        )
+        item.metadata_payload = meta
+
+    lease_dict = {
+        "lease_id": lease_id,
+        "run_id": run.run_id,
+        "tenant_id": run.tenant_id,
+        "user_id": run.user_id,
+        "project_id": project_id,
+        "model_name": model_name,
+        "estimated_tokens": estimated_tokens,
+        "estimated_base_cost": format_decimal_plain(estimated_base_cost),
+        "currency": base_currency,
+        "status": "active",
+        "created_at": now.isoformat(),
+        "expires_at": expires_at.isoformat(),
+        "ttl_seconds": ttl_seconds,
+    }
+    if plan is not None:
+        old_route = dict(plan.model_route or {})
+        old_route["token_lease"] = {
+            "lease_id": lease_id,
+            "status": "active",
+            "estimated_base_cost": format_decimal_plain(estimated_base_cost),
+            "estimated_tokens": estimated_tokens,
+            "expires_at": expires_at.isoformat(),
+        }
+        plan.model_route = old_route
+        summary = dict(run.evaluation_summary or {})
+        exec_plan_dict = dict(summary.get("execution_plan") or {})
+        if exec_plan_dict:
+            exec_plan_dict["model_route"] = plan.model_route
+            summary["execution_plan"] = exec_plan_dict
+            run.evaluation_summary = summary
+
+    if state_store is not None:
+        await state_store.acquire_token_lease(lease_dict, ttl_seconds=ttl_seconds)
+    FINOPS_TOKEN_LEASES_TOTAL.labels(tenant_id=run.tenant_id, action="acquired").inc()
+    await session.flush()
+
+    return TokenBudgetLeaseRecord(
+        lease_id=lease_id,
+        run_id=run.run_id,
+        tenant_id=run.tenant_id,
+        user_id=run.user_id,
+        project_id=project_id,
+        model_name=model_name,
+        estimated_tokens=estimated_tokens,
+        estimated_base_cost=estimated_base_cost,
+        currency=base_currency,
+        status="active",
+        stale=False,
+        created_at=now,
+        expires_at=expires_at,
+        ttl_seconds=ttl_seconds,
+    )
+
+
+async def settle_run_budget_lease(
+    session: AsyncSession,
+    state_store: RunStateStore | None = None,
+    *,
+    run: AgentRun,
+    plan: ExecutionPlan | None = None,
+) -> None:
+    now = datetime.now(timezone.utc)
+    costs = await _list_cost_events(session, run_id=run.run_id)
+    est_costs = [c for c in costs if c.cost_type == "estimated"]
+    already_settled = all(
+        str((c.metadata_payload or {}).get("lease_status") or "") == "settled"
+        for c in est_costs
+    ) if est_costs else True
+
+    for item in est_costs:
+        meta = dict(item.metadata_payload or {})
+        meta["lease_id"] = str(meta.get("lease_id") or f"lease_{run.run_id}")
+        meta["lease_status"] = "settled"
+        meta["lease_settled_at"] = now.isoformat()
+        item.metadata_payload = meta
+
+    if plan is not None:
+        old_route = dict(plan.model_route or {})
+        lease_info = dict(old_route.get("token_lease") or {})
+        if lease_info:
+            lease_info["status"] = "settled"
+            lease_info["settled_at"] = now.isoformat()
+            old_route["token_lease"] = lease_info
+            plan.model_route = old_route
+
+    if state_store is not None:
+        await state_store.release_token_lease(
+            run.tenant_id,
+            run.run_id,
+            status="settled",
+            reason="worker_completed",
+        )
+    if not already_settled:
+        FINOPS_TOKEN_LEASES_TOTAL.labels(tenant_id=run.tenant_id, action="settled").inc()
+    await session.flush()
+
+
+async def release_run_budget_lease(
+    session: AsyncSession,
+    state_store: RunStateStore | None = None,
+    *,
+    run_id: str,
+    tenant_id: str | None = None,
+    reason: str = "released",
+    actor: str = "system",
+    record_governance_event: bool = False,
+) -> TokenBudgetLeaseRecord | None:
+    settings = get_settings()
+    base_currency = settings.finops_base_currency
+    now = datetime.now(timezone.utc)
+    costs = await _list_cost_events(session, run_id=run_id)
+    est_costs = [c for c in costs if c.cost_type == "estimated"]
+    run = await session.scalar(select(AgentRun).where(AgentRun.run_id == run_id))
+    eff_tenant_id = tenant_id or (run.tenant_id if run is not None else (est_costs[0].tenant_id if est_costs else "default"))
+
+    if not est_costs and run is None:
+        return None
+
+    already_released = all(
+        str((c.metadata_payload or {}).get("lease_status") or "") == "released"
+        for c in est_costs
+    ) if est_costs else False
+
+    lease_id = f"lease_{run_id}"
+    estimated_base_cost = _money(sum((_pre_tax_base_cost(c) for c in est_costs), Decimal("0")))
+    estimated_tokens = sum(
+        int(_decimal(c.quantity))
+        for c in est_costs
+        if c.resource_type == "model"
+    )
+    model_name = next((c.model_name for c in est_costs if c.model_name), "")
+    project_id = next((c.project_id for c in est_costs if c.project_id), "")
+    created_at_dt = _ensure_utc((est_costs[0].metadata_payload or {}).get("lease_created_at")) if est_costs else now
+    expires_at_dt = _ensure_utc((est_costs[0].metadata_payload or {}).get("lease_expires_at")) if est_costs else now
+    ttl_seconds = int((est_costs[0].metadata_payload or {}).get("lease_ttl_seconds") or settings.finops_token_lease_ttl_seconds) if est_costs else int(settings.finops_token_lease_ttl_seconds)
+
+    for item in est_costs:
+        meta = dict(item.metadata_payload or {})
+        lease_id = str(meta.get("lease_id") or lease_id)
+        meta["lease_id"] = lease_id
+        meta["lease_status"] = "released"
+        meta["lease_released_reason"] = reason
+        meta["lease_released_at"] = now.isoformat()
+        item.metadata_payload = meta
+
+    plan = await session.scalar(select(ExecutionPlan).where(ExecutionPlan.run_id == run_id))
+    if plan is not None:
+        old_route = dict(plan.model_route or {})
+        lease_info = dict(old_route.get("token_lease") or {"lease_id": lease_id})
+        lease_info["status"] = "released"
+        lease_info["released_reason"] = reason
+        lease_info["released_at"] = now.isoformat()
+        old_route["token_lease"] = lease_info
+        plan.model_route = old_route
+        if run is not None:
+            summary = dict(run.evaluation_summary or {})
+            exec_plan_dict = dict(summary.get("execution_plan") or {})
+            if exec_plan_dict:
+                exec_plan_dict["model_route"] = plan.model_route
+                summary["execution_plan"] = exec_plan_dict
+                run.evaluation_summary = summary
+
+    if state_store is not None:
+        await state_store.release_token_lease(eff_tenant_id, run_id, status="released", reason=reason)
+    if est_costs and not already_released:
+        FINOPS_TOKEN_LEASES_TOTAL.labels(tenant_id=eff_tenant_id, action="released").inc()
+    if record_governance_event:
+        session.add(
+            GovernanceEvent(
+                tenant_id=eff_tenant_id,
+                user_id=actor,
+                run_id=run_id,
+                event_type="finops_token_lease_released",
+                decision="released",
+                reason=reason,
+                details={
+                    "lease_id": lease_id,
+                    "estimated_base_cost": format_decimal_plain(estimated_base_cost),
+                    "estimated_tokens": estimated_tokens,
+                },
+            )
+        )
+    await session.flush()
+
+    return TokenBudgetLeaseRecord(
+        lease_id=lease_id,
+        run_id=run_id,
+        tenant_id=eff_tenant_id,
+        user_id=run.user_id if run is not None else (est_costs[0].user_id if est_costs else ""),
+        project_id=project_id,
+        model_name=model_name,
+        estimated_tokens=estimated_tokens,
+        estimated_base_cost=estimated_base_cost,
+        currency=base_currency,
+        status="released",
+        stale=False,
+        created_at=created_at_dt or now,
+        expires_at=expires_at_dt or now,
+        ttl_seconds=ttl_seconds,
+        released_reason=reason,
+    )
+
+
+def _compute_active_leases_from_costs(
+    costs: list[CostEvent],
+    *,
+    tenant_id: str,
+    now: datetime | None = None,
+) -> TenantTokenLeasesResponse:
+    settings = get_settings()
+    base_currency = settings.finops_base_currency
+    eff_now = _ensure_utc(now) or datetime.now(timezone.utc)
+    default_ttl = int(settings.finops_token_lease_ttl_seconds)
+
+    by_run: dict[str, list[CostEvent]] = {}
+    for item in costs:
+        if not item.run_id or item.cost_type == "adjustment":
+            continue
+        by_run.setdefault(item.run_id, []).append(item)
+
+    active_leases: list[TokenBudgetLeaseRecord] = []
+    for run_id, run_costs in by_run.items():
+        if any(c.cost_type == "actual" for c in run_costs):
+            continue
+        est_rows = [c for c in run_costs if c.cost_type == "estimated"]
+        if not est_rows:
+            continue
+        first_meta = dict(est_rows[0].metadata_payload or {})
+        lease_status = str(first_meta.get("lease_status") or "")
+        if lease_status != "active":
+            continue
+        lease_id = str(first_meta.get("lease_id") or f"lease_{run_id}")
+        est_cost = _money(sum((_pre_tax_base_cost(c) for c in est_rows), Decimal("0")))
+        est_tokens = sum(int(_decimal(c.quantity)) for c in est_rows if c.resource_type == "model")
+        model_name = next((c.model_name for c in est_rows if c.model_name), "")
+        project_id = next((c.project_id for c in est_rows if c.project_id), "")
+        user_id = next((c.user_id for c in est_rows if c.user_id), "")
+        created_dt = _ensure_utc(first_meta.get("lease_created_at")) or _ensure_utc(est_rows[0].created_at) or eff_now
+        ttl_sec = int(first_meta.get("lease_ttl_seconds") or default_ttl)
+        expires_dt = _ensure_utc(first_meta.get("lease_expires_at")) or (created_dt + timedelta(seconds=ttl_sec))
+        is_stale = expires_dt <= eff_now
+        active_leases.append(
+            TokenBudgetLeaseRecord(
+                lease_id=lease_id,
+                run_id=run_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                project_id=project_id,
+                model_name=model_name,
+                estimated_tokens=est_tokens,
+                estimated_base_cost=est_cost,
+                currency=base_currency,
+                status="active",
+                stale=is_stale,
+                created_at=created_dt,
+                expires_at=expires_dt,
+                ttl_seconds=ttl_sec,
+            )
+        )
+
+    active_leases.sort(key=lambda r: r.created_at or eff_now, reverse=True)
+    total_tokens = sum(r.estimated_tokens for r in active_leases)
+    total_cost = _money(sum((r.estimated_base_cost for r in active_leases), Decimal("0")))
+    return TenantTokenLeasesResponse(
+        tenant_id=tenant_id,
+        base_currency=base_currency,
+        active_lease_count=len(active_leases),
+        active_leased_tokens=total_tokens,
+        active_leased_base_cost=total_cost,
+        active_leases=active_leases,
+    )
+
+
+async def list_tenant_token_leases(
+    session: AsyncSession,
+    state_store: RunStateStore | None = None,
+    *,
+    tenant_id: str,
+    now: datetime | None = None,
+) -> TenantTokenLeasesResponse:
+    costs = await _list_cost_events(session, tenant_id=tenant_id)
+    return _compute_active_leases_from_costs(costs, tenant_id=tenant_id, now=now)
 
 
 async def _compute_savings_for_costs(
@@ -2767,6 +3418,20 @@ async def run_cost_summary(session: AsyncSession, *, run_id: str) -> RunCostSumm
         budget_status = "within_budget"
     cost_delta = _money(actual - estimated)
     cache_savings, batch_savings = await _compute_savings_for_costs(session, settled_costs)
+    est_rows = [c for c in operational_costs if c.cost_type == "estimated"]
+    act_rows = [c for c in operational_costs if c.cost_type == "actual"]
+    first_est_meta = dict((est_rows[0].metadata_payload if est_rows else {}) or {})
+    token_lease_id = str(first_est_meta.get("lease_id") or "")
+    raw_lease_status = str(first_est_meta.get("lease_status") or "")
+    if raw_lease_status == "released":
+        token_lease_status = "released"
+    elif act_rows or raw_lease_status == "settled":
+        token_lease_status = "settled"
+    elif est_rows:
+        token_lease_status = "active"
+    else:
+        run_row = await session.scalar(select(AgentRun).where(AgentRun.run_id == run_id))
+        token_lease_status = "none (policy denied)" if (run_row and run_row.status == "denied") else "none"
     return RunCostSummary(
         run_id=run_id,
         tenant_id=tenant_id,
@@ -2795,6 +3460,8 @@ async def run_cost_summary(session: AsyncSession, *, run_id: str) -> RunCostSumm
         failed_retry_cost=_money(sum((_pre_tax_base_cost(item) for item in settled_costs if item.cost_type == "failed_retry"), Decimal("0"))),
         cache_savings=cache_savings,
         batch_savings=batch_savings,
+        token_lease_status=token_lease_status,
+        token_lease_id=token_lease_id,
         usage_events=usage,
         cost_events=costs,
     )
@@ -2861,14 +3528,29 @@ async def tenant_cost_summary(
 
     violations = await list_budget_violations(session, tenant_id=tenant_id)
     budgets = await list_budget_policies(session, tenant_id=tenant_id, active_only=True)
-    monthly_limit = sum(
-        (
-            _decimal(item.hard_limit_amount or item.limit_amount or item.soft_limit_amount)
-            for item in budgets
-            if item.period == "monthly"
-        ),
-        Decimal("0"),
+    monthly_limit = Decimal("0")
+    for item in budgets:
+        if item.period != "monthly":
+            continue
+        if project_id:
+            if item.scope != "project" or (item.project_id or item.scope_id) != project_id:
+                continue
+        else:
+            if item.scope != "tenant":
+                continue
+        raw_limit = _decimal(item.hard_limit_amount or item.limit_amount or item.soft_limit_amount)
+        p_curr = (item.currency or base_currency).strip().upper()
+        p_fx = settings.finops_fx_rates.get(p_curr, Decimal("1")) if p_curr != base_currency else Decimal("1")
+        monthly_limit += _money(raw_limit * p_fx)
+
+    forecast_resp = _compute_burn_rate_forecasts_from_data(
+        budgets,
+        costs,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        now=now,
     )
+    leases_resp = _compute_active_leases_from_costs(costs, tenant_id=tenant_id, now=now)
     cache_savings, batch_savings = await _compute_savings_for_costs(session, settled_costs)
     return TenantCostSummary(
         tenant_id=tenant_id,
@@ -2884,6 +3566,14 @@ async def tenant_cost_summary(
         reconciled_month_to_date_cost=reconciled_mtd,
         budget_used_percent=_money((month_cost / monthly_limit * 100) if monthly_limit else 0),
         violation_count=len(violations),
+        hourly_burn_rate=forecast_resp.hourly_burn_rate,
+        daily_burn_rate=forecast_resp.daily_burn_rate,
+        projected_month_end_cost=forecast_resp.projected_month_end_cost,
+        burn_status=forecast_resp.burn_status,
+        burn_rate_forecasts=forecast_resp.burn_rate_forecasts,
+        active_lease_count=leases_resp.active_lease_count,
+        active_leased_tokens=leases_resp.active_leased_tokens,
+        active_leased_base_cost=leases_resp.active_leased_base_cost,
         currency_breakdown=currency_breakdown,
         cost_center_breakdown=_breakdown(settled_costs, "cost_center"),
         provider_breakdown=_breakdown(settled_costs, "provider"),

@@ -5,7 +5,7 @@
   <div>
     <h1>Costs</h1>
     <div class="title-note">Tenant Cost Summary</div>
-    <div class="muted">V1.5.5 Agent FinOps Core / Settled Ledger, Multi-Currency FX &amp; Reconciliation Export</div>
+    <div class="muted">V1.5.6 Agent FinOps Core / Burn-Rate Forecasting, Dynamic Token Broker &amp; Settled Ledger</div>
   </div>
   <form method="get" action="/dashboard/costs" class="inline-form">
     <input name="tenant_id" value="{{ tenant_id }}" placeholder="tenant_id">
@@ -35,9 +35,73 @@
   <div class="stat"><div class="stat-label">Reconciled MTD</div><div class="stat-value">{{ summary.reconciled_month_to_date_cost|decimal_plain }} {{ summary.base_currency }}</div></div>
   <div class="stat"><div class="stat-label">Budget Used</div><div class="stat-value">{{ "%.2f"|format(summary.budget_used_percent) }}%</div></div>
   <div class="stat"><div class="stat-label">Violations</div><div class="stat-value">{{ summary.violation_count }}</div></div>
+  <div class="stat"><div class="stat-label">Hourly / Daily Burn</div><div class="stat-value">{{ summary.hourly_burn_rate|decimal_plain }} / {{ summary.daily_burn_rate|decimal_plain }} {{ summary.base_currency }}</div></div>
+  <div class="stat"><div class="stat-label">Projected Month-End</div><div class="stat-value">{{ summary.projected_month_end_cost|decimal_plain }} {{ summary.base_currency }}</div></div>
+  <div class="stat"><div class="stat-label">Burn Status</div><div class="stat-value"><span class="status {{ summary.burn_status }}">{{ summary.burn_status }}</span></div></div>
+  <div class="stat"><div class="stat-label">Active Leases (incl. in MTD)</div><div class="stat-value">{{ summary.active_lease_count }} ({{ summary.active_leased_base_cost|decimal_plain }} {{ summary.base_currency }})</div></div>
   <div class="stat"><div class="stat-label">Cache Savings</div><div class="stat-value">{{ summary.cache_savings|decimal_plain }} {{ summary.base_currency }}</div></div>
   <div class="stat"><div class="stat-label">Batch Savings</div><div class="stat-value">{{ summary.batch_savings|decimal_plain }} {{ summary.base_currency }}</div></div>
   <div class="stat"><div class="stat-label">Failed / Replay</div><div class="stat-value">{{ summary.failed_run_cost|decimal_plain }} / {{ summary.replay_cost|decimal_plain }}</div></div>
+</section>
+
+<section class="panel">
+  <h2>Burn-Rate &amp; Exhaustion Forecast <span class="heading-note">預算消耗速率與耗盡預測</span></h2>
+  <table>
+    <thead><tr><th>Policy</th><th>Scope / Period</th><th>Spent / Hard Limit</th><th>Soft Limit</th><th>Hourly Burn</th><th>Daily Burn</th><th>Projected Period End</th><th>Exhaustion Forecast</th><th>Burn Status</th></tr></thead>
+    <tbody>
+    {% for item in summary.burn_rate_forecasts %}
+      <tr>
+        <td>{{ item.policy_name }}<br><span class="muted">{{ item.budget_id }}</span></td>
+        <td>{{ item.scope }} ({{ item.scope_id }})<br><span class="muted">{{ item.period }}</span></td>
+        <td>{{ item.settled_period_spend|decimal_plain }} / {{ item.hard_limit_amount|decimal_plain }} {{ summary.base_currency }}</td>
+        <td>{{ item.soft_limit_amount|decimal_plain }} {{ summary.base_currency }}</td>
+        <td>{{ item.hourly_burn_rate|decimal_plain }} {{ summary.base_currency }}/h</td>
+        <td>{{ item.daily_burn_rate|decimal_plain }} {{ summary.base_currency }}/d</td>
+        <td>{{ item.projected_period_cost|decimal_plain }} {{ summary.base_currency }}</td>
+        <td>
+          {% if item.estimated_hours_to_hard_limit is not none %}
+          {{ item.estimated_hours_to_hard_limit|decimal_plain }} h<br><span class="muted">{{ item.estimated_exhaustion_at or "-" }}</span>
+          {% else %}
+          <span class="muted">No exhaustion in current trend</span>
+          {% endif %}
+        </td>
+        <td><span class="status {{ item.burn_status }}">{{ item.burn_status }}</span></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="9" class="muted">No active recurring budget policies for burn-rate forecasting.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Active Pre-Execution Token Leases <span class="heading-note">動態 Token 租約鎖定與釋放</span></h2>
+  <table>
+    <thead><tr><th>Lease ID</th><th>Run</th><th>User / Project</th><th>Model</th><th>Reserved Tokens</th><th>Reserved Cost</th><th>Status</th><th>Expires At</th><th>Actions</th></tr></thead>
+    <tbody>
+    {% for lease in leases.active_leases %}
+      <tr>
+        <td>{{ lease.lease_id }}</td>
+        <td><a href="/dashboard/runs/{{ lease.run_id }}">{{ lease.run_id }}</a></td>
+        <td>{{ lease.user_id or "-" }} / {{ lease.project_id or "-" }}</td>
+        <td>{{ lease.model_name or "-" }}</td>
+        <td>{{ lease.estimated_tokens }}</td>
+        <td>{{ lease.estimated_base_cost|decimal_plain }} {{ lease.currency }}</td>
+        <td><span class="status {{ lease.status }}">{{ lease.status }}</span></td>
+        <td>{{ lease.expires_at or "-" }}</td>
+        <td>
+          <form method="post" action="/dashboard/costs/leases/{{ lease.run_id }}/release">
+            <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+            <input type="hidden" name="reason" value="Manual operator lease release from Costs portal">
+            <button class="button secondary" type="submit">Release Lease</button>
+          </form>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="9" class="muted">No active pre-execution token leases for this tenant.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
 </section>
 
 <section class="detail-grid">
