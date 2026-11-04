@@ -37,6 +37,7 @@
         <tr><th>Unit Price</th><td>{{ item.unit_price|decimal_plain }} {{ item.currency }}</td></tr>
         <tr><th>Discount / Multiplier</th><td>{{ item.discount_rate|decimal_plain }} / {{ item.multiplier|decimal_plain }}</td></tr>
         <tr><th>Tax Included</th><td>{{ item.tax_included }}</td></tr>
+        <tr><th>Tax Rate / FX Override</th><td>{{ (item.metadata_payload or {}).get("tax_rate", "-") }} / {{ (item.metadata_payload or {}).get("fx_rate", "-") }}</td></tr>
       </tbody>
     </table>
   </div>
@@ -78,6 +79,12 @@
     <label>Currency
       <input name="currency" value="{{ item.currency }}">
     </label>
+    <label>Tax Rate (Metadata)
+      <input name="tax_rate" value="{{ (item.metadata_payload or {}).get('tax_rate', '') }}" placeholder="e.g. 0.05">
+    </label>
+    <label>FX Rate Override (Metadata)
+      <input name="fx_rate" value="{{ (item.metadata_payload or {}).get('fx_rate', '') }}" placeholder="optional FX override">
+    </label>
     <label>Effective From
       <input name="effective_from" value="{{ item.effective_from }}">
     </label>
@@ -86,6 +93,10 @@
     </label>
     <label>Change Reason
       <input name="change_reason" value="{{ item.change_reason }}">
+    </label>
+    <label class="checkline">
+      <input type="checkbox" name="tax_included" {% if item.tax_included %}checked{% endif %}>
+      Tax Included
     </label>
     <label class="checkline">
       <input type="checkbox" name="is_active" {% if item.is_active %}checked{% endif %}>

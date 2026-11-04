@@ -1,9 +1,9 @@
 # Manual QA & Interactive Browser Testing Guide
 
-> **Testing Baseline**: `v1.5.4`
+> **Testing Baseline**: `v1.5.5`
 > **Target Environment**: Local Docker Compose Stack (`http://localhost:8000`)
 > **Primary Interface**: Web Browser (`/dashboard`) & REST API (`/v1`)
-> **Automated Browser Runner**: `python scripts/browser_manual_test.py`
+> **Automated Browser Runner**: `python scripts/browser_manual_test.py` (supports `--qa-currency TWD|USD|CNY`, default `TWD`)
 
 This guide provides step-by-step interactive walkthroughs for human engineers, QA reviewers, and AI agents to verify the **RewardHacking** platform end-to-end using a standard web browser. Every new version release must update this guide and execute `python scripts/browser_manual_test.py` to verify all scenarios in a real browser.
 
@@ -98,23 +98,29 @@ This scenario verifies interception of high-risk or adversarial prompts (includi
 
 ---
 
-## 4. Scenario 3: FinOps Pricing Seed Import, Active Budget Enforcement & Violation Triage (`v1.5.4`)
+## 4. Scenario 3: FinOps Pricing Seed Import, Multi-Currency FX & Tax, Active Budget Enforcement & Ledger Export (`v1.5.5`)
 
-This scenario tests the complete `v1.5.3` FinOps governance lifecycle: importing the official model pricing catalog, configuring a fail-closed budget policy, triggering an active budget block, and triaging the resulting violation.
+This scenario tests the complete `v1.5.5` FinOps governance and financial reconciliation lifecycle: importing the official model pricing catalog, creating an isolated QA multi-currency pricing entry (`qa-fx-model`, default `TWD`), verifying FX/tax calculation and cost-center attribution, triggering pre-execution budget enforcement, triaging violations, recording a manual cost adjustment, and exporting CSV/JSON ledgers.
 
-### 4.1 Import Official Model Pricing Seed
+### 4.1 Import Official Model Pricing Seed & Configure Isolated QA FX/Tax Pricing
 1. Navigate to **Pricing Import** (`http://localhost:8000/dashboard/admin/finops/pricing/import`).
 2. Confirm **Seed File Path** is set to `app/seeds/model_pricing_seed.yaml`.
 3. Click **Dry Run**:
    - Verify the validation summary displays `import_mode: dry_run`, `status: validated`, `valid_rows: 149`, `invalid_rows: []`, and lists any `stale_sources` warnings if `source_checked_at` exceeds `PRICING_SOURCE_STALE_DAYS`.
 4. Click **Apply Import**:
    - Verify the status displays `applied` and a new batch entry appears under **Import History**.
-5. Navigate to **Pricing Catalog** (`http://localhost:8000/dashboard/admin/finops/pricing`):
-   - Filter by Provider `openai` or `anthropic` and click **Apply**.
-   - Click any **Pricing ID** link to open the **Pricing Detail** page (`/dashboard/admin/finops/pricing/{pricing_id}`).
-   - Modify **Unit Price** or **Change Reason** and click **Save**; verify a new audit entry appears in the **Change Log** table at the bottom of the page.
+5. Create an isolated `tenant_override` pricing row via `POST /v1/pricing` (for `tenant_id="finops-qa-tenant"`, `provider="qa_local"`, `model_name="qa-fx-model"`) so official global seed rows are never polluted, then open its **Pricing Detail** page (`/dashboard/admin/finops/pricing/{pricing_id}`):
+   - Set **Currency** to `TWD` (or `USD`/`CNY` via `--qa-currency`), **FX Rate to Base** to `0.03125000`, **Tax Rate** to `0.050000`, and **Tax Inclusive** to `false`, then click **Save**.
+   - Verify the updated currency, FX rate, and tax rate appear on the detail view and in the **Change Log** table.
 
-### 4.2 Create an Active Hard-Limit Budget Policy
+### 4.2 Submit Multi-Currency Run with Cost-Center Attribution
+1. Navigate to **Playground** (`http://localhost:8000/dashboard/playground`).
+2. Submit a run under `finops-qa-tenant` routed to `provider=qa_local`, `model_name=qa-fx-model`, `project_id=proj-finops-155`, `cost_center=cc-rd-ai`, and `org_id=org-core`.
+3. Open **Run Detail** (`/dashboard/runs/{run_id}`) after worker completion and verify:
+   - **Settled Total (Pre-Tax Base)**, **Total Tax (Base)**, **Total Billed (Post-Tax Base)**, and **Reconciled Total (Base)** are displayed without `0E-8` artifacts, and pre-execution `estimated` costs are not double-counted once `actual` events arrive.
+   - **Cost Events** displays the source currency (`TWD`), `fx_rate`, `tax_amount`, `base_currency_cost`, and `cost_center=cc-rd-ai`.
+
+### 4.3 Create an Active Hard-Limit Budget Policy & Trigger Enforcement
 1. Navigate to **Budget Policies** (`http://localhost:8000/dashboard/admin/finops/budgets`).
 2. In the **Create Budget Policy** form, enter:
    - **Policy Name**: `QA Hard Daily Cap`
@@ -127,36 +133,17 @@ This scenario tests the complete `v1.5.3` FinOps governance lifecycle: importing
    - **Fallback Model Tier**: `economy`
    - **Actions on Soft Limit**: `warn,record_violation,degrade_model`
    - **Actions on Hard Limit**: `record_violation,fail_closed`
-3. Click **Create Budget Policy**.
-4. **Expected Visual State**:
-   - The new policy `QA Hard Daily Cap` appears in the **Budget Policies** table with status `active` and plain decimal limits (`0.000010 USD` / `0.000020 USD`).
+3. Click **Create Budget Policy** and verify it appears with status `active`.
+4. Submit another task under `finops-qa-tenant` on `/dashboard/playground` and verify the run is intercepted with status **`denied`** and flag `finops_budget_hard_limit_exceeded`.
 
-### 4.3 Trigger Pre-Execution Budget Enforcement
-1. Navigate to **Playground** (`http://localhost:8000/dashboard/playground`).
-2. Submit a task under the budgeted tenant:
-   - **Tenant ID**: `finops-qa-tenant`
-   - **User ID**: `finops-tester`
-   - **Task Type**: `code_fix`
-   - **Allowed Tools**: `read_repo, run_tests`
-   - **Goal**: `Test v1.5.3 fail-closed budget enforcement`
-   - **Prompt**: `Analyze repository structure and estimate patch complexity.`
-3. Click **Submit Run**.
-4. **Expected Visual State**:
-   - The run is immediately intercepted with status **`denied`**.
-   - Click **Open run detail** to verify:
-     - **Decision Reason** states that the budget policy hard limit was exceeded.
-     - **Policy Flags** includes `finops_budget_hard_limit_exceeded`.
-     - **Execution Plan** status is `blocked`.
-
-### 4.4 Triage Budget Violations (`Acknowledge` & `Resolve`)
+### 4.4 Triage Violations, Record Manual Adjustment & Export CSV/JSON Ledger
 1. Navigate to **FinOps Costs** (`http://localhost:8000/dashboard/costs?tenant_id=finops-qa-tenant`).
-2. Inspect the summary cards at the top:
-   - Verify **Today Cost**, **Month-to-Date Cost**, **Cache Savings**, and **Batch Savings** are displayed in clean decimal format without `0E-8`.
-3. Scroll down to the **Budget Violations** table:
-   - Locate the violation generated for `finops-qa-tenant` (initial status: `open`).
-   - Click **Acknowledge** $\rightarrow$ verify the violation status updates to `acknowledged`.
-   - Click **Resolve** (or **Ignore**) $\rightarrow$ verify the violation status updates to `resolved` (or `ignored`).
-4. Return to **Budget Policies** (`http://localhost:8000/dashboard/admin/finops/budgets`) and click **Disable** on `QA Hard Daily Cap` when finished testing.
+2. Verify the summary cards (**Settled Month-to-Date**, **Total Tax**, **Total Billed**, **Adjustments**, **Reconciled MTD**) and the **Cost Center Breakdown** (`cc-rd-ai`) and **Source Currency Breakdown** (`TWD`) tables render cleanly.
+3. In the **Record Cost Adjustment** form, submit a credit (`adjustment_amount=-0.000500`, `currency=USD`, `cost_center=cc-rd-ai`, `invoice_id=INV-2026-10`, check **Mark run events reconciled**):
+   - Verify a `cost_adj_...` adjustment updates **Adjustments** and **Reconciled MTD**.
+4. Click **Export CSV** and **Export JSON** (or filter by `cost_center=cc-rd-ai`):
+   - Verify `/v1/cost/tenants/finops-qa-tenant/export?format=csv` returns HTTP 200 (`text/csv`) and `?format=json` returns HTTP 200 (`application/json`) with `calculation_version="v1.5.5"`.
+5. Scroll down to the **Budget Violations** table, click **Acknowledge** and **Resolve**, then disable `QA Hard Daily Cap` and the temporary `qa-fx-model` pricing row when finished.
 
 ---
 
@@ -174,6 +161,9 @@ This scenario tests the complete `v1.5.3` FinOps governance lifecycle: importing
    - `agent_requests_total`
    - `agent_finops_usage_events_total`
    - `agent_finops_cost_usd_total`
+   - `agent_finops_base_currency_cost_total`
+   - `agent_finops_tax_total`
+   - `agent_finops_ledger_exports_total`
    - `agent_finops_budget_violations_total`
    - `agent_finops_pricing_imports_total`
 
@@ -182,7 +172,7 @@ This scenario tests the complete `v1.5.3` FinOps governance lifecycle: importing
 2. Verify the **Release Readiness Checks** table includes:
    - `finops_pricing_catalog_ready` (`pass`)
    - `finops_open_critical_violations` (`pass` after resolving open violations in Scenario 4.4)
-3. Verify the **Release Version** input field in the **Create Release Gate** form defaults to `v1.5.4`.
+3. Verify the **Release Version** input field in the **Create Release Gate** form defaults to `v1.5.5`.
 4. Optionally submit operational drill evidence (`backup_restore`, `secret_rotation`, `safety_regression`) and click **Create Release Gate** to record an auditable release snapshot.
 
 ---

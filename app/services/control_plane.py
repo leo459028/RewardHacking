@@ -10,6 +10,7 @@ from app.models.control_plane import ExecutionPlan, ExecutionPlanStep, ToolDefin
 from app.observability.metrics import CONTROL_PLANE_STEPS_TOTAL
 from app.schemas.agent import AgentRequest
 from app.schemas.control_plane import ExecutionPlanDraft
+from app.services.finops import FINOPS_CALCULATION_VERSION, extract_allocation
 
 
 BUILTIN_WORKFLOWS: list[dict] = [
@@ -201,6 +202,8 @@ class ControlPlanePlanner:
         routed_pricing_mode = str(meta.get("pricing_mode") or "standard").strip() or "standard"
         routed_service_tier = str(meta.get("service_tier") or "standard").strip() or "standard"
         routed_project_id = str(meta.get("project_id") or "").strip()
+        allocation, attribution_warnings = extract_allocation(meta)
+        allocation["project_id"] = routed_project_id
 
         model_route: dict = {
             "provider": routed_provider,
@@ -208,8 +211,11 @@ class ControlPlanePlanner:
             "pricing_mode": routed_pricing_mode,
             "service_tier": routed_service_tier,
             "project_id": routed_project_id,
-            "routing_reason": f"V1.5.4 deterministic route for {request.task_type} ({routed_provider}/{routed_model}).",
+            "allocation": allocation,
+            "routing_reason": f"{FINOPS_CALCULATION_VERSION.upper()} deterministic route for {request.task_type} ({routed_provider}/{routed_model}).",
         }
+        if attribution_warnings:
+            model_route["attribution_warnings"] = attribution_warnings
         if budget_outcome is not None:
             outcome_data = budget_outcome if isinstance(budget_outcome, dict) else getattr(budget_outcome, "__dict__", {})
             fallback_tier = outcome_data.get("fallback_model_tier")
@@ -226,7 +232,7 @@ class ControlPlanePlanner:
                     "model_tier": str(fallback_tier),
                     "fallback_model_tier": str(fallback_tier),
                     "degraded_from": routed_model,
-                    "routing_reason": f"V1.5.4 FinOps budget soft-limit degraded model route to {fallback_tier} tier.",
+                    "routing_reason": f"{FINOPS_CALCULATION_VERSION.upper()} FinOps budget soft-limit degraded model route to {fallback_tier} tier.",
                 }
             if outcome_data.get("require_approval"):
                 approval_gates.append(
@@ -287,6 +293,7 @@ class ControlPlanePlanner:
                 "span_id": f"span_{uuid4().hex}",
                 "parent_span_id": None,
                 "future_exporters": ["otlp", "langsmith-style"],
+                **({"attribution_warnings": attribution_warnings} if attribution_warnings else {}),
             },
         )
 

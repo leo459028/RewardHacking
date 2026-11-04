@@ -1,7 +1,7 @@
 # Production Runbooks & Incident Response
 
-> **Runbook Version**: `v1.5.4`
-> **Previous Versions**: `v1.5.3`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.0.0`
+> **Runbook Version**: `v1.5.5`
+> **Previous Versions**: `v1.5.4`, `v1.5.3`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.0.0`
 
 This operational runbook provides triage instructions, troubleshooting procedures, and incident response playbooks for operators maintaining the **RewardHacking** platform.
 
@@ -99,3 +99,18 @@ docker compose logs --tail=100 -f worker
   1. Inspect open violations at `/dashboard/costs` or `GET /v1/budget-violations?status=open`.
   2. Acknowledge active triage via the inline **Acknowledge** button or `POST /v1/budget-violations/{id}/acknowledge`.
   3. Adjust or supersede budget policies at `/dashboard/admin/finops/budgets` (`POST /v1/budgets` with `supersede_existing=true`), then resolve the violation via **Resolve** (`POST /v1/budget-violations/{id}/resolve`).
+
+---
+
+### 7. Multi-Currency `missing_fx_rate` Violations, Manual Adjustments & Ledger Reconciliation (`v1.5.5`)
+- **Symptoms**:
+  - A `BudgetViolation` with `violation_type=missing_fx_rate` (`severity=warning`) appears on `/dashboard/costs`, and the `CostEvent` records `fx_rate_source=missing_fx_fallback_1_to_1`.
+  - Finance requires applying promotional credits, negotiated discounts, or invoice true-ups (`invoice_id`) and exporting a monthly reconciliation ledger.
+- **Mitigation & Reconciliation Steps**:
+  1. **Fix Unmapped Currency (`missing_fx_rate`)**:
+     - Open `/dashboard/admin/finops/pricing/{pricing_id}` and set an explicit **FX Rate to Base** on the pricing entry, or add the currency code to `FINOPS_FX_RATES` in `.env` and restart the `api` and `worker` containers.
+     - Acknowledge and resolve the `missing_fx_rate` violation on `/dashboard/costs`.
+  2. **Record Manual Cost Adjustments & Invoice True-Ups**:
+     - Navigate to `/dashboard/costs` and submit the **Record Cost Adjustment** form (or call `POST /v1/cost/adjustments`) with a negative credit (e.g., `-0.005000`) or positive fee, `cost_center`, `invoice_id`, and check **Mark run events reconciled** if reconciling a specific `run_id`.
+  3. **Export Reconciliation Ledger**:
+     - Click **Export CSV** or **Export JSON** on `/dashboard/costs` (or call `GET /v1/cost/tenants/{tenant_id}/export?format=csv&settled_only=true`) to download the settled, formula-sanitized RFC 4180 CSV ledger for accounting import.

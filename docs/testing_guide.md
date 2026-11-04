@@ -1,6 +1,6 @@
 # Testing Guide & Red-Team Corpus
 
-> **Testing Baseline**: `v1.5.4`
+> **Testing Baseline**: `v1.5.5`
 > **Test Suite**: `pytest`  
 > **Linter**: `ruff`
 
@@ -26,8 +26,9 @@ ruff check app tests scripts
 # Run security secret scan
 python scripts/security_check.py
 
-# Run full interactive browser E2E test suite (requires running server on localhost:8000)
+# Run full interactive browser E2E test suite (requires running server on localhost:8000; default QA currency: TWD)
 python scripts/browser_manual_test.py
+python scripts/browser_manual_test.py --qa-currency USD
 ```
 
 > **Mandatory Release Requirement**: Every new version release must update [`docs/manual_test.md`](manual_test.md) and `scripts/browser_manual_test.py` to cover new UI/API capabilities and pass the full browser E2E suite with zero console/page/HTTP errors before sign-off.
@@ -56,6 +57,7 @@ python scripts/browser_manual_test.py
 | `tests/test_v151_finops_core.py` | Expanded FinOps schema, model pricing YAML seed parsing, dry-run validation, superseding prices. |
 | `tests/test_v153_finops_governance.py` | Active multi-scope/period budget enforcement (`block`, `require_approval`, `degrade_model`), context-tier pricing, free quota/minimum quantity, cache/batch savings, violation triage lifecycle, manual pricing change logs, stale source guardrails, and zero-warning Pydantic V2 serialization. |
 | `tests/test_v154_control_plane_finops_closure.py` | Model-aware FinOps routing (`provider`/`model_name`/`project_id`), `user`/`project`/`model` budget scope isolation, `dry_run_only` enforcement, `failed_retry` cost accounting, `ExecutionPlanStep` lifecycle synchronization (`healthy` plan health), DLQ requeue/resolve, stale approval TTL sweep, and Run Detail Replay/Resume UI routes. |
+| `tests/test_v155_finops_ledger_fx_export.py` | Settled ledger deduplication (zero estimated/actual double-counting), multi-currency FX conversion (`TWD`/`CNY`/`USD`) and inclusive/exclusive tax calculation, pre-tax vs. `base_currency` post-tax budget evaluation, unsupported budget currency `422` validation, `missing_fx_rate` violation tracking, `cost_center`/`org_id` attribution & `finops_missing_cost_center` warning, manual reconciliation adjustments (`POST /v1/cost/adjustments`) & RBAC check, RFC 4180 CSV/JSON ledger export with formula-injection protection, and Dashboard UI routes. |
 
 ---
 

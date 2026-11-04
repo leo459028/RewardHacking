@@ -1,6 +1,6 @@
 # REST API Specification
 
-> **API Version**: `v1.5.4`
+> **API Version**: `v1.5.5`
 > **Base Path**: `/v1`  
 > **Interactive Documentation**: `http://localhost:8000/docs` (Swagger UI) or `http://localhost:8000/redoc` (ReDoc)
 
@@ -106,8 +106,10 @@ All REST API endpoints are exposed under the `/v1` route prefix. The service ret
 | `DELETE` | `/v1/pricing/{pricing_id}` | Soft-deletes / supersedes pricing entry | `admin`, `finops_admin` |
 | `POST` | `/v1/usage-events` | Ingests a usage event and generates immutable cost event | `operator`, `admin` |
 | `GET` | `/v1/usage-events/runs/{run_id}` | Retrieves usage event ledger for a run | `viewer`, `operator`, `admin` |
-| `GET` | `/v1/cost/runs/{run_id}` | Queries estimated vs. actual cost summary for a run | `viewer`, `operator`, `admin` |
-| `GET` | `/v1/cost/tenants/{tenant_id}` | Queries tenant cost totals, top models, workflow costs, and cache/batch savings | `viewer`, `operator`, `admin` |
+| `GET` | `/v1/cost/runs/{run_id}` | Queries estimated, actual, settled, FX, tax, and adjustment cost summary for a run | `viewer`, `operator`, `admin` |
+| `GET` | `/v1/cost/tenants/{tenant_id}` | Queries tenant settled cost totals, tax/billed/reconciled totals, cost center & currency breakdowns, top models, and savings (supports `project_id`, `cost_center`) | `viewer`, `operator`, `admin` |
+| `GET` | `/v1/cost/tenants/{tenant_id}/export` | Exports tenant cost ledger as JSON or RFC 4180 CSV (`format=json|csv`, `settled_only`, `project_id`, `cost_center`, `reconciled`) | `viewer`, `operator`, `admin`, `finops_admin` |
+| `POST` | `/v1/cost/adjustments` | Creates a manual reconciliation adjustment (`cost_type="adjustment"`, `cost_adj_...`) with optional `invoice_id` and `mark_run_reconciled` | `admin`, `finops_admin` |
 | `GET` | `/v1/budgets` | Lists budget policies and limit thresholds (`scope_type`, `scope_id`, `active_only`) | `viewer`, `operator`, `admin` |
 | `POST` | `/v1/budgets` | Configures new budget policy or supersedes existing policy (`supersede_existing`) | `admin`, `finops_admin` |
 | `GET` | `/v1/budgets/{budget_id}` | Retrieves details for a specific budget policy | `viewer`, `operator`, `admin` |

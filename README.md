@@ -24,17 +24,18 @@ Modern AI agents do not merely generate text—they read repositories, mutate co
 
 ---
 
-## Current Release: `v1.5.4`
+## Current Release: `v1.5.5`
 
-### V1.5.4 Model-Aware FinOps Routing, Step-Level Execution Audit Closure & Interactive Operations Recovery Portal (Current)
-`v1.5.4` closes the end-to-end loop across Control Plane model routing, step-level execution auditing, FinOps cost accounting, and interactive operational recovery:
-- **Model-Aware FinOps Routing & Catalog Pricing**: `ControlPlanePlanner` and `/dashboard/playground` route `provider`, `model_name`, `pricing_mode`, `service_tier`, and `project_id` into `ExecutionPlan.model_route`, enabling `record_submit_usage` and `record_actual_usage` to price runs dynamically against the 149-entry official model pricing catalog and re-route on `degrade_model`.
-- **Full-Dimensional Budget Isolation, `dry_run_only` & `failed_retry` Accounting**: Added `user`, `project`, and `model` scope enforcement in `evaluate_budget_policies()`, `dry_run_only` guardrail enforcement (`forced_dry_run=True`), and `cost_type="failed_retry"` accounting when worker attempts fail or enter DLQ.
-- **Step-Level Execution Audit Lifecycle Closure (`ExecutionPlanStep`)**: `sync_execution_plan_on_approval` and `sync_execution_plan_on_worker_completion` automatically transition `approval-gate`, `tool-execution`, and `evaluation` steps to `completed`/`blocked`/`failed` with real `duration_ms` and `output_summary`, reporting `Plan Health: healthy` on `/dashboard/control-plane`.
-- **Interactive Recovery, DLQ Self-Healing & Approval TTL Sweep Portal**: Added one-click **Trigger Dry-Run Replay** and **Resume from Checkpoint** on `/dashboard/runs/{run_id}`, **Requeue Run** / **Resolve DLQ** (`POST /v1/worker/dlq/{run_id}/requeue` & `/resolve`) on `/dashboard/worker`, and **Expire Stale Approvals** (`POST /v1/approvals/expire-stale`) on `/dashboard/approvals`.
+### V1.5.5 FinOps Settled Ledger Correctness, Multi-Currency FX & Tax Accounting, and Reconciliation Ledger Export (Current)
+`v1.5.5` upgrades the FinOps ledger to audit-grade financial accuracy across settled cost deduplication, multi-currency FX/tax normalization, cost-center attribution, manual reconciliation adjustments, and CSV/JSON ledger exports:
+- **Settled Ledger Correctness (Zero Double-Counting)**: Groups cost events by `(run_id, replay_attempt_id, resume_attempt_id, resource_type, usage_unit)` so that once worker `actual` or `failed_retry` events land, they cleanly replace pre-execution `estimated` rows in `evaluate_budget_policies()`, `tenant_cost_summary()`, `workflow_cost_summary()`, and `model_cost_ranking()`, while pending runs retain their `estimated` reservation.
+- **Multi-Currency FX Normalization & Tax Accounting**: Resolves `currency` (`TWD`, `USD`, `CNY`, `EUR`, `JPY`, `GBP`), `fx_rate`, `fx_rate_source`, `tax_rate`, `tax_inclusive`, `tax_amount`, and `base_currency_cost` (`FINOPS_BASE_CURRENCY`, default `USD`). All budget enforcement evaluates **pre-tax base-currency amounts** (unless `budget_basis="base_currency"` is explicitly selected), and unmapped currencies trigger a fail-open `missing_fx_rate` `BudgetViolation`.
+- **Cost-Center / Org Attribution & Manual Reconciliation Adjustments**: Propagates `cost_center`, `org_id`, `business_unit`, and `environment` into `ExecutionPlan.model_route["allocation"]` and `CostEvent.allocation_tags` (emitting `finops_missing_cost_center` warnings when omitted), and adds `POST /v1/cost/adjustments` (`cost_adj_...`) for promotional credits, negotiated discounts, and invoice true-ups (`invoice_id`, `reconciled`).
+- **Financial Reconciliation CSV/JSON Ledger Export**: Adds `GET /v1/cost/tenants/{tenant_id}/export?format=csv|json` (RFC 4180 UTF-8 CSV with formula-injection protection) and interactive export, filter, and adjustment controls on `/dashboard/costs`.
 
 ### Release History & Evolutionary Context
 
+- **`v1.5.4` (Historical)**: Model-Aware FinOps Routing, Step-Level Execution Audit Closure & Interactive Operations Recovery Portal. Added dynamic `provider`/`model_name`/`pricing_mode`/`project_id` catalog routing and re-pricing, `user`/`project`/`model` budget scope isolation, `dry_run_only` enforcement, `failed_retry` cost accounting, automatic `ExecutionPlanStep` lifecycle synchronization (`healthy` plan health), and interactive Run Replay/Resume, Worker DLQ Requeue/Resolve, and Stale Approval TTL sweep endpoints and UI controls.
 - **`v1.5.3` (Historical)**: Active FinOps Budget Enforcement, Context-Aware Pricing Engine & FinOps Governance Portal. Added pre-execution and runtime budget enforcement (`block`, `require_approval`, `degrade_model`, `warn_only`), context-tier pricing resolution, cache/batch savings calculation, `/dashboard/admin/finops/budgets` governance portal, violation triage lifecycle, FinOps Prometheus metrics, and zero-warning Pydantic V2 serialization.
 
 - **`v1.5.2` (Historical)**: Open-Source Readiness, Full English Internationalization, Apache-2.0 licensing, community governance standards (`CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`), and automated secret scanning.

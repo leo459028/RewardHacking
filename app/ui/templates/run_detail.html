@@ -20,22 +20,56 @@
 </section>
 
 <section class="panel">
-  <h2>Cost Summary <span class="heading-note">V1.5.3 FinOps ledger</span></h2>
+  <h2>Cost Summary <span class="heading-note">V1.5.5 FinOps ledger</span></h2>
   <section class="grid stats">
     <div class="stat"><div class="stat-label">Estimated</div><div class="stat-value">{{ cost_summary.estimated_cost|decimal_plain }} {{ cost_summary.currency }}</div></div>
     <div class="stat"><div class="stat-label">Actual</div><div class="stat-value">{{ cost_summary.actual_cost|decimal_plain }} {{ cost_summary.currency }}</div></div>
+    <div class="stat"><div class="stat-label">Settled (Pre-Tax Base)</div><div class="stat-value">{{ cost_summary.settled_cost|decimal_plain }} {{ cost_summary.base_currency }}</div></div>
+    <div class="stat"><div class="stat-label">Total Tax (Base)</div><div class="stat-value">{{ cost_summary.total_tax_amount|decimal_plain }} {{ cost_summary.base_currency }}</div></div>
+    <div class="stat"><div class="stat-label">Billed (Incl. Tax Base)</div><div class="stat-value">{{ cost_summary.total_billed_base_cost|decimal_plain }} {{ cost_summary.base_currency }}</div></div>
     <div class="stat"><div class="stat-label">Delta</div><div class="stat-value">{{ cost_summary.cost_delta|decimal_plain }} {{ cost_summary.currency }}</div></div>
-    <div class="stat"><div class="stat-label">Cache Savings</div><div class="stat-value">{{ cost_summary.cache_savings|decimal_plain }} {{ cost_summary.currency }}</div></div>
-    <div class="stat"><div class="stat-label">Batch Savings</div><div class="stat-value">{{ cost_summary.batch_savings|decimal_plain }} {{ cost_summary.currency }}</div></div>
+    <div class="stat"><div class="stat-label">Cache Savings</div><div class="stat-value">{{ cost_summary.cache_savings|decimal_plain }} {{ cost_summary.base_currency }}</div></div>
+    <div class="stat"><div class="stat-label">Batch Savings</div><div class="stat-value">{{ cost_summary.batch_savings|decimal_plain }} {{ cost_summary.base_currency }}</div></div>
     <div class="stat"><div class="stat-label">Budget</div><div class="stat-value">{{ cost_summary.budget_status }}</div></div>
   </section>
+  {% if execution_plan and execution_plan.model_route.get("allocation") %}
+  {% set alloc = execution_plan.model_route.get("allocation") %}
+  <p>
+    <strong>Allocation</strong>
+    cost_center=<code>{{ alloc.get("cost_center") or "-" }}</code> |
+    org_id=<code>{{ alloc.get("org_id") or "-" }}</code> |
+    project_id=<code>{{ alloc.get("project_id") or "-" }}</code> |
+    environment=<code>{{ alloc.get("environment") or "-" }}</code>
+  </p>
+  {% endif %}
   <table>
-    <thead><tr><th>Resource</th><th>Cost</th></tr></thead>
+    <thead><tr><th>Resource</th><th>Settled Pre-Tax Cost ({{ cost_summary.base_currency }})</th></tr></thead>
     <tbody>
     {% for key, value in cost_summary.breakdown.items() %}
-      <tr><td>{{ key }}</td><td>{{ value|decimal_plain }} {{ cost_summary.currency }}</td></tr>
+      <tr><td>{{ key }}</td><td>{{ value|decimal_plain }} {{ cost_summary.base_currency }}</td></tr>
     {% else %}
       <tr><td colspan="2" class="muted">No cost events recorded.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <h3>Cost Events Ledger</h3>
+  <table>
+    <thead><tr><th>Step</th><th>Resource</th><th>Type</th><th>Settled</th><th>Net Cost</th><th>Tax</th><th>FX Rate (Source)</th><th>Pre-Tax Base</th><th>Billed Base</th></tr></thead>
+    <tbody>
+    {% for ce in cost_summary.cost_events %}
+      <tr>
+        <td>{{ ce.step_id or "-" }}</td>
+        <td>{{ ce.resource_type }} ({{ ce.usage_unit }})</td>
+        <td>{{ ce.cost_type }}</td>
+        <td>{{ "yes" if ce.is_settled else "superseded" }}</td>
+        <td>{{ ce.net_cost|decimal_plain }} {{ ce.currency }}</td>
+        <td>{{ ce.tax_amount|decimal_plain }} {{ ce.currency }}</td>
+        <td>{{ ce.fx_rate|decimal_plain }} ({{ ce.fx_rate_source }})</td>
+        <td>{{ ce.pre_tax_base_cost|decimal_plain }} {{ ce.base_currency }}</td>
+        <td>{{ ce.base_currency_cost|decimal_plain }} {{ ce.base_currency }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="9" class="muted">No cost event rows.</td></tr>
     {% endfor %}
     </tbody>
   </table>

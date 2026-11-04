@@ -1,6 +1,6 @@
 # Database Schema & Audit Models
 
-> **Data Model Version**: `v1.5.3`
+> **Data Model Version**: `v1.5.5`
 > **ORM**: SQLAlchemy (asyncio)  
 > **Migration Baseline**: Alembic revision `202606010004` (head)
 
@@ -96,10 +96,10 @@ Maintains the centralized, versioned cost matrix for AI models and infrastructur
 ### 7. `UsageEvent` (`usage_events`) & `CostEvent` (`cost_events`)
 The immutable financial ledger recording deterministic resource consumption and calculated expenditures.
 - **`usage_events`**: Immutable logs of token counts, tool calls, and execution latencies.
-- **`cost_events`**: Computed financial records bound to specific pricing catalog snapshots, guaranteeing historical cost integrity.
+- **`cost_events`**: Computed financial records bound to specific pricing catalog snapshots, guaranteeing historical cost integrity. Supports `cost_type` values (`estimated`, `actual`, `failed_retry`, `adjustment`), multi-currency FX and tax fields (`currency`, `fx_rate`, `fx_rate_source`, `tax_rate`, `tax_inclusive`, `tax_amount`, `base_currency_cost`), cost allocation attribution (`project_id`, `cost_center`, `org_id`, `business_unit`, `environment`, `allocation_tags`), and invoice reconciliation (`invoice_id`, `reconciled`).
 
 ### 8. `BudgetPolicy` (`budget_policies`) & `BudgetViolation` (`budget_violations`)
-Enforces soft and hard expenditure thresholds across `run`, `tenant`, `workflow`, and `user` scopes and `per_run`, `daily`, and `monthly` periods, with actions (`warn_only`, `require_approval`, `degrade_model`, `block`) and violation lifecycle states (`open`, `acknowledged`, `resolved`, `ignored`).
+Enforces soft and hard expenditure thresholds across `run`, `tenant`, `workflow`, `user`, `project`, and `model` scopes and `per_run`, `daily`, `weekly`, `monthly`, `quarterly`, and `yearly` periods using settled pre-tax base-currency amounts (or post-tax when `budget_basis="base_currency"`), with actions (`warn`, `require_approval`, `degrade_model`, `dry_run_only`, `fail_closed`), violation types (`soft_limit_exceeded`, `hard_limit_exceeded`, `missing_fx_rate`), and violation lifecycle states (`open`, `acknowledged`, `resolved`, `ignored`).
 
 ### 9. `PricingImportBatch` (`pricing_import_batches`), `PricingChangeLog` (`pricing_change_logs`) & `PricingSourceDocument` (`pricing_source_documents`)
 Maintains full audit traceability for pricing catalog seed imports, manual rate adjustments, supersessions, and upstream official pricing source documents.

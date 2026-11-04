@@ -91,8 +91,26 @@ FINOPS_USAGE_EVENTS_TOTAL = Counter(
 
 FINOPS_COST_USD_TOTAL = Counter(
     "agent_finops_cost_usd_total",
-    "Total FinOps recorded cost in USD by tenant, cost type, and provider",
+    "Total FinOps recorded pre-tax cost in base currency (default USD) by tenant, cost type, and provider",
     ["tenant_id", "cost_type", "provider"],
+)
+
+FINOPS_BASE_CURRENCY_COST_TOTAL = Counter(
+    "agent_finops_base_currency_cost_total",
+    "Total FinOps pre-tax cost in base currency by tenant, original currency, base currency, and FX source",
+    ["tenant_id", "currency", "base_currency", "fx_source"],
+)
+
+FINOPS_TAX_TOTAL = Counter(
+    "agent_finops_tax_total",
+    "Total FinOps tax amount in base currency by tenant, provider, and base currency",
+    ["tenant_id", "provider", "base_currency"],
+)
+
+FINOPS_LEDGER_EXPORTS_TOTAL = Counter(
+    "agent_finops_ledger_exports_total",
+    "Total FinOps cost ledger exports by tenant and format",
+    ["tenant_id", "format"],
 )
 
 FINOPS_BUDGET_VIOLATIONS_TOTAL = Counter(

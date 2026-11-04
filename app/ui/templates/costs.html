@@ -5,10 +5,12 @@
   <div>
     <h1>Costs</h1>
     <div class="title-note">Tenant Cost Summary</div>
-    <div class="muted">V1.5.3 Agent FinOps Core / Cost Ledger &amp; Budget Governance</div>
+    <div class="muted">V1.5.5 Agent FinOps Core / Settled Ledger, Multi-Currency FX &amp; Reconciliation Export</div>
   </div>
   <form method="get" action="/dashboard/costs" class="inline-form">
     <input name="tenant_id" value="{{ tenant_id }}" placeholder="tenant_id">
+    <input name="project_id" value="{{ project_id }}" placeholder="project_id">
+    <input name="cost_center" value="{{ cost_center }}" placeholder="cost_center">
     <select name="resolution_status">
       <option value="" {% if not resolution_status %}selected{% endif %}>All Violations</option>
       <option value="open" {% if resolution_status == "open" %}selected{% endif %}>open</option>
@@ -17,19 +19,93 @@
       <option value="ignored" {% if resolution_status == "ignored" %}selected{% endif %}>ignored</option>
     </select>
     <button class="button" type="submit">Filter</button>
+    <a class="button secondary" href="/dashboard/costs/export?tenant_id={{ tenant_id }}&project_id={{ project_id }}&cost_center={{ cost_center }}&format=csv">Export CSV</a>
+    <a class="button secondary" href="/dashboard/costs/export?tenant_id={{ tenant_id }}&project_id={{ project_id }}&cost_center={{ cost_center }}&format=json">Export JSON</a>
     <a class="button secondary" href="/dashboard/admin/finops/budgets">Budget Policies</a>
   </form>
 </div>
 
 <section class="grid stats">
   <div class="stat"><div class="stat-label">Tenant</div><div class="stat-value">{{ summary.tenant_id }}</div></div>
-  <div class="stat"><div class="stat-label">Today</div><div class="stat-value">{{ summary.today_cost|decimal_plain }} USD</div></div>
-  <div class="stat"><div class="stat-label">Month To Date</div><div class="stat-value">{{ summary.month_to_date_cost|decimal_plain }} USD</div></div>
+  <div class="stat"><div class="stat-label">Today (Pre-Tax)</div><div class="stat-value">{{ summary.today_cost|decimal_plain }} {{ summary.base_currency }}</div></div>
+  <div class="stat"><div class="stat-label">Settled MTD (Pre-Tax)</div><div class="stat-value">{{ summary.month_to_date_cost|decimal_plain }} {{ summary.base_currency }}</div></div>
+  <div class="stat"><div class="stat-label">Total Tax (Base)</div><div class="stat-value">{{ summary.total_tax_amount|decimal_plain }} {{ summary.base_currency }}</div></div>
+  <div class="stat"><div class="stat-label">Billed MTD (Incl. Tax)</div><div class="stat-value">{{ summary.total_billed_base_cost|decimal_plain }} {{ summary.base_currency }}</div></div>
+  <div class="stat"><div class="stat-label">Adjustments</div><div class="stat-value">{{ summary.adjustment_total|decimal_plain }} {{ summary.base_currency }}</div></div>
+  <div class="stat"><div class="stat-label">Reconciled MTD</div><div class="stat-value">{{ summary.reconciled_month_to_date_cost|decimal_plain }} {{ summary.base_currency }}</div></div>
   <div class="stat"><div class="stat-label">Budget Used</div><div class="stat-value">{{ "%.2f"|format(summary.budget_used_percent) }}%</div></div>
   <div class="stat"><div class="stat-label">Violations</div><div class="stat-value">{{ summary.violation_count }}</div></div>
-  <div class="stat"><div class="stat-label">Cache Savings</div><div class="stat-value">{{ summary.cache_savings|decimal_plain }} USD</div></div>
-  <div class="stat"><div class="stat-label">Batch Savings</div><div class="stat-value">{{ summary.batch_savings|decimal_plain }} USD</div></div>
+  <div class="stat"><div class="stat-label">Cache Savings</div><div class="stat-value">{{ summary.cache_savings|decimal_plain }} {{ summary.base_currency }}</div></div>
+  <div class="stat"><div class="stat-label">Batch Savings</div><div class="stat-value">{{ summary.batch_savings|decimal_plain }} {{ summary.base_currency }}</div></div>
   <div class="stat"><div class="stat-label">Failed / Replay</div><div class="stat-value">{{ summary.failed_run_cost|decimal_plain }} / {{ summary.replay_cost|decimal_plain }}</div></div>
+</section>
+
+<section class="detail-grid">
+  <div class="panel">
+    <h2>Cost Center Breakdown <span class="heading-note">成本中心分攤</span></h2>
+    <table>
+      <thead><tr><th>Cost Center</th><th>Pre-Tax Base Cost</th></tr></thead>
+      <tbody>
+      {% for key, val in summary.cost_center_breakdown.items() %}
+        <tr><td>{{ key }}</td><td>{{ val|decimal_plain }} {{ summary.base_currency }}</td></tr>
+      {% else %}
+        <tr><td colspan="2" class="muted">No cost center attribution recorded.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="panel">
+    <h2>Currency Breakdown <span class="heading-note">原幣別未稅小計</span></h2>
+    <table>
+      <thead><tr><th>Currency</th><th>Original Pre-Tax Cost</th></tr></thead>
+      <tbody>
+      {% for key, val in summary.currency_breakdown.items() %}
+        <tr><td>{{ key }}</td><td>{{ val|decimal_plain }} {{ key }}</td></tr>
+      {% else %}
+        <tr><td colspan="2" class="muted">No currency breakdown recorded.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Record Cost Adjustment <span class="heading-note">財務手動調帳與沖銷</span></h2>
+  <form method="post" action="/dashboard/costs/adjustments" class="form-grid">
+    <label>Tenant ID
+      <input name="tenant_id" value="{{ tenant_id }}">
+    </label>
+    <label>Project ID
+      <input name="project_id" value="{{ project_id }}" placeholder="optional project_id">
+    </label>
+    <label>Cost Center
+      <input name="cost_center" value="{{ cost_center }}" placeholder="e.g. cc-ai-core">
+    </label>
+    <label>Org ID
+      <input name="org_id" value="" placeholder="optional org_id">
+    </label>
+    <label>Provider
+      <input name="provider" value="internal">
+    </label>
+    <label>Model Name
+      <input name="model_name" value="" placeholder="optional model">
+    </label>
+    <label>Amount (+ / -)
+      <input name="amount" value="-1.25">
+    </label>
+    <label>Currency
+      <input name="currency" value="USD">
+    </label>
+    <label>Provider Invoice ID
+      <input name="provider_invoice_id" value="" placeholder="e.g. INV-2026-10">
+    </label>
+    <label>Reason
+      <input name="reason" value="Monthly invoice credit adjustment">
+    </label>
+    <label>&nbsp;
+      <button class="button" type="submit">Record Adjustment</button>
+    </label>
+  </form>
 </section>
 
 <section class="detail-grid">

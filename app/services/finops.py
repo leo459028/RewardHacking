@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
+import hashlib
+import io
+import re
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -22,10 +26,14 @@ from app.models.finops import (
     PricingChangeLog,
     UsageEvent,
 )
+from app.models.governance_event import GovernanceEvent
 from app.models.incident import Incident
 from app.observability.metrics import (
+    FINOPS_BASE_CURRENCY_COST_TOTAL,
     FINOPS_BUDGET_VIOLATIONS_TOTAL,
     FINOPS_COST_USD_TOTAL,
+    FINOPS_LEDGER_EXPORTS_TOTAL,
+    FINOPS_TAX_TOTAL,
     FINOPS_USAGE_EVENTS_TOTAL,
     INCIDENTS_TOTAL,
 )
@@ -33,10 +41,18 @@ from app.schemas.agent import AgentRequest
 from app.schemas.finops import (
     BudgetPolicyCreateRequest,
     BudgetPolicyUpdateRequest,
+    CostAdjustmentCreateRequest,
+    CostEventRecord,
     PricingCatalogCreateRequest,
     PricingCatalogUpdateRequest,
+    TenantCostExportResponse,
     UsageEventCreateRequest,
 )
+
+FINOPS_CALCULATION_VERSION = "v1.5.5"
+_ATTRIBUTION_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+_ALLOCATION_TAG_KEY_RE = re.compile(r"^[a-z0-9_]{1,64}$")
+_VALID_ENVIRONMENTS = {"dev", "staging", "prod"}
 
 
 DEFAULT_PRICING: tuple[dict, ...] = (
@@ -117,8 +133,12 @@ class RunCostSummary:
     cost_delta_percent: Decimal
     currency: str
     budget_status: str
+    settled_cost: Decimal = Decimal("0")
+    total_tax_amount: Decimal = Decimal("0")
+    total_billed_base_cost: Decimal = Decimal("0")
     budget_policy_id: str = ""
     budget_remaining: Decimal = Decimal("0")
+    currency_breakdown: dict[str, Decimal] = field(default_factory=dict)
     provider_breakdown: dict[str, Decimal] = field(default_factory=dict)
     model_breakdown: dict[str, Decimal] = field(default_factory=dict)
     tool_breakdown: dict[str, Decimal] = field(default_factory=dict)
@@ -154,6 +174,16 @@ class TenantCostSummary:
     month_to_date_cost: Decimal
     budget_used_percent: Decimal
     violation_count: int
+    period_start: datetime | None = None
+    period_end: datetime | None = None
+    timezone: str = "UTC"
+    base_currency: str = "USD"
+    total_tax_amount: Decimal = Decimal("0")
+    total_billed_base_cost: Decimal = Decimal("0")
+    adjustment_total: Decimal = Decimal("0")
+    reconciled_month_to_date_cost: Decimal = Decimal("0")
+    currency_breakdown: dict[str, Decimal] = field(default_factory=dict)
+    cost_center_breakdown: dict[str, Decimal] = field(default_factory=dict)
     provider_breakdown: dict[str, Decimal] = field(default_factory=dict)
     resource_type_breakdown: dict[str, Decimal] = field(default_factory=dict)
     environment_breakdown: dict[str, Decimal] = field(default_factory=dict)
@@ -353,6 +383,10 @@ def usage_to_dict(item: UsageEvent) -> dict:
 
 
 def cost_to_dict(item: CostEvent) -> dict:
+    is_settled = getattr(item, "is_settled", True)
+    pre_tax_base = getattr(item, "pre_tax_base_cost", None)
+    if pre_tax_base is None:
+        pre_tax_base = _pre_tax_base_cost(item)
     return {
         "cost_id": item.cost_id,
         "usage_event_id": item.usage_event_id,
@@ -392,9 +426,11 @@ def cost_to_dict(item: CostEvent) -> dict:
         "actual_cost": item.actual_cost,
         "currency": item.currency,
         "base_currency": item.base_currency,
+        "pre_tax_base_cost": pre_tax_base,
         "base_currency_cost": item.base_currency_cost,
         "fx_rate": item.fx_rate,
         "fx_rate_source": item.fx_rate_source,
+        "is_settled": bool(is_settled),
         "billing_period_start": item.billing_period_start,
         "billing_period_end": item.billing_period_end,
         "provider_invoice_id": item.provider_invoice_id,
@@ -1095,27 +1131,143 @@ async def _prior_used_quantity_for_free_quota(
     return _quantity(total)
 
 
+def extract_allocation(meta: dict | None) -> tuple[dict[str, object], list[str]]:
+    raw = dict(meta or {})
+    warnings: list[str] = []
+
+    cost_center = ""
+    if "cost_center" in raw and raw["cost_center"] not in (None, ""):
+        cc_val = str(raw["cost_center"]).strip()
+        if _ATTRIBUTION_ID_RE.fullmatch(cc_val):
+            cost_center = cc_val
+        else:
+            warnings.append("Invalid cost_center format; ignored.")
+
+    org_id = ""
+    if "org_id" in raw and raw["org_id"] not in (None, ""):
+        org_val = str(raw["org_id"]).strip()
+        if _ATTRIBUTION_ID_RE.fullmatch(org_val):
+            org_id = org_val
+        else:
+            warnings.append("Invalid org_id format; ignored.")
+
+    explicit_env = ""
+    env = "dev"
+    if "environment" in raw and raw["environment"] not in (None, ""):
+        env_val = str(raw["environment"]).strip().lower()
+        if env_val in _VALID_ENVIRONMENTS:
+            env = env_val
+            explicit_env = env_val
+        else:
+            warnings.append(f"Unsupported environment {raw['environment']!r}; defaulted to 'dev'.")
+
+    custom_tags: dict[str, str] = {}
+    if "allocation_tags" in raw and raw["allocation_tags"] is not None:
+        raw_tags = raw["allocation_tags"]
+        if not isinstance(raw_tags, dict):
+            warnings.append("allocation_tags must be an object; ignored.")
+        else:
+            items = list(raw_tags.items())
+            if len(items) > 20:
+                warnings.append(f"allocation_tags has {len(items)} keys (max 20); truncated to 20.")
+                items = items[:20]
+            for k, v in items:
+                key_str = str(k)
+                if not _ALLOCATION_TAG_KEY_RE.fullmatch(key_str):
+                    warnings.append(f"Invalid allocation_tag key {key_str!r}; ignored.")
+                    continue
+                if not isinstance(v, str) or len(v) > 128:
+                    warnings.append(f"Invalid allocation_tag value for {key_str!r}; must be str <= 128 chars.")
+                    continue
+                custom_tags[key_str] = v
+
+    allocation: dict[str, object] = {
+        "cost_center": cost_center,
+        "org_id": org_id,
+        "environment": env,
+        "explicit_environment": explicit_env,
+        "allocation_tags": custom_tags,
+    }
+    return allocation, warnings
+
+
+def resolve_fx_rate(
+    currency: str,
+    base_currency: str,
+    pricing: PricingCatalog | None = None,
+) -> tuple[Decimal, str]:
+    settings = get_settings()
+    norm_base = (base_currency or settings.finops_base_currency or "USD").strip().upper()
+    norm_curr = (currency or norm_base).strip().upper()
+    if norm_curr == norm_base:
+        return Decimal("1"), "same_currency"
+    if pricing is not None:
+        p_meta = dict(pricing.metadata_payload or {})
+        raw_override = p_meta.get("fx_rate")
+        if raw_override not in (None, ""):
+            try:
+                override_rate = Decimal(str(raw_override))
+                if override_rate > Decimal("0"):
+                    return override_rate, "pricing_override"
+            except Exception:
+                pass
+    configured = settings.finops_fx_rates.get(norm_curr)
+    if configured is not None and configured > Decimal("0"):
+        return Decimal(str(configured)), "configured_fx_table"
+    return Decimal("1"), "missing_fx_rate"
+
+
+def _compute_tax(
+    net_raw: Decimal,
+    *,
+    tax_included: bool,
+    tax_rate: Decimal,
+) -> tuple[Decimal, Decimal]:
+    if tax_rate <= Decimal("0") or net_raw == Decimal("0"):
+        return _money(net_raw), Decimal("0")
+    if tax_included:
+        pre_tax = _money(net_raw / (Decimal("1") + tax_rate))
+        tax_amount = _money(net_raw - pre_tax)
+        return pre_tax, tax_amount
+    pre_tax = _money(net_raw)
+    tax_amount = _money(pre_tax * tax_rate)
+    return pre_tax, tax_amount
+
+
 async def _record_cost_for_usage(session: AsyncSession, usage: UsageEvent) -> CostEvent:
+    settings = get_settings()
+    base_currency = settings.finops_base_currency
     pricing = await _lookup_pricing(session, usage)
     free_quota_applied = Decimal("0")
     raw_quantity = _quantity(usage.quantity)
+    tax_included = False
+    tax_rate = settings.finops_default_tax_rate
     if pricing is None:
         await _record_missing_pricing_violation(session, usage)
         pricing_id = ""
-        currency = "USD"
+        currency = base_currency
         unit_price = Decimal("0")
         quantity = raw_quantity
         gross_cost = Decimal("0")
         discount_rate = Decimal("0")
         discount_amount = Decimal("0")
         multiplier = Decimal("1")
-        net_cost = Decimal("0")
+        net_raw = Decimal("0")
         snapshot: dict[str, object] = {}
     else:
         pricing_id = pricing.pricing_id
         if not usage.pricing_id:
             usage.pricing_id = pricing_id
-        currency = pricing.currency
+        currency = (pricing.currency or base_currency).strip().upper()
+        tax_included = bool(pricing.tax_included)
+        p_meta = dict(pricing.metadata_payload or {})
+        if p_meta.get("tax_rate") not in (None, ""):
+            try:
+                parsed_tr = Decimal(str(p_meta["tax_rate"]))
+                if parsed_tr >= Decimal("0"):
+                    tax_rate = parsed_tr
+            except Exception:
+                pass
         unit_price = _money(pricing.unit_price)
         raw_quantity = _billable_quantity(usage, pricing)
         quantity = raw_quantity
@@ -1132,16 +1284,59 @@ async def _record_cost_for_usage(session: AsyncSession, usage: UsageEvent) -> Co
         discount_rate = _money(pricing.discount_rate)
         discount_amount = _money(gross_cost * discount_rate)
         multiplier = _money(pricing.multiplier or 1)
-        net_cost = _money((gross_cost - discount_amount) * multiplier)
+        net_raw = _money((gross_cost - discount_amount) * multiplier)
         snapshot = _pricing_snapshot(pricing)
 
+    pre_tax_amount, tax_amount = _compute_tax(net_raw, tax_included=tax_included, tax_rate=tax_rate)
+    net_cost = pre_tax_amount
+    amount = pre_tax_amount
+    billed_amount = _money(pre_tax_amount + tax_amount)
+
+    fx_rate, fx_rate_source = resolve_fx_rate(currency, base_currency, pricing)
+    if fx_rate_source == "missing_fx_rate":
+        await _record_missing_fx_violation(session, usage, currency=currency, base_currency=base_currency)
+
+    pre_tax_base_cost = _money(pre_tax_amount * fx_rate)
+    tax_base_cost = _money(tax_amount * fx_rate)
+    base_currency_cost = _money(billed_amount * fx_rate)
+
+    usage_meta = dict(usage.metadata_payload or {})
+    ignored_untrusted = [k for k in ("fx_rate", "tax_rate") if k in usage_meta]
+    alloc_parsed, alloc_warnings = extract_allocation(
+        {"allocation_tags": usage_meta.get("allocation_tags")} if "allocation_tags" in usage_meta else {}
+    )
+    custom_alloc_tags = dict(alloc_parsed.get("allocation_tags") or {})
+
     is_actual = usage.phase in {"actual", "manual"}
-    amount = net_cost
     is_failed_retry = (
-        (usage.metadata_payload or {}).get("cost_type") == "failed_retry"
+        usage_meta.get("cost_type") == "failed_retry"
         or (is_actual and usage.status == "failed")
     )
     cost_type = "failed_retry" if is_failed_retry else ("actual" if is_actual else "estimated")
+
+    cost_meta: dict[str, object] = {
+        "usage_unit": usage.usage_unit,
+        "usage_status": usage.status,
+        "raw_quantity": _decimal_json(raw_quantity),
+        "billable_quantity": _decimal_json(quantity),
+        "free_quota_applied_quantity": _decimal_json(free_quota_applied),
+        "pricing_mode": str(snapshot.get("pricing_mode") or usage_meta.get("pricing_mode") or "standard"),
+        "token_type": str(snapshot.get("token_type") or _token_type_for_usage(usage)),
+        "pre_tax_amount": _decimal_json(pre_tax_amount),
+        "billed_amount": _decimal_json(billed_amount),
+        "tax_rate": _decimal_json(tax_rate),
+        "tax_included": tax_included,
+        "fx_rates_as_of": settings.finops_fx_rates_as_of,
+    }
+    if usage_meta.get("explicit_environment"):
+        cost_meta["explicit_environment"] = usage_meta["explicit_environment"]
+    if ignored_untrusted:
+        cost_meta["ignored_untrusted_overrides"] = ignored_untrusted
+    if alloc_warnings:
+        cost_meta["attribution_warnings"] = alloc_warnings
+    if fx_rate_source == "missing_fx_rate":
+        cost_meta["fx_warning"] = f"Missing FX rate for {currency}->{base_currency}; fallback 1:1 recorded as violation."
+
     cost = CostEvent(
         cost_id=f"cost_{uuid4().hex}",
         usage_event_id=usage.usage_id,
@@ -1175,26 +1370,26 @@ async def _record_cost_for_usage(session: AsyncSession, usage: UsageEvent) -> Co
         discount_amount=discount_amount,
         multiplier=multiplier,
         net_cost=net_cost,
-        tax_amount=Decimal("0"),
+        tax_amount=tax_amount,
         estimated_cost=Decimal("0") if is_actual else amount,
         actual_cost=amount if is_actual else Decimal("0"),
         currency=currency,
-        base_currency="USD",
-        base_currency_cost=amount,
-        fx_rate=Decimal("1"),
-        fx_rate_source="same_currency",
+        base_currency=base_currency,
+        base_currency_cost=base_currency_cost,
+        fx_rate=fx_rate,
+        fx_rate_source=fx_rate_source,
         calculation_method=usage.phase,
-        calculation_version="v1.5.4",
-        allocation_tags={"tenant_id": usage.tenant_id, "workflow_id": usage.workflow_id},
-        metadata_payload={
-            "usage_unit": usage.usage_unit,
-            "usage_status": usage.status,
-            "raw_quantity": _decimal_json(raw_quantity),
-            "billable_quantity": _decimal_json(quantity),
-            "free_quota_applied_quantity": _decimal_json(free_quota_applied),
-            "pricing_mode": str(snapshot.get("pricing_mode") or (usage.metadata_payload or {}).get("pricing_mode") or "standard"),
-            "token_type": str(snapshot.get("token_type") or _token_type_for_usage(usage)),
+        calculation_version=FINOPS_CALCULATION_VERSION,
+        allocation_tags={
+            "tenant_id": usage.tenant_id,
+            "workflow_id": usage.workflow_id,
+            "project_id": usage.project_id,
+            "cost_center": usage.cost_center,
+            "org_id": usage.org_id,
+            "environment": usage.environment,
+            "custom": custom_alloc_tags,
         },
+        metadata_payload=cost_meta,
     )
     session.add(cost)
     await session.flush()
@@ -1207,8 +1402,59 @@ async def _record_cost_for_usage(session: AsyncSession, usage: UsageEvent) -> Co
         tenant_id=usage.tenant_id or "default",
         cost_type=cost_type,
         provider=usage.provider or "internal",
-    ).inc(float(amount))
+    ).inc(float(pre_tax_base_cost))
+    FINOPS_BASE_CURRENCY_COST_TOTAL.labels(
+        tenant_id=usage.tenant_id or "default",
+        currency=currency,
+        base_currency=base_currency,
+        fx_source=fx_rate_source,
+    ).inc(float(pre_tax_base_cost))
+    if tax_base_cost > Decimal("0"):
+        FINOPS_TAX_TOTAL.labels(
+            tenant_id=usage.tenant_id or "default",
+            provider=usage.provider or "internal",
+            base_currency=base_currency,
+        ).inc(float(tax_base_cost))
     return cost
+
+
+async def _record_missing_fx_violation(
+    session: AsyncSession,
+    usage: UsageEvent,
+    *,
+    currency: str,
+    base_currency: str,
+) -> None:
+    session.add(
+        BudgetViolation(
+            violation_id=f"bv_{uuid4().hex}",
+            tenant_id=usage.tenant_id,
+            user_id=usage.user_id,
+            run_id=usage.run_id,
+            workflow_id=usage.workflow_id,
+            step_id=usage.step_id,
+            provider=usage.provider,
+            model_name=usage.model_name,
+            resource_type=usage.resource_type,
+            violation_type="missing_fx_rate",
+            severity="high",
+            threshold_type="hard",
+            actual_amount=Decimal("0"),
+            estimated_amount=Decimal("0"),
+            limit_amount=Decimal("0"),
+            currency=currency,
+            decision="record_violation",
+            recommended_action="configure_fx_rate",
+            action_taken="record_violation",
+            details={"currency": currency, "base_currency": base_currency},
+        )
+    )
+    FINOPS_BUDGET_VIOLATIONS_TOTAL.labels(
+        tenant_id=usage.tenant_id or "default",
+        scope="tenant",
+        threshold_type="hard",
+        decision="record_violation",
+    ).inc()
 
 
 async def _record_missing_pricing_violation(session: AsyncSession, usage: UsageEvent) -> None:
@@ -1315,6 +1561,8 @@ async def _list_cost_events(
     run_id: str | None = None,
     tenant_id: str | None = None,
     workflow_id: str | None = None,
+    project_id: str | None = None,
+    cost_center: str | None = None,
 ) -> list[CostEvent]:
     stmt = select(CostEvent).order_by(CostEvent.created_at.asc())
     if run_id:
@@ -1323,11 +1571,23 @@ async def _list_cost_events(
         stmt = stmt.where(CostEvent.tenant_id == tenant_id)
     if workflow_id:
         stmt = stmt.where(CostEvent.workflow_id == workflow_id)
+    if project_id:
+        stmt = stmt.where(CostEvent.project_id == project_id)
+    if cost_center:
+        stmt = stmt.where(CostEvent.cost_center == cost_center)
     return list((await session.scalars(stmt)).all())
 
 
 def _token_estimate(text: str) -> int:
     return max(1, len(text.split()) * 4)
+
+
+def _resolve_run_allocation(route: dict, meta: dict) -> tuple[dict[str, object], list[str]]:
+    raw_alloc = route.get("allocation")
+    if isinstance(raw_alloc, dict):
+        warnings = list(route.get("attribution_warnings") or [])
+        return raw_alloc, warnings
+    return extract_allocation(meta)
 
 
 async def record_submit_usage(
@@ -1350,12 +1610,27 @@ async def record_submit_usage(
     routed_pricing_mode = str(route.get("pricing_mode") or meta.get("pricing_mode") or "standard").strip() or "standard"
     routed_service_tier = str(route.get("service_tier") or meta.get("service_tier") or "standard").strip() or "standard"
     routed_project_id = str(route.get("project_id") or meta.get("project_id") or "").strip()
+    alloc, _ = _resolve_run_allocation(route, meta)
+    alloc_cost_center = str(alloc.get("cost_center") or "")
+    alloc_org_id = str(alloc.get("org_id") or "")
+    alloc_env = str(alloc.get("environment") or "dev")
+    explicit_env = str(alloc.get("explicit_environment") or "")
+    custom_tags = dict(alloc.get("allocation_tags") or {})
+    alloc_meta_extra: dict[str, object] = {}
+    if explicit_env:
+        alloc_meta_extra["explicit_environment"] = explicit_env
+    if custom_tags:
+        alloc_meta_extra["allocation_tags"] = custom_tags
+
     tool_count = max(1, len(request.allowed_tools or ["summarize"]))
     input_tokens = _token_estimate(request.prompt + " " + request.goal)
     events = [
         UsageEventCreateRequest(
             tenant_id=run.tenant_id,
+            org_id=alloc_org_id,
             project_id=routed_project_id,
+            cost_center=alloc_cost_center,
+            environment=alloc_env,
             user_id=run.user_id,
             run_id=run.run_id,
             trace_id=trace_id,
@@ -1371,11 +1646,14 @@ async def record_submit_usage(
             quantity=input_tokens,
             input_tokens=input_tokens,
             phase="estimated",
-            metadata={"source": "submit", "pricing_mode": routed_pricing_mode},
+            metadata={"source": "submit", "pricing_mode": routed_pricing_mode, **alloc_meta_extra},
         ),
         UsageEventCreateRequest(
             tenant_id=run.tenant_id,
+            org_id=alloc_org_id,
             project_id=routed_project_id,
+            cost_center=alloc_cost_center,
+            environment=alloc_env,
             user_id=run.user_id,
             run_id=run.run_id,
             trace_id=trace_id,
@@ -1386,11 +1664,14 @@ async def record_submit_usage(
             quantity=tool_count,
             tool_call_count=tool_count,
             phase="estimated",
-            metadata={"tools": request.allowed_tools},
+            metadata={"tools": request.allowed_tools, **alloc_meta_extra},
         ),
         UsageEventCreateRequest(
             tenant_id=run.tenant_id,
+            org_id=alloc_org_id,
             project_id=routed_project_id,
+            cost_center=alloc_cost_center,
+            environment=alloc_env,
             user_id=run.user_id,
             run_id=run.run_id,
             trace_id=trace_id,
@@ -1400,7 +1681,7 @@ async def record_submit_usage(
             usage_unit="artifact_mb",
             quantity=Decimal("0.01"),
             phase="estimated",
-            metadata={"source": "replay_bundle_placeholder"},
+            metadata={"source": "replay_bundle_placeholder", **alloc_meta_extra},
         ),
     ]
     return await _record_events_and_budget(
@@ -1433,16 +1714,30 @@ async def record_actual_usage(
     routed_pricing_mode = str(route.get("pricing_mode") or meta.get("pricing_mode") or "standard").strip() or "standard"
     routed_service_tier = str(route.get("service_tier") or meta.get("service_tier") or "standard").strip() or "standard"
     routed_project_id = str(route.get("project_id") or meta.get("project_id") or "").strip()
+    alloc, _ = _resolve_run_allocation(route, meta)
+    alloc_cost_center = str(alloc.get("cost_center") or "")
+    alloc_org_id = str(alloc.get("org_id") or "")
+    alloc_env = str(alloc.get("environment") or "dev")
+    explicit_env = str(alloc.get("explicit_environment") or "")
+    custom_tags = dict(alloc.get("allocation_tags") or {})
+
     usage_status = "failed" if is_failed_retry else "success"
     cost_meta_base: dict[str, object] = {"source": "worker"}
     if is_failed_retry:
         cost_meta_base["cost_type"] = "failed_retry"
+    if explicit_env:
+        cost_meta_base["explicit_environment"] = explicit_env
+    if custom_tags:
+        cost_meta_base["allocation_tags"] = custom_tags
     transcript = run.evaluation_summary.get("execution_event", {}).get("payload", {}).get("tool_transcript", [])
     output_tokens = _token_estimate(run.execution_output or "worker_attempt")
     events = [
         UsageEventCreateRequest(
             tenant_id=run.tenant_id,
+            org_id=alloc_org_id,
             project_id=routed_project_id,
+            cost_center=alloc_cost_center,
+            environment=alloc_env,
             user_id=run.user_id,
             run_id=run.run_id,
             trace_id=trace_id,
@@ -1458,7 +1753,10 @@ async def record_actual_usage(
         ),
         UsageEventCreateRequest(
             tenant_id=run.tenant_id,
+            org_id=alloc_org_id,
             project_id=routed_project_id,
+            cost_center=alloc_cost_center,
+            environment=alloc_env,
             user_id=run.user_id,
             run_id=run.run_id,
             trace_id=trace_id,
@@ -1479,7 +1777,10 @@ async def record_actual_usage(
         ),
         UsageEventCreateRequest(
             tenant_id=run.tenant_id,
+            org_id=alloc_org_id,
             project_id=routed_project_id,
+            cost_center=alloc_cost_center,
+            environment=alloc_env,
             user_id=run.user_id,
             run_id=run.run_id,
             trace_id=trace_id,
@@ -1826,16 +2127,76 @@ async def resolve_budget_violation(
     return item
 
 
+def _fx_for_item(item: CostEvent) -> Decimal:
+    fx = _decimal(item.fx_rate)
+    return fx if fx > Decimal("0") else Decimal("1")
+
+
+def _pre_tax_base_cost(item: CostEvent) -> Decimal:
+    return _money(_total_cost(item) * _fx_for_item(item))
+
+
+def _tax_base_cost(item: CostEvent) -> Decimal:
+    return _money(_decimal(item.tax_amount) * _fx_for_item(item))
+
+
+def _billed_base_cost(item: CostEvent) -> Decimal:
+    bcc = _decimal(item.base_currency_cost)
+    if bcc != Decimal("0"):
+        return _money(bcc)
+    return _money((_total_cost(item) + _decimal(item.tax_amount)) * _fx_for_item(item))
+
+
+def _total_base_cost(items: list[CostEvent]) -> Decimal:
+    return _money(sum((_pre_tax_base_cost(item) for item in items), Decimal("0")))
+
+
+def _settlement_key(item: CostEvent) -> tuple[str, str, str, str, str]:
+    return (
+        item.run_id or "",
+        item.replay_attempt_id or "",
+        item.resume_attempt_id or "",
+        item.resource_type or "",
+        item.usage_unit or "",
+    )
+
+
+def _settled_cost_events(costs: list[CostEvent]) -> list[CostEvent]:
+    has_actual_by_key: dict[tuple[str, str, str, str, str], bool] = {}
+    for item in costs:
+        if not item.run_id or item.cost_type == "adjustment":
+            continue
+        key = _settlement_key(item)
+        if item.cost_type in {"actual", "failed_retry"}:
+            has_actual_by_key[key] = True
+        else:
+            has_actual_by_key.setdefault(key, False)
+
+    settled: list[CostEvent] = []
+    for item in costs:
+        if not item.run_id or item.cost_type == "adjustment":
+            settled.append(item)
+            continue
+        key = _settlement_key(item)
+        if has_actual_by_key.get(key, False):
+            if item.cost_type in {"actual", "failed_retry"}:
+                settled.append(item)
+        else:
+            settled.append(item)
+    return settled
+
+
 def _cost_for_basis(item: CostEvent, basis: str) -> Decimal:
+    fx = _fx_for_item(item)
     if basis == "gross":
-        return _decimal(item.gross_cost)
+        return _money(_decimal(item.gross_cost) * fx)
     if basis == "net":
-        return _decimal(item.net_cost)
+        return _money(_decimal(item.net_cost) * fx)
     if basis == "base_currency":
-        return _decimal(item.base_currency_cost)
+        return _billed_base_cost(item)
     if basis == "estimated":
-        return _decimal(item.estimated_cost) or _total_cost(item)
-    return _total_cost(item)
+        return _money(_decimal(item.estimated_cost) * fx)
+    return _pre_tax_base_cost(item)
 
 
 def _cost_in_period(item: CostEvent, policy: BudgetPolicy, now: datetime, run_id: str) -> bool:
@@ -1873,9 +2234,12 @@ async def evaluate_budget_policies(
         return outcome
 
     now = datetime.now(timezone.utc)
+    settings = get_settings()
+    base_currency = settings.finops_base_currency
     tenant_costs = await _list_cost_events(session, tenant_id=run.tenant_id)
-    run_costs = [c for c in tenant_costs if c.run_id == run.run_id]
-    run_estimated = _money(sum(_decimal(c.estimated_cost) for c in run_costs))
+    run_costs = [c for c in tenant_costs if c.run_id == run.run_id and c.cost_type != "adjustment"]
+    settled_run_costs = _settled_cost_events(run_costs)
+    run_estimated = _money(sum(_cost_for_basis(c, "estimated") for c in settled_run_costs))
     workflow_id = (
         plan.workflow_id
         if plan is not None
@@ -1939,6 +2303,8 @@ async def evaluate_budget_policies(
 
         matching_costs: list[CostEvent] = []
         for item in tenant_costs:
+            if item.cost_type == "adjustment":
+                continue
             if not _cost_in_period(item, policy, now, run.run_id):
                 continue
             if policy.scope == "user":
@@ -1976,18 +2342,24 @@ async def evaluate_budget_policies(
                 continue
             matching_costs.append(item)
 
+        settled_matching = _settled_cost_events(matching_costs)
         spent_before = _money(
-            sum(_cost_for_basis(c, policy.budget_basis) for c in matching_costs if c.run_id != run.run_id)
+            sum(_cost_for_basis(c, policy.budget_basis) for c in settled_matching if c.run_id != run.run_id)
         )
         current_run_amount = _money(
-            sum(_cost_for_basis(c, policy.budget_basis) for c in matching_costs if c.run_id == run.run_id)
+            sum(_cost_for_basis(c, policy.budget_basis) for c in settled_matching if c.run_id == run.run_id)
         )
         total_amount = _money(spent_before + current_run_amount)
 
-        hard_limit = _money(policy.hard_limit_amount)
-        soft_limit = _money(policy.soft_limit_amount)
+        policy_curr = (policy.currency or base_currency).strip().upper()
+        limit_fx_rate = Decimal("1")
+        if policy_curr != base_currency:
+            limit_fx_rate = settings.finops_fx_rates.get(policy_curr, Decimal("1"))
+
+        hard_limit = _money(_money(policy.hard_limit_amount) * limit_fx_rate)
+        soft_limit = _money(_money(policy.soft_limit_amount) * limit_fx_rate)
         if hard_limit == Decimal("0") and soft_limit == Decimal("0") and policy.limit_amount:
-            hard_limit = _money(policy.limit_amount)
+            hard_limit = _money(_money(policy.limit_amount) * limit_fx_rate)
 
         threshold_type = ""
         limit_used = Decimal("0")
@@ -2080,7 +2452,7 @@ async def evaluate_budget_policies(
                 remaining_budget_before=remaining_before,
                 overage_amount=overage,
                 overage_percent=_money((overage / limit_used * 100) if limit_used else 0),
-                currency=policy.currency,
+                currency=base_currency,
                 decision=decision,
                 recommended_action=decision,
                 action_taken=action_taken,
@@ -2091,6 +2463,8 @@ async def evaluate_budget_policies(
                     "scope": policy.scope,
                     "period": policy.period,
                     "fallback_model_tier": policy.fallback_model_tier,
+                    "policy_currency": policy_curr,
+                    "limit_fx_rate": _decimal_json(limit_fx_rate),
                 },
             )
             session.add(violation)
@@ -2129,7 +2503,7 @@ async def evaluate_budget_policies(
             outcome.matched_budget_id = policy.budget_id
             outcome.reason = (
                 f"Budget policy {policy.policy_name} ({policy.scope}/{policy.period}) {threshold_type} limit exceeded: "
-                f"{format_decimal_plain(total_amount)} > {format_decimal_plain(limit_used)} {policy.currency}."
+                f"{format_decimal_plain(total_amount)} > {format_decimal_plain(limit_used)} {base_currency}."
             )
 
     return outcome
@@ -2179,7 +2553,7 @@ async def apply_budget_enforcement_to_run(
             "model_tier": tier,
             "fallback_model_tier": tier,
             "degraded_from": old_model,
-            "routing_reason": f"V1.5.4 FinOps budget soft-limit degraded model route to {tier} tier.",
+            "routing_reason": f"{FINOPS_CALCULATION_VERSION.upper()} FinOps budget soft-limit degraded model route to {tier} tier.",
         }
         exec_plan_dict = dict(summary.get("execution_plan") or {})
         if exec_plan_dict:
@@ -2356,17 +2730,34 @@ async def _compute_savings_for_costs(
 
 
 async def run_cost_summary(session: AsyncSession, *, run_id: str) -> RunCostSummary:
+    settings = get_settings()
+    base_currency = settings.finops_base_currency
     usage = await list_usage_events(session, run_id=run_id)
     costs = await _list_cost_events(session, run_id=run_id)
     estimated = _money(sum(_decimal(item.estimated_cost) for item in costs))
     actual = _money(sum(_decimal(item.actual_cost) for item in costs))
-    tenant_id = usage[0].tenant_id if usage else ""
-    provider_breakdown = _breakdown(costs, "provider")
-    model_breakdown = _breakdown(costs, "model_name")
-    tool_breakdown = _breakdown(costs, "tool_id")
-    step_breakdown = _breakdown(costs, "step_id")
-    cost_type_breakdown = _breakdown(costs, "cost_type")
-    resource_breakdown = _breakdown(costs, "resource_type")
+    operational_costs = [c for c in costs if c.cost_type != "adjustment"]
+    settled_costs = _settled_cost_events(operational_costs)
+    settled_ids = {c.cost_id for c in settled_costs}
+    for item in costs:
+        item.is_settled = (item.cost_id in settled_ids) or (item.cost_type == "adjustment")
+        item.pre_tax_base_cost = _pre_tax_base_cost(item)
+
+    settled_cost = _total_base_cost(settled_costs)
+    total_tax_amount = _money(sum((_tax_base_cost(item) for item in settled_costs), Decimal("0")))
+    total_billed_base_cost = _money(sum((_billed_base_cost(item) for item in settled_costs), Decimal("0")))
+    currency_breakdown: dict[str, Decimal] = {}
+    for item in settled_costs:
+        curr = (item.currency or base_currency).upper()
+        currency_breakdown[curr] = _money(currency_breakdown.get(curr, Decimal("0")) + _total_cost(item))
+
+    tenant_id = usage[0].tenant_id if usage else (costs[0].tenant_id if costs else "")
+    provider_breakdown = _breakdown(settled_costs, "provider")
+    model_breakdown = _breakdown(settled_costs, "model_name")
+    tool_breakdown = _breakdown(settled_costs, "tool_id")
+    step_breakdown = _breakdown(settled_costs, "step_id")
+    cost_type_breakdown = _breakdown(settled_costs, "cost_type")
+    resource_breakdown = _breakdown(settled_costs, "resource_type")
     violations = await list_budget_violations(session, run_id=run_id)
     if any(item.decision in {"fail_closed", "require_approval"} for item in violations):
         budget_status = "exceeded"
@@ -2375,19 +2766,23 @@ async def run_cost_summary(session: AsyncSession, *, run_id: str) -> RunCostSumm
     else:
         budget_status = "within_budget"
     cost_delta = _money(actual - estimated)
-    cache_savings, batch_savings = await _compute_savings_for_costs(session, costs)
+    cache_savings, batch_savings = await _compute_savings_for_costs(session, settled_costs)
     return RunCostSummary(
         run_id=run_id,
         tenant_id=tenant_id,
-        base_currency=costs[0].base_currency if costs else "USD",
+        base_currency=costs[0].base_currency if costs else base_currency,
         estimated_cost=estimated,
         actual_cost=actual,
+        settled_cost=settled_cost,
+        total_tax_amount=total_tax_amount,
+        total_billed_base_cost=total_billed_base_cost,
         cost_delta=cost_delta,
         cost_delta_percent=_money((cost_delta / estimated * 100) if estimated else 0),
-        currency=costs[0].currency if costs else "USD",
+        currency=costs[0].currency if costs else base_currency,
         budget_status=budget_status,
         budget_policy_id=violations[0].budget_id if violations else "",
         budget_remaining=violations[0].remaining_budget_before if violations else Decimal("0"),
+        currency_breakdown=currency_breakdown,
         provider_breakdown=provider_breakdown,
         model_breakdown=model_breakdown,
         tool_breakdown=tool_breakdown,
@@ -2395,9 +2790,9 @@ async def run_cost_summary(session: AsyncSession, *, run_id: str) -> RunCostSumm
         cost_type_breakdown=cost_type_breakdown,
         resource_breakdown=resource_breakdown,
         breakdown={f"{key}_cost": value for key, value in resource_breakdown.items()},
-        replay_cost=sum((_total_cost(item) for item in costs if item.replay_attempt_id), Decimal("0")),
-        resume_incremental_cost=sum((_total_cost(item) for item in costs if item.resume_attempt_id), Decimal("0")),
-        failed_retry_cost=sum((_total_cost(item) for item in costs if item.cost_type == "failed_retry"), Decimal("0")),
+        replay_cost=_money(sum((_pre_tax_base_cost(item) for item in settled_costs if item.replay_attempt_id), Decimal("0"))),
+        resume_incremental_cost=_money(sum((_pre_tax_base_cost(item) for item in settled_costs if item.resume_attempt_id), Decimal("0"))),
+        failed_retry_cost=_money(sum((_pre_tax_base_cost(item) for item in settled_costs if item.cost_type == "failed_retry"), Decimal("0"))),
         cache_savings=cache_savings,
         batch_savings=batch_savings,
         usage_events=usage,
@@ -2405,9 +2800,33 @@ async def run_cost_summary(session: AsyncSession, *, run_id: str) -> RunCostSumm
     )
 
 
-async def tenant_cost_summary(session: AsyncSession, *, tenant_id: str) -> TenantCostSummary:
-    costs = await _list_cost_events(session, tenant_id=tenant_id)
-    today = datetime.now(timezone.utc).date()
+async def tenant_cost_summary(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    project_id: str | None = None,
+    cost_center: str | None = None,
+) -> TenantCostSummary:
+    settings = get_settings()
+    base_currency = settings.finops_base_currency
+    costs = await _list_cost_events(
+        session,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        cost_center=cost_center,
+    )
+    operational_costs = [c for c in costs if c.cost_type != "adjustment"]
+    adjustment_costs = [c for c in costs if c.cost_type == "adjustment"]
+    settled_costs = _settled_cost_events(operational_costs)
+
+    now = datetime.now(timezone.utc)
+    today = now.date()
+    period_start = datetime(today.year, today.month, 1, tzinfo=timezone.utc)
+    if today.month == 12:
+        period_end = datetime(today.year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        period_end = datetime(today.year, today.month + 1, 1, tzinfo=timezone.utc)
+
     today_cost = Decimal("0")
     month_cost = Decimal("0")
     total_by_run: dict[str, Decimal] = {}
@@ -2415,8 +2834,12 @@ async def tenant_cost_summary(session: AsyncSession, *, tenant_id: str) -> Tenan
     total_by_workflow: dict[str, Decimal] = {}
     total_by_tool: dict[str, Decimal] = {}
     total_by_user: dict[str, Decimal] = {}
-    for item in costs:
-        amount = _total_cost(item)
+    currency_breakdown: dict[str, Decimal] = {}
+
+    for item in settled_costs:
+        amount = _pre_tax_base_cost(item)
+        curr = (item.currency or base_currency).upper()
+        currency_breakdown[curr] = _money(currency_breakdown.get(curr, Decimal("0")) + _total_cost(item))
         total_by_run[item.run_id] = total_by_run.get(item.run_id, Decimal("0")) + amount
         if item.model_name:
             total_by_model[item.model_name] = total_by_model.get(item.model_name, Decimal("0")) + amount
@@ -2430,6 +2853,12 @@ async def tenant_cost_summary(session: AsyncSession, *, tenant_id: str) -> Tenan
             today_cost += amount
         if item.created_at and item.created_at.year == today.year and item.created_at.month == today.month:
             month_cost += amount
+
+    total_tax_amount = _money(sum((_tax_base_cost(item) for item in settled_costs), Decimal("0")))
+    total_billed_base_cost = _money(sum((_billed_base_cost(item) for item in settled_costs), Decimal("0")))
+    adjustment_total = _money(sum((_pre_tax_base_cost(item) for item in adjustment_costs), Decimal("0")))
+    reconciled_mtd = _money(_money(month_cost) + adjustment_total)
+
     violations = await list_budget_violations(session, tenant_id=tenant_id)
     budgets = await list_budget_policies(session, tenant_id=tenant_id, active_only=True)
     monthly_limit = sum(
@@ -2440,24 +2869,34 @@ async def tenant_cost_summary(session: AsyncSession, *, tenant_id: str) -> Tenan
         ),
         Decimal("0"),
     )
-    cache_savings, batch_savings = await _compute_savings_for_costs(session, costs)
+    cache_savings, batch_savings = await _compute_savings_for_costs(session, settled_costs)
     return TenantCostSummary(
         tenant_id=tenant_id,
+        period_start=period_start,
+        period_end=period_end,
+        timezone="UTC",
+        base_currency=base_currency,
         today_cost=_money(today_cost),
         month_to_date_cost=_money(month_cost),
+        total_tax_amount=total_tax_amount,
+        total_billed_base_cost=total_billed_base_cost,
+        adjustment_total=adjustment_total,
+        reconciled_month_to_date_cost=reconciled_mtd,
         budget_used_percent=_money((month_cost / monthly_limit * 100) if monthly_limit else 0),
         violation_count=len(violations),
-        provider_breakdown=_breakdown(costs, "provider"),
-        resource_type_breakdown=_breakdown(costs, "resource_type"),
-        environment_breakdown=_breakdown(costs, "environment"),
-        project_breakdown=_breakdown(costs, "project_id"),
+        currency_breakdown=currency_breakdown,
+        cost_center_breakdown=_breakdown(settled_costs, "cost_center"),
+        provider_breakdown=_breakdown(settled_costs, "provider"),
+        resource_type_breakdown=_breakdown(settled_costs, "resource_type"),
+        environment_breakdown=_breakdown(settled_costs, "environment"),
+        project_breakdown=_breakdown(settled_costs, "project_id"),
         top_runs=_top_items(total_by_run, "run_id"),
         top_models=_top_items(total_by_model, "model_name"),
         top_workflows=_top_items(total_by_workflow, "workflow_id"),
         top_tools=_top_items(total_by_tool, "tool_id"),
         top_users=_top_items(total_by_user, "user_id"),
-        failed_run_cost=sum((_total_cost(item) for item in costs if item.cost_type == "failed_retry"), Decimal("0")),
-        replay_cost=sum((_total_cost(item) for item in costs if item.replay_attempt_id), Decimal("0")),
+        failed_run_cost=_money(sum((_pre_tax_base_cost(item) for item in settled_costs if item.cost_type == "failed_retry"), Decimal("0"))),
+        replay_cost=_money(sum((_pre_tax_base_cost(item) for item in settled_costs if item.replay_attempt_id), Decimal("0"))),
         cache_savings=cache_savings,
         batch_savings=batch_savings,
     )
@@ -2473,7 +2912,7 @@ def _breakdown(costs: list[CostEvent], attr: str) -> dict[str, Decimal]:
         key = str(getattr(item, attr, "") or "")
         if not key:
             continue
-        values[key] = values.get(key, Decimal("0")) + _total_cost(item)
+        values[key] = values.get(key, Decimal("0")) + _pre_tax_base_cost(item)
     return {key: _money(value) for key, value in values.items()}
 
 
@@ -2492,17 +2931,345 @@ async def workflow_cost_summary(
     tenant_id: str | None = None,
 ) -> dict:
     costs = await _list_cost_events(session, workflow_id=workflow_id, tenant_id=tenant_id)
+    settled = _settled_cost_events([c for c in costs if c.cost_type != "adjustment"])
     return {
         "workflow_id": workflow_id,
         "tenant_id": tenant_id or "",
-        "total_cost": _money(sum((_total_cost(c) for c in costs), Decimal("0"))),
+        "total_cost": _total_base_cost(settled),
     }
 
 
 async def model_cost_ranking(session: AsyncSession, *, tenant_id: str | None = None) -> list[dict]:
     costs = await _list_cost_events(session, tenant_id=tenant_id)
+    settled = _settled_cost_events([c for c in costs if c.cost_type != "adjustment"])
     values: dict[str, Decimal] = {}
-    for item in costs:
+    for item in settled:
         if item.model_name:
-            values[item.model_name] = values.get(item.model_name, Decimal("0")) + _total_cost(item)
+            values[item.model_name] = values.get(item.model_name, Decimal("0")) + _pre_tax_base_cost(item)
     return _top_items(values, "model_name")
+
+
+async def create_cost_adjustment(
+    session: AsyncSession,
+    payload: CostAdjustmentCreateRequest,
+    *,
+    actor: str = "finops_admin",
+) -> CostEvent:
+    settings = get_settings()
+    base_currency = settings.finops_base_currency
+    tenant_id = (payload.tenant_id or "default").strip() or "default"
+    currency = (payload.currency or base_currency).strip().upper()
+    amount = _money(payload.amount)
+
+    idem_source = (
+        payload.idempotency_key.strip()
+        if payload.idempotency_key and payload.idempotency_key.strip()
+        else f"{tenant_id}|{payload.provider_invoice_id}|{_decimal_json(amount)}|{currency}|{payload.reason}"
+    )
+    cost_id = f"cost_adj_{hashlib.sha256(idem_source.encode('utf-8')).hexdigest()[:32]}"
+    existing = await session.scalar(select(CostEvent).where(CostEvent.cost_id == cost_id))
+    if existing is not None:
+        existing.is_settled = True
+        existing.pre_tax_base_cost = _pre_tax_base_cost(existing)
+        return existing
+
+    if payload.reverses_cost_id:
+        reversed_target = await session.scalar(
+            select(CostEvent).where(
+                CostEvent.cost_id == payload.reverses_cost_id,
+                CostEvent.tenant_id == tenant_id,
+            )
+        )
+        if reversed_target is None:
+            raise ValueError(f"reverses_cost_id {payload.reverses_cost_id!r} not found for tenant {tenant_id!r}.")
+
+    if payload.fx_rate is not None and _decimal(payload.fx_rate) > Decimal("0"):
+        fx_rate = _decimal(payload.fx_rate)
+        fx_rate_source = "adjustment_override"
+    else:
+        fx_rate, fx_rate_source = resolve_fx_rate(currency, base_currency, None)
+
+    tax_rate = _decimal(payload.tax_rate) if payload.tax_rate is not None else settings.finops_default_tax_rate
+    tax_amount = _money(amount * tax_rate) if tax_rate > Decimal("0") else Decimal("0")
+    billed_amount = _money(amount + tax_amount)
+    base_currency_cost = _money(billed_amount * fx_rate)
+    pre_tax_base_cost = _money(amount * fx_rate)
+    created_by = payload.created_by or actor
+
+    cost = CostEvent(
+        cost_id=cost_id,
+        usage_event_id="",
+        pricing_catalog_id="",
+        pricing_snapshot={},
+        tenant_id=tenant_id,
+        org_id=payload.org_id or "",
+        project_id=payload.project_id or "",
+        cost_center=payload.cost_center or "",
+        environment=payload.environment or "prod",
+        user_id=created_by,
+        run_id=payload.run_id or "",
+        workflow_id="",
+        step_id="",
+        checkpoint_id="",
+        replay_attempt_id="",
+        resume_attempt_id="",
+        trace_id="",
+        provider=payload.provider or "internal",
+        billing_platform="direct_api",
+        resource_type="adjustment",
+        resource_subtype="other",
+        model_name=payload.model_name or "",
+        model_version="",
+        cost_type="adjustment",
+        usage_unit="adjustment",
+        quantity=Decimal("0"),
+        unit_price=amount,
+        gross_cost=amount,
+        discount_rate=Decimal("0"),
+        discount_amount=Decimal("0"),
+        multiplier=Decimal("1"),
+        net_cost=amount,
+        tax_amount=tax_amount,
+        estimated_cost=Decimal("0"),
+        actual_cost=amount,
+        currency=currency,
+        base_currency=base_currency,
+        base_currency_cost=base_currency_cost,
+        fx_rate=fx_rate,
+        fx_rate_source=fx_rate_source,
+        billing_period_start=_ensure_utc(payload.billing_period_start),
+        billing_period_end=_ensure_utc(payload.billing_period_end),
+        provider_invoice_id=payload.provider_invoice_id,
+        calculation_method="manual_adjustment",
+        calculation_version=FINOPS_CALCULATION_VERSION,
+        allocation_tags={
+            "tenant_id": tenant_id,
+            "workflow_id": "",
+            "project_id": payload.project_id or "",
+            "cost_center": payload.cost_center or "",
+            "org_id": payload.org_id or "",
+            "environment": payload.environment or "prod",
+            "provider_invoice_id": payload.provider_invoice_id,
+            "custom": {},
+        },
+        metadata_payload={
+            "reason": payload.reason,
+            "created_by": created_by,
+            "reverses_cost_id": payload.reverses_cost_id or "",
+            "pre_tax_amount": _decimal_json(amount),
+            "billed_amount": _decimal_json(billed_amount),
+            "tax_rate": _decimal_json(tax_rate),
+            "fx_rates_as_of": settings.finops_fx_rates_as_of,
+            **(payload.metadata or {}),
+        },
+    )
+    session.add(cost)
+    session.add(
+        GovernanceEvent(
+            tenant_id=tenant_id,
+            user_id=created_by,
+            run_id=payload.run_id or "",
+            event_type="finops_cost_adjustment",
+            decision="recorded",
+            reason=payload.reason,
+            details={
+                "cost_id": cost_id,
+                "provider_invoice_id": payload.provider_invoice_id,
+                "amount": format_decimal_plain(amount),
+                "currency": currency,
+                "base_currency_cost": format_decimal_plain(base_currency_cost),
+                "reverses_cost_id": payload.reverses_cost_id or "",
+            },
+        )
+    )
+    await session.commit()
+    await session.refresh(cost)
+    cost.is_settled = True
+    cost.pre_tax_base_cost = pre_tax_base_cost
+    return cost
+
+
+CSV_EXPORT_COLUMNS: tuple[str, ...] = (
+    "cost_id",
+    "usage_event_id",
+    "created_at",
+    "tenant_id",
+    "org_id",
+    "project_id",
+    "cost_center",
+    "environment",
+    "user_id",
+    "run_id",
+    "workflow_id",
+    "step_id",
+    "trace_id",
+    "provider",
+    "model_name",
+    "resource_type",
+    "cost_type",
+    "is_settled",
+    "quantity",
+    "usage_unit",
+    "unit_price",
+    "gross_cost",
+    "discount_amount",
+    "net_cost",
+    "tax_amount",
+    "currency",
+    "fx_rate",
+    "fx_rate_source",
+    "base_currency",
+    "pre_tax_base_cost",
+    "base_currency_cost",
+    "provider_invoice_id",
+    "billing_period_start",
+    "billing_period_end",
+    "calculation_version",
+)
+
+_CSV_NUMERIC_COLUMNS = {
+    "quantity",
+    "unit_price",
+    "gross_cost",
+    "discount_amount",
+    "net_cost",
+    "tax_amount",
+    "fx_rate",
+    "pre_tax_base_cost",
+    "base_currency_cost",
+}
+
+
+def _escape_csv_cell(value: object, *, is_numeric: bool = False) -> str:
+    if value is None:
+        return ""
+    if is_numeric:
+        return format_decimal_plain(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, datetime):
+        return value.isoformat()
+    text = str(value)
+    if text and text[0] in {"=", "+", "-", "@", "\t", "\r"}:
+        return f"'{text}"
+    return text
+
+
+def _parse_export_bound(value: str | date | datetime | None, *, is_end: bool = False) -> datetime | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, date):
+        if is_end:
+            return datetime(value.year, value.month, value.day, 23, 59, 59, 999999, tzinfo=timezone.utc)
+        return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+    text = str(value).strip()
+    if len(text) == 10:
+        try:
+            d = date.fromisoformat(text)
+            if is_end:
+                return datetime(d.year, d.month, d.day, 23, 59, 59, 999999, tzinfo=timezone.utc)
+            return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    return _ensure_utc(text)
+
+
+async def export_tenant_cost_ledger(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    project_id: str | None = None,
+    cost_center: str | None = None,
+    cost_type: str | None = None,
+    provider: str | None = None,
+    start_date: str | date | datetime | None = None,
+    end_date: str | date | datetime | None = None,
+    settled_only: bool = False,
+    limit: int | None = None,
+    export_format: str = "json",
+) -> TenantCostExportResponse:
+    settings = get_settings()
+    base_currency = settings.finops_base_currency
+    all_tenant_costs = await _list_cost_events(session, tenant_id=tenant_id)
+    settled_operational_all = _settled_cost_events([c for c in all_tenant_costs if c.cost_type != "adjustment"])
+    settled_ids = {c.cost_id for c in settled_operational_all}
+
+    start_dt = _parse_export_bound(start_date, is_end=False)
+    end_dt = _parse_export_bound(end_date, is_end=True)
+
+    filtered: list[CostEvent] = []
+    for item in all_tenant_costs:
+        item.is_settled = (item.cost_id in settled_ids) or (item.cost_type == "adjustment")
+        item.pre_tax_base_cost = _pre_tax_base_cost(item)
+        if project_id and item.project_id != project_id:
+            continue
+        if cost_center and item.cost_center != cost_center:
+            continue
+        if cost_type and item.cost_type != cost_type:
+            continue
+        if provider and item.provider != provider:
+            continue
+        created = _ensure_utc(item.created_at)
+        if start_dt is not None and created is not None and created < start_dt:
+            continue
+        if end_dt is not None and created is not None and created > end_dt:
+            continue
+        if settled_only and not item.is_settled:
+            continue
+        filtered.append(item)
+
+    max_rows = settings.finops_export_max_rows
+    if limit is not None and limit > 0:
+        max_rows = min(limit, settings.finops_export_max_rows)
+    truncated = len(filtered) > max_rows
+    export_rows = filtered[:max_rows]
+
+    FINOPS_LEDGER_EXPORTS_TOTAL.labels(
+        tenant_id=tenant_id or "default",
+        format=(export_format or "json").lower(),
+    ).inc()
+
+    exp_settled_op = [r for r in export_rows if r.cost_type != "adjustment" and getattr(r, "is_settled", True)]
+    exp_adj = [r for r in export_rows if r.cost_type == "adjustment"]
+    settled_pre_tax_base_cost = _total_base_cost(exp_settled_op)
+    total_tax_amount = _money(sum((_tax_base_cost(r) for r in exp_settled_op), Decimal("0")))
+    total_billed_base_cost = _money(sum((_billed_base_cost(r) for r in exp_settled_op), Decimal("0")))
+    adjustment_total = _total_base_cost(exp_adj)
+
+    currency_breakdown: dict[str, Decimal] = {}
+    for item in exp_settled_op:
+        curr = (item.currency or base_currency).upper()
+        currency_breakdown[curr] = _money(currency_breakdown.get(curr, Decimal("0")) + _total_cost(item))
+
+    cost_center_breakdown = _breakdown(exp_settled_op, "cost_center")
+
+    return TenantCostExportResponse(
+        tenant_id=tenant_id,
+        total_records=len(export_rows),
+        truncated=truncated,
+        base_currency=base_currency,
+        fx_rates_as_of=settings.finops_fx_rates_as_of,
+        settled_pre_tax_base_cost=settled_pre_tax_base_cost,
+        total_tax_amount=total_tax_amount,
+        total_billed_base_cost=total_billed_base_cost,
+        adjustment_total=adjustment_total,
+        currency_breakdown=currency_breakdown,
+        cost_center_breakdown=cost_center_breakdown,
+        items=[CostEventRecord(**cost_to_dict(r)) for r in export_rows],
+    )
+
+
+def render_cost_ledger_csv(export_data: TenantCostExportResponse) -> str:
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    writer.writerow(list(CSV_EXPORT_COLUMNS))
+    for item in export_data.items:
+        item_dict = item.model_dump()
+        row = [
+            _escape_csv_cell(item_dict.get(col), is_numeric=(col in _CSV_NUMERIC_COLUMNS))
+            for col in CSV_EXPORT_COLUMNS
+        ]
+        writer.writerow(row)
+    return buf.getvalue()
