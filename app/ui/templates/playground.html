@@ -53,6 +53,12 @@
       <label>Project ID
         <input name="project_id" value="{{ form.get('project_id', '') if form else '' }}" placeholder="optional project_id">
       </label>
+      <label>Cost Center
+        <input name="cost_center" value="{{ form.get('cost_center', '') if form else '' }}" placeholder="optional cost_center (e.g. cc-ai-core)">
+      </label>
+      <label>Org ID
+        <input name="org_id" value="{{ form.get('org_id', '') if form else '' }}" placeholder="optional org_id">
+      </label>
     </div>
     <label style="margin-top: 12px;">Goal
       <input name="goal" value="{{ form.get('goal', 'Summarize the root cause') if form else 'Summarize the root cause' }}">

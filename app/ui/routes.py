@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -71,8 +72,10 @@ from app.services.checkpoint import (
 from app.services.finops import (
     acknowledge_budget_violation,
     create_budget_policy,
+    create_cost_adjustment,
     disable_budget_policy,
     disable_pricing_item,
+    export_tenant_cost_ledger,
     format_decimal_plain,
     get_pricing_item,
     list_budget_policies,
@@ -81,6 +84,7 @@ from app.services.finops import (
     record_checkpoint_usage,
     record_replay_usage,
     record_submit_usage,
+    render_cost_ledger_csv,
     resolve_budget_violation,
     run_cost_summary,
     tenant_cost_summary,
@@ -88,7 +92,11 @@ from app.services.finops import (
 )
 from app.models.finops import PricingChangeLog, PricingImportBatch, PricingSourceDocument
 from app.services.orchestrator import OrchestrationResult
-from app.schemas.finops import BudgetPolicyCreateRequest, PricingCatalogUpdateRequest
+from app.schemas.finops import (
+    BudgetPolicyCreateRequest,
+    CostAdjustmentCreateRequest,
+    PricingCatalogUpdateRequest,
+)
 from app.services.pricing_import import apply_pricing_seed, dry_run_pricing_seed, load_pricing_seed
 from app.services.run_state import RunStateStore
 from app.workers.producer import make_event
@@ -345,11 +353,18 @@ async def dashboard_governance(
 async def dashboard_costs(
     request: Request,
     tenant_id: str | None = None,
+    project_id: str | None = None,
+    cost_center: str | None = None,
     resolution_status: str | None = None,
     session: AsyncSession = Depends(get_session),
 ):
     selected_tenant = tenant_id or "default"
-    summary = await tenant_cost_summary(session, tenant_id=selected_tenant)
+    summary = await tenant_cost_summary(
+        session,
+        tenant_id=selected_tenant,
+        project_id=project_id or None,
+        cost_center=cost_center or None,
+    )
     pricing = await list_pricing_items(session)
     violations = await list_budget_violations(
         session,
@@ -367,10 +382,84 @@ async def dashboard_costs(
             "violations": violations,
             "budgets": budgets,
             "tenant_id": selected_tenant,
+            "project_id": project_id or "",
+            "cost_center": cost_center or "",
             "resolution_status": resolution_status or "",
             "active": "costs",
         },
     )
+
+
+@router.get("/dashboard/costs/export")
+async def dashboard_costs_export(
+    tenant_id: str = "default",
+    format: str = Query(default="csv", pattern="^(json|csv)$"),
+    project_id: str | None = None,
+    cost_center: str | None = None,
+    cost_type: str | None = None,
+    provider: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    settled_only: bool = False,
+    session: AsyncSession = Depends(get_session),
+):
+    selected_tenant = tenant_id or "default"
+    export_data = await export_tenant_cost_ledger(
+        session,
+        tenant_id=selected_tenant,
+        project_id=project_id or None,
+        cost_center=cost_center or None,
+        cost_type=cost_type or None,
+        provider=provider or None,
+        start_date=start_date or None,
+        end_date=end_date or None,
+        settled_only=settled_only,
+        export_format=format,
+    )
+    if format == "csv":
+        csv_text = render_cost_ledger_csv(export_data)
+        safe_tenant = re.sub(r"[^A-Za-z0-9._-]", "_", selected_tenant)
+        headers = {
+            "Content-Disposition": f'attachment; filename="finops_ledger_{safe_tenant}.csv"',
+        }
+        if export_data.truncated:
+            headers["X-Export-Truncated"] = "true"
+        return Response(content=csv_text, media_type="text/csv; charset=utf-8", headers=headers)
+    return export_data
+
+
+@router.post("/dashboard/costs/adjustments", response_class=HTMLResponse)
+async def dashboard_costs_adjustment_create(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    form = await request.form()
+    tenant_id = str(form.get("tenant_id", "default")).strip() or "default"
+    amount_str = str(form.get("amount", "0")).strip() or "0"
+    currency_str = str(form.get("currency", "USD")).strip().upper() or "USD"
+    tax_rate_str = str(form.get("tax_rate", "")).strip()
+    fx_rate_str = str(form.get("fx_rate", "")).strip()
+    payload = CostAdjustmentCreateRequest(
+        tenant_id=tenant_id,
+        org_id=str(form.get("org_id", "")).strip(),
+        project_id=str(form.get("project_id", "")).strip(),
+        cost_center=str(form.get("cost_center", "")).strip(),
+        environment=str(form.get("environment", "prod")).strip() or "prod",
+        run_id=str(form.get("run_id", "")).strip(),
+        provider=str(form.get("provider", "internal")).strip() or "internal",
+        model_name=str(form.get("model_name", "")).strip(),
+        amount=amount_str,
+        currency=currency_str,
+        tax_rate=tax_rate_str if tax_rate_str else None,
+        fx_rate=fx_rate_str if fx_rate_str else None,
+        provider_invoice_id=str(form.get("provider_invoice_id", "")).strip(),
+        reverses_cost_id=str(form.get("reverses_cost_id", "")).strip() or None,
+        reason=str(form.get("reason", "Manual adjustment from dashboard")).strip()
+        or "Manual adjustment from dashboard",
+        created_by="dashboard-finops-admin",
+    )
+    await create_cost_adjustment(session, payload, actor="dashboard-finops-admin")
+    return RedirectResponse(f"/dashboard/costs?tenant_id={tenant_id}", status_code=303)
 
 
 @router.post("/dashboard/costs/violations/{violation_id}/acknowledge", response_class=HTMLResponse)
@@ -673,18 +762,34 @@ async def dashboard_admin_finops_pricing_edit(
     session: AsyncSession = Depends(get_session),
 ):
     form = await request.form()
+    existing = await get_pricing_item(session, pricing_id)
+    merged_meta = dict((existing.metadata_payload if existing is not None else {}) or {})
+    if "tax_rate" in form:
+        tax_rate_val = str(form.get("tax_rate", "")).strip()
+        if tax_rate_val:
+            merged_meta["tax_rate"] = tax_rate_val
+        else:
+            merged_meta.pop("tax_rate", None)
+    if "fx_rate" in form:
+        fx_rate_val = str(form.get("fx_rate", "")).strip()
+        if fx_rate_val:
+            merged_meta["fx_rate"] = fx_rate_val
+        else:
+            merged_meta.pop("fx_rate", None)
     updated = await update_pricing_item(
         session,
         pricing_id,
         PricingCatalogUpdateRequest(
             unit_price=str(form.get("unit_price", "")),
             currency=str(form.get("currency", "USD")),
+            tax_included=str(form.get("tax_included", "")) == "on",
             effective_from=str(form.get("effective_from", "")) or None,
             effective_to=str(form.get("effective_to", "")) or None,
             is_active=str(form.get("is_active", "")) == "on",
             change_reason=str(form.get("change_reason", "")),
             updated_by="dashboard",
             supersede_existing=str(form.get("supersede_existing", "")) == "on",
+            metadata=merged_meta,
         ),
         updated_by="dashboard",
     )
@@ -752,7 +857,7 @@ async def dashboard_operations_release_gate(
     readiness = await compute_operations_readiness(session, settings=get_settings())
     await persist_release_gate(
         session,
-        release_version=str(form.get("release_version", "v1.5.4")),
+        release_version=str(form.get("release_version", "v1.5.5")),
         created_by=str(form.get("created_by", "dashboard")),
         trace_id=str(getattr(request.state, "trace_id", "")),
         readiness=readiness,
@@ -964,6 +1069,16 @@ async def submit_playground(
                 **(
                     {"project_id": str(form.get("project_id")).strip()}
                     if str(form.get("project_id", "")).strip()
+                    else {}
+                ),
+                **(
+                    {"cost_center": str(form.get("cost_center")).strip()}
+                    if str(form.get("cost_center", "")).strip()
+                    else {}
+                ),
+                **(
+                    {"org_id": str(form.get("org_id")).strip()}
+                    if str(form.get("org_id", "")).strip()
                     else {}
                 ),
             },

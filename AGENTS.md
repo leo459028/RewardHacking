@@ -17,14 +17,14 @@ To minimize exploratory file reads and maximize iteration speed and model quota 
 | Layer / Domain | Primary Files | Key Responsibilities & Notes |
 | :--- | :--- | :--- |
 | **App Entry & Config** | `pyproject.toml`<br>`app/main.py`<br>`app/core/config.py` | Package version, FastAPI initialization & middleware (`X-Trace-Id`, Prometheus HTTP metrics), and environment settings (`get_settings()`). |
-| **REST API Layer** | `app/api/routes.py`<br>`app/api/deps.py` | All `/v1/*` JSON endpoints (submit, runs, trace, replay-bundle, checkpoints, approvals, worker DLQ, governance, control-plane, FinOps `/v1/pricing`, `/v1/budgets`, `/v1/budget-violations`, `/v1/cost/*`, `/v1/admin/finops/*`, operations). |
+| **REST API Layer** | `app/api/routes.py`<br>`app/api/deps.py` | All `/v1/*` JSON endpoints (submit, runs, trace, replay-bundle, checkpoints, approvals, worker DLQ, governance, control-plane, FinOps `/v1/pricing`, `/v1/budgets`, `/v1/budget-violations`, `/v1/cost/*`, `/v1/cost/adjustments`, `/v1/cost/tenants/{id}/export`, `/v1/admin/finops/*`, operations). |
 | **Dashboard UI Layer** | `app/ui/routes.py`<br>`app/ui/templates/*.html`<br>`app/ui/static/styles.css` | Server-rendered Jinja2 operational portal (`/dashboard/*`, 14 primary views). Uses custom Jinja2 filters `json_pretty` and `decimal_plain`. |
 | **Guardrail & Policy** | `app/services/prompt_sanitizer.py`<br>`app/services/classical_chinese_guard.py`<br>`app/services/risk_scoring.py`<br>`app/services/policy_engine.py`<br>`app/services/orchestrator.py` | Pre-execution prompt sanitization, Classical Chinese adversarial detection, composite risk scoring (`0.0`–`1.0`), deterministic `allow`/`escalate`/`deny` policy decisions, and bounded tool simulation. |
 | **Control Plane & Step Audit** | `app/services/control_plane.py`<br>`app/models/control_plane.py`<br>`app/schemas/control_plane.py` | `ControlPlanePlanner.plan()`, workflow/tool registries, `ExecutionPlan` & `ExecutionPlanStep` persistence, and lifecycle synchronization (`sync_execution_plan_on_approval`, `sync_execution_plan_on_worker_completion`). |
 | **Checkpoints & Replay** | `app/services/checkpoint.py`<br>`app/models/checkpoint.py`<br>`app/schemas/checkpoint.py` | `RunCheckpoint` (`ckpt_...`) and `ReplayAttempt` (`replay_...`) persistence, checkpoint resume re-dispatch, and dry-run replay. |
-| **Agent FinOps Engine** | `app/services/finops.py`<br>`app/services/pricing_import.py`<br>`app/models/finops.py`<br>`app/schemas/finops.py`<br>`app/seeds/model_pricing_seed.yaml` | 149-entry official model pricing catalog, context-tier resolution, `record_submit_usage()`, `record_actual_usage()`, multi-scope (`run`/`tenant`/`workflow`/`user`/`project`/`model`) & multi-period budget enforcement (`fail_closed`, `require_approval`, `degrade_model`, `dry_run_only`, `warn`), `failed_retry` cost accounting, and violation triage. |
+| **Agent FinOps Engine** | `app/services/finops.py`<br>`app/services/pricing_import.py`<br>`app/models/finops.py`<br>`app/schemas/finops.py`<br>`app/seeds/model_pricing_seed.yaml` | 149-entry official model pricing catalog, context-tier resolution, settled ledger deduplication (`_settled_cost_events`), multi-currency FX & tax accounting (`resolve_fx_rate`, `_compute_tax`), `cost_center`/`org_id` attribution, manual adjustments (`create_cost_adjustment`), CSV/JSON ledger export (`export_tenant_cost_ledger`), multi-scope (`run`/`tenant`/`workflow`/`user`/`project`/`model`) & multi-period budget enforcement (`fail_closed`, `require_approval`, `degrade_model`, `dry_run_only`, `warn`), `failed_retry` cost accounting, and violation triage. |
 | **Audit, DLQ & Operations** | `app/services/audit_log.py`<br>`app/services/operations.py`<br>`app/workers/consumer.py` | `AgentRun`, `ApprovalEvent` (including `expire_stale_approvals`), `WorkerAttempt` (including `requeue_dlq_run`, `resolve_dlq_run`), `GovernanceEvent`, `Incident`, `process_run_by_id()`, and release readiness gate checks. |
-| **Database & Migrations** | `migrations/versions/`<br>`app/models/` | Current Alembic Head: `202606010004` (`20260601_0004_v151_finops_core_expansion.py`). Check if existing columns/JSONB fields suffice before creating new migrations. |
+| **Database & Migrations** | `migrations/versions/`<br>`app/models/` | Current Alembic Head: `202606010004` (`202606010004_expand_v151_finops_core.py`). Check if existing columns/JSONB fields suffice before creating new migrations. |
 
 ---
 
@@ -61,7 +61,7 @@ Do not write vague conceptual sketches; ensure the plan provides actionable step
   - **Budget Policy API**: `POST /v1/budgets` (primary name field is `policy_name`, with `name` accepted as an alias); UI admin route is `/dashboard/admin/finops/budgets`.
   - **Approval Decision API**: `POST /v1/approvals/{run_id}/decision` (`decision` in `approve_once`, `deny`, `request_changes`).
   - **Triggering `awaiting_approval` in Tests**: In `PolicyEngine`, `constraints.requires_human_approval=True` indicates approval is already satisfied for non-destructive tasks unless a tool in `allowed_tools` has `requires_approval=True` (e.g., `deploy_service`) or `allow_destructive_actions=True` is set.
-  - **Entity ID Prefixes**: `plan_` (`ExecutionPlan`), `ckpt_` (`RunCheckpoint`), `replay_` (`ReplayAttempt`), `usage_` (`UsageEvent`), `cost_` (`CostEvent`), `budget_` (`BudgetPolicy`), `bv_` (`BudgetViolation`), `pib_` (`PricingImportBatch`).
+  - **Entity ID Prefixes**: `plan_` (`ExecutionPlan`), `ckpt_` (`RunCheckpoint`), `replay_` (`ReplayAttempt`), `usage_` (`UsageEvent`), `cost_` / `cost_adj_` (`CostEvent` / adjustment `CostEvent`), `budget_` (`BudgetPolicy`), `bv_` (`BudgetViolation`), `pib_` (`PricingImportBatch`).
 
 ---
 
@@ -103,12 +103,13 @@ pytest tests/test_v15x_<new_feature>.py -q -W error::DeprecationWarning
 
 ## 4. Release Version Bump & Documentation Synchronization Checklist
 
-### 4.1 Code Version Anchors (Update All 5 When Bumping Release Version `vX.Y.Z`)
+### 4.1 Code Version Anchors (Update All 6 When Bumping Release Version `vX.Y.Z`)
 1. `pyproject.toml`: `version = "X.Y.Z"`
 2. `app/main.py`: `FastAPI(..., version="X.Y.Z")`
 3. `scripts/security_check.py`: Banner print string `(vX.Y.Z)`
 4. `app/ui/routes.py` & `app/ui/templates/operations.html`: Default `release_version` (`"vX.Y.Z"`)
 5. `scripts/browser_manual_test.py`: Operations release version assertion (`assert release_ver == "vX.Y.Z"`)
+6. `app/services/finops.py`: `FINOPS_CALCULATION_VERSION = "vX.Y.Z"`
 
 ### 4.2 Documentation Synchronization & Language Policy
 - **Language Policy**:

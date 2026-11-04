@@ -1,6 +1,6 @@
 # Configuration & Environment Variables
 
-> **Configuration Version**: `v1.5.3`
+> **Configuration Version**: `v1.5.5`
 > **Source Model**: `app/core/config.py` (`Settings`) via `pydantic-settings`  
 > **Template**: `.env.example`
 
@@ -47,7 +47,24 @@ Application configuration is loaded from environment variables and local `.env` 
 | `RELEASE_GATE_MAX_QUEUED_AGE_MINUTES` | `15` | Threshold for detecting stale queued tasks during release gate |
 | `RELEASE_GATE_FAIL_ON_BOOTSTRAP_KEYS_IN_PROD` | `true` | If true, blocks production release if bootstrap keys exist in `.env` |
 | `PRICING_SOURCE_STALE_DAYS` | `30` | Maximum age (in days) since `retrieved_at` before pricing source documents are flagged as stale |
-| `FINOPS_BUDGET_ENFORCEMENT_ENABLED` | `true` | Enables active pre-execution and runtime budget enforcement across runs, tenants, workflows, and users |
+| `FINOPS_BUDGET_ENFORCEMENT_ENABLED` | `true` | Enables active pre-execution and runtime budget enforcement across runs, tenants, workflows, users, projects, and models |
+| `FINOPS_BASE_CURRENCY` | `USD` | System-wide base currency (ISO 4217 3-letter uppercase code) used to normalize `CostEvent.base_currency_cost` and budget evaluations |
+| `FINOPS_DEFAULT_TAX_RATE` | `0` | Default decimal tax rate (`0` <= rate <= `1`, e.g., `0.05` for 5% VAT) applied when pricing or request metadata does not specify a `tax_rate` |
+| `FINOPS_FX_RATES` | `{"USD":"1","CNY":"0.13888889","TWD":"0.03125000","EUR":"1.08000000","JPY":"0.00666667","GBP":"1.27000000"}` | JSON mapping of source currency to base currency multiplier (`1 unit of source currency = fx_rate units of FINOPS_BASE_CURRENCY`) |
+| `FINOPS_FX_RATES_AS_OF` | `2026-10-01` | Reference date label recorded in `fx_rate_source` (`env_fx_table:YYYY-MM-DD`) |
+| `FINOPS_EXPORT_MAX_ROWS` | `10000` | Maximum rows returned by `GET /v1/cost/tenants/{tenant_id}/export` (`1`–`100000`) |
+
+---
+
+## Multi-Currency & Base Currency Configuration Notes (`v1.5.5`)
+
+- **Default Base Currency (`USD`)**: By default, `FINOPS_BASE_CURRENCY=USD` so all 149 official `USD` pricing seed rows convert 1:1 while foreign-currency pricing rows (such as `TWD` or `CNY`) convert into `USD` using `FINOPS_FX_RATES`.
+- **Fresh Deployment with `TWD` Base Currency**: For a **brand-new deployment** (empty database) that wishes to settle all ledgers and budgets in New Taiwan Dollars (`TWD`), set `FINOPS_BASE_CURRENCY=TWD` and invert the multipliers in `FINOPS_FX_RATES` so `1 unit of source currency = X TWD`:
+  ```env
+  FINOPS_BASE_CURRENCY=TWD
+  FINOPS_FX_RATES={"TWD":"1","USD":"32.00000000","CNY":"4.44444444","EUR":"34.56000000","JPY":"0.21333333","GBP":"40.64000000"}
+  ```
+- **Do Not Mutate Base Currency on Historical Databases**: Because historical `CostEvent.base_currency_cost` records are immutable, changing `FINOPS_BASE_CURRENCY` on a database that already contains historical cost events without a data migration is unsupported.
 
 ---
 

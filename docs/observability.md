@@ -1,6 +1,6 @@
 # Observability, Metrics & SLOs
 
-> **Observability Baseline**: `v1.5.3`
+> **Observability Baseline**: `v1.5.5`
 > **Metrics Engine**: Prometheus Client  
 > **Endpoint**: `GET /v1/metrics`
 
@@ -26,7 +26,10 @@ RewardHacking provides deep observability across API gateways, background worker
 | `agent_evaluator_verdicts_total`| Counter | `verdict` | Evaluation outcome counts (`pass`, `review`) |
 | `agent_incidents_total` | Counter | `severity`, `code` | Security incident creation count partitioned by severity |
 | `agent_finops_usage_events_total` | Counter | `provider`, `model`, `resource_type`, `phase` | FinOps usage events ingested by provider, model, resource type, and phase |
-| `agent_finops_cost_usd_total` | Counter | `tenant_id`, `provider`, `model`, `phase` | Cumulative FinOps expenditure in USD partitioned by tenant, provider, model, and phase |
+| `agent_finops_cost_usd_total` | Counter | `tenant_id`, `provider`, `model`, `phase` | Cumulative pre-tax FinOps expenditure normalized to base currency (or USD when `FINOPS_BASE_CURRENCY=USD`) |
+| `agent_finops_base_currency_cost_total` | Counter | `tenant_id`, `base_currency`, `source_currency`, `cost_type` | Cumulative settled/recorded FinOps expenditure in base currency (`base_currency_cost`) |
+| `agent_finops_tax_total` | Counter | `tenant_id`, `base_currency`, `source_currency` | Cumulative FinOps tax amount converted into base currency |
+| `agent_finops_ledger_exports_total` | Counter | `tenant_id`, `format` | Total tenant FinOps ledger export requests (`json`, `csv`) |
 | `agent_finops_budget_violations_total` | Counter | `scope_type`, `severity`, `action_taken` | Triggered FinOps budget violations partitioned by scope, severity, and enforcement action |
 | `agent_finops_pricing_imports_total` | Counter | `mode`, `status` | Pricing catalog import validations and applications (`dry_run`, `apply`) |
 

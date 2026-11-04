@@ -1,5 +1,43 @@
 # Test Execution & Verification Report
 
+## 2026-11-04 - v1.5.5 FinOps Settled Ledger Correctness, Multi-Currency FX & Tax Accounting, and Reconciliation Ledger Export Verification
+
+- **Version**: `v1.5.5`
+- **Scope of Changes**:
+  1. **Settled Ledger Correctness (Eliminating Estimated/Actual Double-Counting)**: Implemented `_settlement_key()` and `_settled_cost_events()` in `app/services/finops.py` grouping cost events by `(run_id, replay_attempt_id, resume_attempt_id, resource_type, usage_unit)` so that once `actual` or `failed_retry` events land, they replace pre-execution `estimated` events across `evaluate_budget_policies()`, `run_cost_summary()`, `tenant_cost_summary()`, `workflow_cost_summary()`, and `model_cost_ranking()`, while preserving `estimated` reservations for runs still queued or awaiting approval.
+  2. **Multi-Currency FX Normalization & Tax Accounting (Pre-Tax Base-Currency Budget Basis)**: Added `DEFAULT_FINOPS_FX_RATES` (`USD`, `TWD`, `CNY`, `EUR`, `JPY`, `GBP`), `FINOPS_BASE_CURRENCY`, `FINOPS_DEFAULT_TAX_RATE`, `resolve_fx_rate()`, `_compute_tax()`, and `_record_missing_fx_violation()`. All budget policies evaluate pre-tax base-currency amounts (`budget_basis` in `actual`, `net`, `gross`, `estimated`), while `budget_basis="base_currency"` evaluates post-tax `base_currency_cost`. Unmapped currencies record a fail-open `missing_fx_rate` `BudgetViolation` (`severity="warning"`), and unsupported budget currencies return HTTP `422`.
+  3. **Cost-Center / Org Attribution & Manual Reconciliation Adjustments**: Updated `ControlPlanePlanner.plan()`, `/dashboard/playground`, `record_submit_usage()`, and `record_actual_usage()` to extract `cost_center`, `org_id`, `business_unit`, and `environment` into `ExecutionPlan.model_route["allocation"]` and `CostEvent.allocation_tags` (recording `finops_missing_cost_center` warning when absent), and added `POST /v1/cost/adjustments` (`cost_adj_...`) with `finops_admin`/`admin` RBAC enforcement, `invoice_id`, and `mark_run_reconciled`.
+  4. **Financial Reconciliation CSV/JSON Ledger Export & Observability**: Added `GET /v1/cost/tenants/{tenant_id}/export?format=csv|json` (RFC 4180 UTF-8 CSV with formula-injection protection for `=`, `+`, `-`, `@`), Dashboard export/filter/adjustment controls on `/dashboard/costs`, and 3 new Prometheus counters (`agent_finops_base_currency_cost_total`, `agent_finops_tax_total`, `agent_finops_ledger_exports_total`).
+- **UI / Dashboard Verification Endpoints**: `/dashboard`, `/dashboard/playground`, `/dashboard/runs/ad0667e5-358d-4e75-b595-728cc20254ea`, `/dashboard/runs/d62ec582-99b7-44db-9239-ed0c615de020`, `/dashboard/control-plane`, `/dashboard/approvals`, `/dashboard/worker`, `/dashboard/costs?tenant_id=finops-qa-tenant`, `/dashboard/costs/export`, `/dashboard/admin/finops/pricing/price_b4752c3cf89442f9ab14988225687095`, `/dashboard/admin/finops/pricing/import`, `/dashboard/admin/finops/budgets`, `/dashboard/operations`.
+- **Recorded Live Verification Artifacts**:
+  - Headed Browser E2E Walkthrough (`docs/manual_test.md` via `python scripts/browser_manual_test.py` on Playwright Chromium, default QA currency `TWD`):
+    - Scenario 1 Low-Risk Run, Dry-Run Replay Trigger & Replay Bundle: `ad0667e5-358d-4e75-b595-728cc20254ea`
+    - Scenario 2a Classical Chinese Adversarial Run: `3d0f84db-4207-4c02-b2ed-2135323db958`
+    - Scenario 2b Human Approval Escalated, Approved & Stale Approvals Swept: `12786fd5-db87-4136-a66a-3d3c2c9cd9c4`
+    - Scenario 3.1 Pricing Seed Dry Run + Apply Import & Isolated QA Pricing (`TWD`, `qa-fx-model`) Edited & Change Log Verified: `/dashboard/admin/finops/pricing/price_b4752c3cf89442f9ab14988225687095`
+    - Scenario 3.1b Multi-Currency `TWD` FX (`0.03125000`), 5% Tax & Cost-Center (`cc-ai-core`) Run Verified: `d62ec582-99b7-44db-9239-ed0c615de020`
+    - Scenario 3.2–3.4 Browser Budget Block Run, Manual Adjustment (`INV-QA-155`), CSV/JSON Export & Violation Triage (`Acknowledge` -> `Resolve` -> `Disable`): `26b0d964-c354-46cc-a3f9-30987880bcda`
+    - Scenario 4.3 Operations Evidence & Release Gate Snapshot Created: `release_version=v1.5.5`
+    - Section 6 Browser Checklist: `14/14` navigation routes HTTP 200, `0` `0E-8` artifacts, `0` Console errors/warnings, `0` Page errors, `0` failed HTTP requests (`>=400`).
+
+### Test Commands & Actual Execution Results
+
+| Test Command | Actual Result |
+| --- | --- |
+| `python scripts/security_check.py` | Passed: `Running RewardHacking Security & Secret Scan (v1.5.5)... [OK] No sensitive API keys, secrets, or credentials found in git history or working tree.` |
+| `ruff check app tests scripts` | Passed: `All checks passed!` |
+| `git diff --check` | Passed: `0` whitespace errors. |
+| `pytest tests/test_v155_finops_ledger_fx_export.py -q -W error::DeprecationWarning` | Passed: `11 passed in 4.91s` (`0 warnings`) covering settled ledger deduplication, `TWD`/`CNY`/`USD` FX conversion & inclusive/exclusive tax calculation, pre-tax vs. `base_currency` budget evaluation, unsupported budget currency `422` validation, `missing_fx_rate` violation tracking, `cost_center`/`org_id` attribution & `finops_missing_cost_center` warning, manual adjustments (`POST /v1/cost/adjustments`) & RBAC checks, RFC 4180 CSV/JSON ledger export with formula-injection protection, and Dashboard UI routes. |
+| `pytest -q -W error::DeprecationWarning` | Passed: `102 passed in 45.78s` (`0 warnings`). |
+| `docker compose up -d --build` & `docker compose ps` | Passed: built `rewardhacking-api` and `rewardhacking-worker` images; all 5 containers (`api`, `worker`, `kafka`, `postgres`, `redis`) Up and healthy. |
+| `docker compose exec -T api alembic upgrade head` & `alembic current` | Passed: connected to PostgreSQL, verified `202606010004 (head)` (zero new migrations required). |
+| `python scripts/import_pricing_catalog.py --dry-run --file app/seeds/model_pricing_seed.yaml --created-by "v1.5.5-verify"` | Passed: `status=validated`, `valid_rows=149`, `invalid_rows=[]`, `unsupported_enum_values=[]`. |
+| `python scripts/browser_manual_test.py` | Passed (`[Browser Mode] headed`, default QA currency `TWD`): completed all interactive scenarios across `14` Dashboard routes with `0` Console errors, `0` Page errors, `0` HTTP `>=400` responses, and `0` `0E-8` scientific notation artifacts. |
+
+### Limitations & Known Observations
+- The Bounded Executor continues to operate in safe dry-run simulation mode with invocation transcripts; production external shell executions require microVM or isolated container boundaries (planned for `v1.6.0+`).
+- Real-time tenant/project burn-rate forecasting, interactive Tenant/API-Key/Control-Plane CRUD portals, and pre-execution token budget leasing (Dynamic Token Broker) are scheduled for `v1.5.6` per `docs/roadmap.md`.
+
 ## 2026-10-27 - v1.5.4 Model-Aware FinOps Routing, Step-Level Execution Audit Closure & Interactive Operations Recovery Portal Verification
 
 - **Version**: `v1.5.4`

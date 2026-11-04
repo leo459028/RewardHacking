@@ -1,3 +1,4 @@
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -72,6 +73,7 @@ from app.schemas.finops import (
     BudgetViolationAcknowledgeRequest,
     BudgetViolationRecord,
     BudgetViolationResolveRequest,
+    CostAdjustmentCreateRequest,
     CostEventRecord,
     PricingCatalogCreateRequest,
     PricingCatalogRecord,
@@ -161,9 +163,11 @@ from app.services.finops import (
     budget_to_dict,
     cost_to_dict,
     create_budget_policy,
+    create_cost_adjustment,
     create_pricing_item,
     disable_budget_policy,
     disable_pricing_item,
+    export_tenant_cost_ledger,
     get_budget_policy,
     get_budget_violation,
     get_pricing_item,
@@ -177,6 +181,7 @@ from app.services.finops import (
     record_replay_usage,
     record_submit_usage,
     record_usage_event,
+    render_cost_ledger_csv,
     resolve_budget_violation,
     run_cost_summary,
     tenant_cost_summary,
@@ -422,12 +427,16 @@ def _run_cost_response(summary) -> RunCostSummaryResponse:
         base_currency=summary.base_currency,
         estimated_cost=summary.estimated_cost,
         actual_cost=summary.actual_cost,
+        settled_cost=summary.settled_cost,
+        total_tax_amount=summary.total_tax_amount,
+        total_billed_base_cost=summary.total_billed_base_cost,
         cost_delta=summary.cost_delta,
         cost_delta_percent=summary.cost_delta_percent,
         currency=summary.currency,
         budget_status=summary.budget_status,
         budget_policy_id=summary.budget_policy_id,
         budget_remaining=summary.budget_remaining,
+        currency_breakdown=summary.currency_breakdown,
         provider_breakdown=summary.provider_breakdown,
         model_breakdown=summary.model_breakdown,
         tool_breakdown=summary.tool_breakdown,
@@ -448,10 +457,20 @@ def _run_cost_response(summary) -> RunCostSummaryResponse:
 def _tenant_cost_response(summary) -> TenantCostSummaryResponse:
     return TenantCostSummaryResponse(
         tenant_id=summary.tenant_id,
+        period_start=summary.period_start,
+        period_end=summary.period_end,
+        timezone=summary.timezone,
+        base_currency=summary.base_currency,
         today_cost=summary.today_cost,
         month_to_date_cost=summary.month_to_date_cost,
+        total_tax_amount=summary.total_tax_amount,
+        total_billed_base_cost=summary.total_billed_base_cost,
+        adjustment_total=summary.adjustment_total,
+        reconciled_month_to_date_cost=summary.reconciled_month_to_date_cost,
         budget_used_percent=summary.budget_used_percent,
         violation_count=summary.violation_count,
+        currency_breakdown=summary.currency_breakdown,
+        cost_center_breakdown=summary.cost_center_breakdown,
         provider_breakdown=summary.provider_breakdown,
         resource_type_breakdown=summary.resource_type_breakdown,
         environment_breakdown=summary.environment_breakdown,
@@ -1080,12 +1099,79 @@ async def get_run_cost(
 @router.get("/cost/tenants/{tenant_id}", response_model=TenantCostSummaryResponse)
 async def get_tenant_cost(
     tenant_id: str,
+    project_id: str | None = None,
+    cost_center: str | None = None,
     auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
     require_role(auth_context, "viewer", "operator", "admin")
     tenant_id = _query_tenant(tenant_id, auth_context) or tenant_id
-    return _tenant_cost_response(await tenant_cost_summary(session, tenant_id=tenant_id))
+    return _tenant_cost_response(
+        await tenant_cost_summary(
+            session,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            cost_center=cost_center,
+        )
+    )
+
+
+@router.get("/cost/tenants/{tenant_id}/export")
+async def export_tenant_cost(
+    tenant_id: str,
+    format: str = Query(default="json", pattern="^(json|csv)$"),
+    project_id: str | None = None,
+    cost_center: str | None = None,
+    cost_type: str | None = None,
+    provider: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    settled_only: bool = False,
+    limit: int | None = Query(default=None, ge=1, le=10000),
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin", "finops_admin", "super_admin", "tenant_admin")
+    tenant_id = _query_tenant(tenant_id, auth_context) or tenant_id
+    export_data = await export_tenant_cost_ledger(
+        session,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        cost_center=cost_center,
+        cost_type=cost_type,
+        provider=provider,
+        start_date=start_date,
+        end_date=end_date,
+        settled_only=settled_only,
+        limit=limit,
+        export_format=format,
+    )
+    if format == "csv":
+        csv_text = render_cost_ledger_csv(export_data)
+        safe_tenant = re.sub(r"[^A-Za-z0-9._-]", "_", tenant_id or "default")
+        headers = {
+            "Content-Disposition": f'attachment; filename="finops_ledger_{safe_tenant}.csv"',
+        }
+        if export_data.truncated:
+            headers["X-Export-Truncated"] = "true"
+        return Response(content=csv_text, media_type="text/csv; charset=utf-8", headers=headers)
+    return export_data
+
+
+@router.post("/cost/adjustments", response_model=CostEventRecord)
+async def post_cost_adjustment(
+    payload: CostAdjustmentCreateRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin", "finops_admin", "super_admin")
+    tenant_id = _query_tenant(payload.tenant_id or "default", auth_context) or payload.tenant_id or "default"
+    payload = payload.model_copy(update={"tenant_id": tenant_id})
+    try:
+        item = await create_cost_adjustment(session, payload, actor=_actor(auth_context))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _cost_record(item)
 
 
 @router.get("/cost/workflows/{workflow_id}")

@@ -17,6 +17,18 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc).replace(microsecond=0)
 
 
+def _validate_supported_budget_currency(currency: str | None) -> str:
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    norm = (currency or settings.finops_base_currency).strip().upper()
+    if norm != settings.finops_base_currency and norm not in settings.finops_fx_rates:
+        raise ValueError(
+            f"Unsupported budget currency {currency!r}. Must be {settings.finops_base_currency} or configured in FINOPS_FX_RATES."
+        )
+    return norm
+
+
 class Provider(str, Enum):
     openai = "openai"
     google = "google"
@@ -27,6 +39,7 @@ class Provider(str, Enum):
     zai = "zai"
     internal = "internal"
     custom = "custom"
+    qa_local = "qa_local"
 
 
 class BillingPlatform(str, Enum):
@@ -452,9 +465,11 @@ class CostEventRecord(FinOpsBaseModel):
     actual_cost: SerializedDecimal
     currency: str
     base_currency: str
+    pre_tax_base_cost: SerializedDecimal = Decimal("0")
     base_currency_cost: SerializedDecimal
     fx_rate: SerializedDecimal
     fx_rate_source: str
+    is_settled: bool = True
     billing_period_start: datetime | None = None
     billing_period_end: datetime | None = None
     provider_invoice_id: str
@@ -473,12 +488,16 @@ class RunCostSummaryResponse(FinOpsBaseModel):
     base_currency: str = "USD"
     estimated_cost: SerializedDecimal
     actual_cost: SerializedDecimal
+    settled_cost: SerializedDecimal = Decimal("0")
+    total_tax_amount: SerializedDecimal = Decimal("0")
+    total_billed_base_cost: SerializedDecimal = Decimal("0")
     cost_delta: SerializedDecimal
     cost_delta_percent: SerializedDecimal = Decimal("0")
     currency: str
     budget_status: str
     budget_policy_id: str = ""
     budget_remaining: SerializedDecimal = Decimal("0")
+    currency_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
     provider_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
     model_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
     tool_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
@@ -503,8 +522,14 @@ class TenantCostSummaryResponse(FinOpsBaseModel):
     base_currency: str = "USD"
     today_cost: SerializedDecimal
     month_to_date_cost: SerializedDecimal
+    total_tax_amount: SerializedDecimal = Decimal("0")
+    total_billed_base_cost: SerializedDecimal = Decimal("0")
+    adjustment_total: SerializedDecimal = Decimal("0")
+    reconciled_month_to_date_cost: SerializedDecimal = Decimal("0")
     budget_used_percent: SerializedDecimal
     violation_count: int
+    currency_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
+    cost_center_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
     provider_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
     resource_type_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
     environment_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
@@ -518,6 +543,59 @@ class TenantCostSummaryResponse(FinOpsBaseModel):
     replay_cost: SerializedDecimal = Decimal("0")
     cache_savings: SerializedDecimal = Decimal("0")
     batch_savings: SerializedDecimal = Decimal("0")
+
+
+class CostAdjustmentCreateRequest(FinOpsBaseModel):
+    tenant_id: str = "default"
+    project_id: str = ""
+    cost_center: str = ""
+    org_id: str = ""
+    environment: str = "prod"
+    run_id: str = ""
+    provider: str = "internal"
+    model_name: str = ""
+    amount: SerializedDecimal
+    currency: str = "USD"
+    tax_rate: SerializedDecimal | None = Field(default=None, ge=0)
+    fx_rate: SerializedDecimal | None = Field(default=None, gt=0)
+    provider_invoice_id: str = Field(min_length=1, max_length=128)
+    billing_period_start: datetime | None = None
+    billing_period_end: datetime | None = None
+    reason: str = Field(min_length=5, max_length=512)
+    idempotency_key: str | None = ""
+    reverses_cost_id: str | None = ""
+    created_by: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_adjustment(self) -> CostAdjustmentCreateRequest:
+        if Decimal(str(self.amount)) == Decimal("0"):
+            raise ValueError("Adjustment amount must not be 0.")
+        self.provider_invoice_id = self.provider_invoice_id.strip()
+        if not self.provider_invoice_id:
+            raise ValueError("provider_invoice_id is required.")
+        self.reason = self.reason.strip()
+        if len(self.reason) < 5:
+            raise ValueError("reason must be at least 5 characters.")
+        self.currency = (self.currency or "USD").strip().upper()
+        self.idempotency_key = (self.idempotency_key or "").strip()
+        self.reverses_cost_id = (self.reverses_cost_id or "").strip()
+        return self
+
+
+class TenantCostExportResponse(FinOpsBaseModel):
+    tenant_id: str
+    total_records: int
+    truncated: bool = False
+    base_currency: str = "USD"
+    fx_rates_as_of: str = ""
+    settled_pre_tax_base_cost: SerializedDecimal = Decimal("0")
+    total_tax_amount: SerializedDecimal = Decimal("0")
+    total_billed_base_cost: SerializedDecimal = Decimal("0")
+    adjustment_total: SerializedDecimal = Decimal("0")
+    currency_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
+    cost_center_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
+    items: list[CostEventRecord] = Field(default_factory=list)
 
 
 class BudgetPolicyCreateRequest(FinOpsBaseModel):
@@ -601,6 +679,7 @@ class BudgetPolicyCreateRequest(FinOpsBaseModel):
                 self.actions = mapped
             if self.action_on_exceed.lower() == "require_approval":
                 self.approval_required = True
+        self.currency = _validate_supported_budget_currency(self.currency)
         return self
 
 
@@ -645,6 +724,12 @@ class BudgetPolicyUpdateRequest(FinOpsBaseModel):
     updated_by: str | None = None
     is_active: bool | None = None
     metadata: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _validate_update_currency(self) -> BudgetPolicyUpdateRequest:
+        if self.currency is not None:
+            self.currency = _validate_supported_budget_currency(self.currency)
+        return self
 
 
 class BudgetPolicyRecord(BudgetPolicyCreateRequest):
