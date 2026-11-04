@@ -29,6 +29,9 @@ class ToolExecutor(Protocol):
 
 class BoundedToolExecutor:
     def execute(self, request: AgentRequest) -> ToolExecutionResult:
+        if isinstance(request.metadata, dict) and request.metadata.get("simulate_worker_failure"):
+            reason = str(request.metadata.get("failure_reason") or "Simulated worker tool execution failure.")
+            raise RuntimeError(reason)
         task_allowlist = TASK_TOOL_ALLOWLIST.get(request.task_type, TASK_TOOL_ALLOWLIST["other"])
         tool_budget = min(request.constraints.max_tool_calls, 3)
         requested_tools = request.allowed_tools or ["summarize"]

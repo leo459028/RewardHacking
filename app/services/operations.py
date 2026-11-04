@@ -177,6 +177,30 @@ async def compute_operations_readiness(
         if open_critical_violations
         else "pass"
     )
+    from app.models.finops import BudgetPolicy
+    from app.services.finops import compute_tenant_burn_rate_forecast
+
+    active_policy_tenants = list(
+        (
+            await session.scalars(
+                select(BudgetPolicy.tenant_id)
+                .where(BudgetPolicy.is_active.is_(True))
+                .distinct()
+            )
+        ).all()
+    )
+    elevated_burn_policies = 0
+    critical_burn_policies = 0
+    for b_tenant in active_policy_tenants:
+        if not b_tenant:
+            continue
+        forecast_resp = await compute_tenant_burn_rate_forecast(session, tenant_id=b_tenant)
+        for pf in forecast_resp.burn_rate_forecasts:
+            if pf.burn_status == "critical_burn":
+                critical_burn_policies += 1
+            elif pf.burn_status == "elevated_burn":
+                elevated_burn_policies += 1
+    burn_health_status = "warn" if (critical_burn_policies or elevated_burn_policies) else "pass"
 
     checks = [
         OperationsCheck(
@@ -234,6 +258,21 @@ async def compute_operations_readiness(
             title="No open critical budget violations",
             detail=f"{open_critical_violations} high or critical FinOps budget violations are open.",
             metadata={"open_critical_violations": open_critical_violations},
+        ),
+        OperationsCheck(
+            check_key="finops_burn_rate_health",
+            status=burn_health_status,
+            title="FinOps burn-rate forecast health",
+            detail=(
+                f"{critical_burn_policies} critical and {elevated_burn_policies} elevated burn-rate policies detected."
+                if (critical_burn_policies or elevated_burn_policies)
+                else "All active FinOps budget policies are within normal burn-rate trajectory."
+            ),
+            metadata={
+                "critical_burn_policies": critical_burn_policies,
+                "elevated_burn_policies": elevated_burn_policies,
+                "evaluated_tenants": len(active_policy_tenants),
+            },
         ),
     ]
 

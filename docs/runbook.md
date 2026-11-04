@@ -1,7 +1,7 @@
 # Production Runbooks & Incident Response
 
-> **Runbook Version**: `v1.5.5`
-> **Previous Versions**: `v1.5.4`, `v1.5.3`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.0.0`
+> **Runbook Version**: `v1.5.6`
+> **Previous Versions**: `v1.5.5`, `v1.5.4`, `v1.5.3`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.0.0`
 
 This operational runbook provides triage instructions, troubleshooting procedures, and incident response playbooks for operators maintaining the **RewardHacking** platform.
 
@@ -57,27 +57,27 @@ docker compose logs --tail=100 -f worker
 
 ---
 
-### 3. Tool Circuit Breaker Tripped
-- **Symptoms**: Low-risk runs are suddenly blocked with `tool_circuit_breaker_tripped` errors; tool status shows open in Redis.
+### 3. Tool Circuit Breaker Tripped (`v1.5.6`)
+- **Symptoms**: Runs requesting a specific tool are escalated to `awaiting_approval` with policy flag `tool_circuit_breaker_open`; tool status shows `open` on `/dashboard/control-plane`.
 - **Root Causes**:
-  - Consecutive failures for a designated tool exceeded threshold within the sliding window.
+  - Consecutive worker failures for the tool reached `TOOL_BREAKER_FAILURE_THRESHOLD` (default `3`), or an operator manually tripped the breaker.
 - **Mitigation Steps**:
-  1. Verify the health of the downstream tool or service.
-  2. Reset the circuit breaker state key in Redis:
+  1. Verify the health of the downstream tool or service and inspect failure counts on `/dashboard/control-plane` (`GET /v1/control-plane/breakers`).
+  2. Click **Reset Breaker** on `/dashboard/control-plane` (`POST /v1/control-plane/tools/{tool_name}/breaker/close`), or reset via Redis CLI:
      ```bash
-     redis-cli del "circuit_breaker:tool:{tool_name}"
+     redis-cli del "circuit:tool:{tool_name}" "breaker:{tool_name}:failures"
      ```
   3. Re-verify with a test submission via `/dashboard/playground`.
 
 ---
 
-### 4. Tenant Quota Exceeded (HTTP 429)
-- **Symptoms**: Client requests fail with `429 Too Many Requests` (`quota_exceeded`).
+### 4. Tenant, User, or Tool Quota Exceeded (HTTP 429) (`v1.5.6`)
+- **Symptoms**: Client requests fail with `429 Too Many Requests` (`quota_exceeded` on `tenant_minute`, `tenant_high_risk_hour`, `user_minute`, or `tool_minute`).
 - **Root Causes**:
-  - Tenant exceeded `TENANT_REQUEST_LIMIT_PER_MINUTE` (default: 60) or `TENANT_HIGH_RISK_LIMIT_PER_HOUR` (default: 10).
+  - Request rate exceeded `TENANT_REQUEST_LIMIT_PER_MINUTE` (60), `TENANT_HIGH_RISK_LIMIT_PER_HOUR` (10), `USER_REQUEST_LIMIT_PER_MINUTE` (30), or `TOOL_CALL_LIMIT_PER_MINUTE` (60).
 - **Mitigation Steps**:
-  1. Inspect tenant event history at `/dashboard/governance`.
-  2. If legitimate traffic spike, adjust quota override via `POST /v1/tenants` or modify tenant settings in database.
+  1. Inspect tenant quota events at `/dashboard/governance` and `agent_quota_rejections_total` in `/v1/metrics`.
+  2. If legitimate traffic spike, update the tenant's rate limits directly via the **Upsert Tenant & Quotas** form on `/dashboard/governance` (`POST /v1/tenants`).
 
 ---
 
@@ -114,3 +114,17 @@ docker compose logs --tail=100 -f worker
      - Navigate to `/dashboard/costs` and submit the **Record Cost Adjustment** form (or call `POST /v1/cost/adjustments`) with a negative credit (e.g., `-0.005000`) or positive fee, `cost_center`, `invoice_id`, and check **Mark run events reconciled** if reconciling a specific `run_id`.
   3. **Export Reconciliation Ledger**:
      - Click **Export CSV** or **Export JSON** on `/dashboard/costs` (or call `GET /v1/cost/tenants/{tenant_id}/export?format=csv&settled_only=true`) to download the settled, formula-sanitized RFC 4180 CSV ledger for accounting import.
+
+---
+
+### 8. Burn-Rate Exhaustion Warnings & Stuck Token Budget Leases (`v1.5.6`)
+- **Symptoms**:
+  - Runs include policy flag `finops_burn_rate_warning` and `/dashboard/costs` displays `elevated_burn`, `critical_burn`, or `exhausted` in the **Burn-Rate & Exhaustion Forecast** panel.
+  - Concurrent runs are blocked by budget enforcement because queued or awaiting-approval sibling runs hold active **Dynamic Token Broker** leases (`lease_...`).
+- **Mitigation Steps**:
+  1. **Triage Burn-Rate Warnings**:
+     - Open `/dashboard/costs?tenant_id={tenant_id}` or query `GET /v1/cost/tenants/{tenant_id}/forecast` to inspect `hourly_burn_rate`, `projected_period_cost`, and `hours_to_hard_limit`.
+     - Enable `degrade_model` on the tenant's soft limit or raise the budget policy cap at `/dashboard/admin/finops/budgets`.
+  2. **Release Stuck Token Budget Leases**:
+     - Inspect active leases in the **Dynamic Token Broker — Active & Recent Budget Leases** table on `/dashboard/costs` (`GET /v1/cost/tenants/{tenant_id}/leases?active_only=true`).
+     - Click **Release Lease** next to any stalled run (or call `POST /v1/cost/leases/{run_id}/release`) to immediately free the reserved budget capacity.

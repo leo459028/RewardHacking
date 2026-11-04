@@ -510,8 +510,75 @@ class RunCostSummaryResponse(FinOpsBaseModel):
     failed_retry_cost: SerializedDecimal = Decimal("0")
     cache_savings: SerializedDecimal = Decimal("0")
     batch_savings: SerializedDecimal = Decimal("0")
+    token_lease_status: str = ""
+    token_lease_id: str = ""
     usage_events: list[UsageEventRecord] = Field(default_factory=list)
     cost_events: list[CostEventRecord] = Field(default_factory=list)
+
+
+class PolicyBurnRateForecastRecord(FinOpsBaseModel):
+    budget_id: str
+    policy_name: str
+    scope: str
+    scope_id: str = ""
+    period: str
+    period_start: datetime | None = None
+    period_end: datetime | None = None
+    settled_period_spend: SerializedDecimal = Decimal("0")
+    soft_limit_amount: SerializedDecimal = Decimal("0")
+    hard_limit_amount: SerializedDecimal = Decimal("0")
+    hourly_burn_rate: SerializedDecimal = Decimal("0")
+    daily_burn_rate: SerializedDecimal = Decimal("0")
+    projected_period_cost: SerializedDecimal = Decimal("0")
+    estimated_hours_to_hard_limit: SerializedDecimal | None = None
+    estimated_exhaustion_at: datetime | None = None
+    burn_status: str = "normal"
+    insufficient_data: bool = False
+
+
+class TenantBurnRateForecastResponse(FinOpsBaseModel):
+    tenant_id: str
+    project_id: str = ""
+    base_currency: str = "USD"
+    window_hours: int = 24
+    as_of: datetime | None = None
+    hourly_burn_rate: SerializedDecimal = Decimal("0")
+    daily_burn_rate: SerializedDecimal = Decimal("0")
+    projected_month_end_cost: SerializedDecimal = Decimal("0")
+    burn_status: str = "normal"
+    burn_rate_forecasts: list[PolicyBurnRateForecastRecord] = Field(default_factory=list)
+
+
+class TokenBudgetLeaseRecord(FinOpsBaseModel):
+    lease_id: str
+    run_id: str
+    tenant_id: str
+    user_id: str = ""
+    project_id: str = ""
+    model_name: str = ""
+    estimated_tokens: int = 0
+    estimated_base_cost: SerializedDecimal = Decimal("0")
+    currency: str = "USD"
+    status: str = "active"
+    stale: bool = False
+    created_at: datetime | None = None
+    expires_at: datetime | None = None
+    ttl_seconds: int = 7200
+    released_reason: str = ""
+
+
+class TenantTokenLeasesResponse(FinOpsBaseModel):
+    tenant_id: str
+    base_currency: str = "USD"
+    active_lease_count: int = 0
+    active_leased_tokens: int = 0
+    active_leased_base_cost: SerializedDecimal = Decimal("0")
+    active_leases: list[TokenBudgetLeaseRecord] = Field(default_factory=list)
+
+
+class TokenLeaseReleaseRequest(FinOpsBaseModel):
+    reason: str = Field(default="Manual lease release by operator", min_length=3, max_length=512)
+    released_by: str = ""
 
 
 class TenantCostSummaryResponse(FinOpsBaseModel):
@@ -528,6 +595,14 @@ class TenantCostSummaryResponse(FinOpsBaseModel):
     reconciled_month_to_date_cost: SerializedDecimal = Decimal("0")
     budget_used_percent: SerializedDecimal
     violation_count: int
+    hourly_burn_rate: SerializedDecimal = Decimal("0")
+    daily_burn_rate: SerializedDecimal = Decimal("0")
+    projected_month_end_cost: SerializedDecimal = Decimal("0")
+    burn_status: str = "normal"
+    burn_rate_forecasts: list[PolicyBurnRateForecastRecord] = Field(default_factory=list)
+    active_lease_count: int = 0
+    active_leased_tokens: int = 0
+    active_leased_base_cost: SerializedDecimal = Decimal("0")
     currency_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
     cost_center_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
     provider_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)

@@ -144,6 +144,9 @@ async def resume_run_from_checkpoint(
         "evaluation_summary": summary,
     }
     await session.flush()
+    from app.services.finops import acquire_run_budget_lease
+
+    await acquire_run_budget_lease(session, None, run=run, plan=plan)
     return await persist_run_checkpoint(
         session,
         run=run,

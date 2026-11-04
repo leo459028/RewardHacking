@@ -104,3 +104,18 @@ class ReplayBundleResponse(BaseModel):
     step_audit: list[ExecutionPlanStepRecord] = Field(default_factory=list)
     tool_references: list[dict[str, Any]] = Field(default_factory=list)
     limitations: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolBreakerActionRequest(BaseModel):
+    reason: str = Field(default="Manual circuit breaker update", min_length=1, max_length=512)
+    ttl_seconds: int = Field(default=1800, ge=1)
+
+
+class ToolBreakerRecord(BaseModel):
+    tool_name: str
+    status: str = "open"
+    is_open: bool = True
+    reason: str = ""
+    opened_at: str = ""
+    ttl_seconds: int = 1800
+    failure_count: int = 0

@@ -124,3 +124,27 @@ FINOPS_PRICING_IMPORTS_TOTAL = Counter(
     "Total FinOps pricing catalog import runs by mode and status",
     ["mode", "status"],
 )
+
+FINOPS_BURN_RATE_ALERTS_TOTAL = Counter(
+    "agent_finops_burn_rate_alerts_total",
+    "Total FinOps burn-rate alerts by tenant, scope, and burn status",
+    ["tenant_id", "scope", "burn_status"],
+)
+
+FINOPS_TOKEN_LEASES_TOTAL = Counter(
+    "agent_finops_token_leases_total",
+    "Total FinOps pre-execution token leases by tenant and action",
+    ["tenant_id", "action"],
+)
+
+QUOTA_DECISIONS_TOTAL = Counter(
+    "agent_quota_decisions_total",
+    "Total quota check decisions by tenant, scope, and decision",
+    ["tenant_id", "scope", "decision"],
+)
+
+TOOL_BREAKER_EVENTS_TOTAL = Counter(
+    "agent_tool_breaker_events_total",
+    "Total tool circuit breaker events by tool name and action",
+    ["tool_name", "action"],
+)

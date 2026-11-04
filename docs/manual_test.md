@@ -1,6 +1,6 @@
 # Manual QA & Interactive Browser Testing Guide
 
-> **Testing Baseline**: `v1.5.5`
+> **Testing Baseline**: `v1.5.6`
 > **Target Environment**: Local Docker Compose Stack (`http://localhost:8000`)
 > **Primary Interface**: Web Browser (`/dashboard`) & REST API (`/v1`)
 > **Automated Browser Runner**: `python scripts/browser_manual_test.py` (supports `--qa-currency TWD|USD|CNY`, default `TWD`)
@@ -142,19 +142,32 @@ This scenario tests the complete `v1.5.5` FinOps governance and financial reconc
 3. In the **Record Cost Adjustment** form, submit a credit (`adjustment_amount=-0.000500`, `currency=USD`, `cost_center=cc-rd-ai`, `invoice_id=INV-2026-10`, check **Mark run events reconciled**):
    - Verify a `cost_adj_...` adjustment updates **Adjustments** and **Reconciled MTD**.
 4. Click **Export CSV** and **Export JSON** (or filter by `cost_center=cc-rd-ai`):
-   - Verify `/v1/cost/tenants/finops-qa-tenant/export?format=csv` returns HTTP 200 (`text/csv`) and `?format=json` returns HTTP 200 (`application/json`) with `calculation_version="v1.5.5"`.
-5. Scroll down to the **Budget Violations** table, click **Acknowledge** and **Resolve**, then disable `QA Hard Daily Cap` and the temporary `qa-fx-model` pricing row when finished.
+   - Verify `/v1/cost/tenants/finops-qa-tenant/export?format=csv` returns HTTP 200 (`text/csv`) and `?format=json` returns HTTP 200 (`application/json`) with `calculation_version="v1.5.6"`.
+5. Inspect the **Burn-Rate & Exhaustion Forecast** cards (`Hourly Burn Rate`, `Daily Burn Rate`, `Projected Month-End`, `Burn Status`, `Active Token Leases`) and the **Dynamic Token Broker — Active & Recent Budget Leases** table (`lease_...`), and verify `GET /v1/cost/tenants/finops-qa-tenant/forecast` and `GET /v1/cost/tenants/finops-qa-tenant/leases` return HTTP 200.
+6. Scroll down to the **Budget Violations** table, click **Acknowledge** and **Resolve**, then disable `QA Hard Daily Cap` and the temporary `qa-fx-model` pricing row when finished.
 
 ---
 
-## 5. Scenario 4: Multi-Tenant Governance, Observability & Operations Release Gate
+## 5. Scenario 4: Interactive Multi-Tenant Governance, Control Plane & Breaker Controls, Observability & Operations Release Gate (`v1.5.6`)
 
-### 5.1 Tenant Governance (`/dashboard/governance`)
+### 5.1 Interactive Tenant Governance (`/dashboard/governance`)
 1. Navigate to `http://localhost:8000/dashboard/governance`.
-2. Select a tenant from the dropdown and click **Apply**.
-3. Verify tenant run counts, average risk scores, configured rate limits, API key prefixes, and recent governance events render accurately.
+2. In the **Upsert Tenant & Quotas** form, enter `tenant_id=qa-gov-156`, `display_name=QA Governance 156`, `request_limit_per_minute=45`, `high_risk_limit_per_hour=8`, and click **Save Tenant**:
+   - Verify `qa-gov-156` is selected and displays quota `45/min` and `8/hr`.
+3. In the **Issue Tenant API Key** form, enter `label=qa-op-key`, select `role=operator`, and click **Generate Key**:
+   - Verify the one-time plaintext `rg_...` API key banner is displayed and the new key row appears in the **API Keys** table.
+4. Click **Revoke** on the newly created API key and verify its status transitions to `revoked`.
 
-### 5.2 Observability & Prometheus Metrics (`/dashboard/observability`)
+### 5.2 Interactive Control Plane & Tool Circuit Breaker (`/dashboard/control-plane`)
+1. Navigate to `http://localhost:8000/dashboard/control-plane`.
+2. In the **Upsert Tool Definition** form, register `tool_name=qa_ temp_tool`, `category=verification`, `risk_tier=moderate`, and click **Save Tool**.
+3. Locate `qa_temp_tool` in the **Tool Registry & Circuit Breakers** table:
+   - Click **Trip Breaker** and verify the breaker badge transitions to `open`.
+   - Click **Reset Breaker** and verify the breaker badge transitions back to `closed`.
+4. In the **Upsert Workflow Definition** form, register `workflow_id=qa-wf-156`, `task_type=analysis`, `allowed_tools=read_repo,qa_temp_tool`, and click **Save Workflow**:
+   - Verify `qa-wf-156` appears in the **Workflow Registry** table.
+
+### 5.3 Observability & Prometheus Metrics (`/dashboard/observability`)
 1. Navigate to `http://localhost:8000/dashboard/observability`.
 2. Inspect SLO target statuses, evaluator verdict breakdowns, and the **FinOps Observability** summary panel.
 3. Open `http://localhost:8000/v1/metrics` in a new browser tab and confirm the following Prometheus metrics are exported:
@@ -166,13 +179,17 @@ This scenario tests the complete `v1.5.5` FinOps governance and financial reconc
    - `agent_finops_ledger_exports_total`
    - `agent_finops_budget_violations_total`
    - `agent_finops_pricing_imports_total`
+   - `agent_finops_burn_rate_alerts_total`
+   - `agent_finops_token_leases_total`
+   - `agent_quota_rejections_total`
+   - `agent_tool_breaker_transitions_total`
 
-### 5.3 Operations Release Gate (`/dashboard/operations`)
+### 5.4 Operations Release Gate (`/dashboard/operations`)
 1. Navigate to `http://localhost:8000/dashboard/operations`.
 2. Verify the **Release Readiness Checks** table includes:
    - `finops_pricing_catalog_ready` (`pass`)
    - `finops_open_critical_violations` (`pass` after resolving open violations in Scenario 4.4)
-3. Verify the **Release Version** input field in the **Create Release Gate** form defaults to `v1.5.5`.
+3. Verify the **Release Version** input field in the **Create Release Gate** form defaults to `v1.5.6`.
 4. Optionally submit operational drill evidence (`backup_restore`, `secret_rotation`, `safety_regression`) and click **Create Release Gate** to record an auditable release snapshot.
 
 ---

@@ -1,6 +1,6 @@
 # Configuration & Environment Variables
 
-> **Configuration Version**: `v1.5.5`
+> **Configuration Version**: `v1.5.6`
 > **Source Model**: `app/core/config.py` (`Settings`) via `pydantic-settings`  
 > **Template**: `.env.example`
 
@@ -53,6 +53,14 @@ Application configuration is loaded from environment variables and local `.env` 
 | `FINOPS_FX_RATES` | `{"USD":"1","CNY":"0.13888889","TWD":"0.03125000","EUR":"1.08000000","JPY":"0.00666667","GBP":"1.27000000"}` | JSON mapping of source currency to base currency multiplier (`1 unit of source currency = fx_rate units of FINOPS_BASE_CURRENCY`) |
 | `FINOPS_FX_RATES_AS_OF` | `2026-10-01` | Reference date label recorded in `fx_rate_source` (`env_fx_table:YYYY-MM-DD`) |
 | `FINOPS_EXPORT_MAX_ROWS` | `10000` | Maximum rows returned by `GET /v1/cost/tenants/{tenant_id}/export` (`1`–`100000`) |
+| `FINOPS_BURN_RATE_WINDOW_HOURS` | `24` | Sliding window in hours (`1`–`720`) used to compute recent tenant/project burn rate |
+| `FINOPS_BURN_ALERT_THRESHOLD_HOURS` | `72` | Threshold in hours (`1`–`720`) before projected budget exhaustion triggers `critical_burn` and `finops_burn_rate_warning` |
+| `FINOPS_TOKEN_BROKER_ENABLED` | `true` | Enables Dynamic Token Broker pre-execution budget leasing and sibling lease accounting |
+| `FINOPS_TOKEN_LEASE_TTL_SECONDS` | `900` | Default expiration TTL in seconds (`60`–`86400`) for active pre-execution token budget leases |
+| `USER_REQUEST_LIMIT_PER_MINUTE` | `30` | Default sliding-window request limit per user per minute (`1`–`10000`) |
+| `TOOL_CALL_LIMIT_PER_MINUTE` | `60` | Default sliding-window invocation limit per tool per minute (`1`–`10000`) |
+| `TOOL_BREAKER_FAILURE_THRESHOLD` | `3` | Consecutive worker execution failures (`1`–`100`) before a tool's circuit breaker automatically trips to `open` |
+| `TOOL_BREAKER_TTL_SECONDS` | `300` | Default TTL in seconds (`30`–`86400`) for an open tool circuit breaker in Redis |
 
 ---
 

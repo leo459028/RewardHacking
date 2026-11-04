@@ -1,5 +1,45 @@
 # Test Execution & Verification Report
 
+## 2026-11-04 - v1.5.6 FinOps Burn-Rate Forecasting, Dynamic Token Broker, Per-User/Per-Tool Quotas & Interactive Governance Portals Verification
+
+- **Version**: `v1.5.6`
+- **Scope of Changes**:
+  1. **Real-Time Burn-Rate & Exhaustion Forecasting**: Implemented `compute_tenant_burn_rate_forecast()` in `app/services/finops.py` computing hourly and daily burn rates (`max(period_average, recent_window_rate)`), projected period-end cost, and time-to-exhaustion (`hours_to_soft_limit`, `hours_to_hard_limit`, `burn_status` in `normal | elevated_burn | critical_burn | exhausted`, plus `finops_burn_rate_warning` policy flag), exposed via `GET /v1/cost/tenants/{tenant_id}/forecast`, `/dashboard/costs`, and Operations readiness gate (`finops_burn_rate_health`).
+  2. **Dynamic Token Broker (Pre-Execution Budget Leasing)**: Implemented `acquire_run_budget_lease()`, `settle_run_budget_lease()`, `release_run_budget_lease()`, and `list_tenant_budget_leases()` (`lease_<run_id>`) stored in Redis (`tenant:{id}:lease:{run_id}`) and `AgentRun.evaluation_summary["token_budget_lease"]`. `evaluate_budget_policies()` accounts for sibling active leases so concurrent submissions cannot overshoot shared budgets, and leases automatically settle or release across worker completion, fail-closed denial, approval denial, Stale Approval TTL sweep, DLQ resolution, and manual operator release (`POST /v1/cost/leases/{run_id}/release`).
+  3. **Per-User & Per-Tool Quotas & Self-Healing Circuit Breakers**: Extended `check_and_consume_quota()` (`app/services/quota.py`) with per-user (`tenant:{id}:user:{uid}:quota:requests:{min}`) and per-tool (`tenant:{id}:tool:{tool}:quota:calls:{min}`) sliding-window rate limits, added automatic consecutive worker failure tracking (`breaker:{tool}:failures` -> `circuit:tool:{tool}=open`) in `app/workers/consumer.py`, and exposed `GET /v1/control-plane/breakers` and `POST /v1/control-plane/tools/{tool_name}/breaker/open|close`.
+  4. **Interactive Governance, Control-Plane & Costs Portals**: Upgraded `/dashboard/governance` (Tenant Upsert, API Key Issuance with one-time `rg_...` plaintext banner, API Key Revocation), `/dashboard/control-plane` (Workflow Upsert, Tool Upsert, Trip/Reset Breaker buttons), and `/dashboard/costs` (Burn-Rate Forecast cards/table and Active Token Lease release buttons), plus 4 new Prometheus metrics (`agent_finops_burn_rate_alerts_total`, `agent_finops_token_leases_total`, `agent_quota_decisions_total`, `agent_tool_breaker_events_total`).
+- **UI / Dashboard Verification Endpoints**: `/dashboard`, `/dashboard/playground`, `/dashboard/runs/e0c7c53c-70f5-4889-a0dc-18bc85983d4c`, `/dashboard/runs/5641ee5e-c6dc-42f7-ada5-a572bb5127a8`, `/dashboard/runs/d543c8e1-8d08-4ce0-9caa-92f8139acaf0`, `/dashboard/governance`, `/dashboard/control-plane`, `/dashboard/approvals`, `/dashboard/worker`, `/dashboard/costs?tenant_id=finops-qa-tenant`, `/dashboard/admin/finops/pricing/price_01a6685fc76041cc877ed56f727e0dd8`, `/dashboard/admin/finops/pricing/import`, `/dashboard/admin/finops/budgets`, `/dashboard/operations`.
+- **Recorded Live Verification Artifacts**:
+  - Headed Browser E2E Walkthrough (`docs/manual_test.md` via `python scripts/browser_manual_test.py` on Playwright Chromium, default QA currency `TWD`):
+    - Scenario 1 Low-Risk Run, Dry-Run Replay Trigger & Replay Bundle: `e0c7c53c-70f5-4889-a0dc-18bc85983d4c`
+    - Scenario 2a Classical Chinese Adversarial Run: `1bc33e71-bd88-4d0f-be7b-6e27342f16a7`
+    - Scenario 2b Human Approval Escalated, Approved & Stale Approvals Swept: `7df657c2-05fe-4c45-b5a2-332f8ac1c7f1`
+    - Scenario 3.1 Pricing Seed Dry Run + Apply Import & Isolated QA Pricing (`TWD`, `qa-fx-model`) Edited & Change Log Verified: `/dashboard/admin/finops/pricing/price_01a6685fc76041cc877ed56f727e0dd8`
+    - Scenario 3.1b Multi-Currency `TWD` FX (`0.031`), 5% Tax, Cost-Center (`cc-ai-core`) & Token Lease Verified: `5641ee5e-c6dc-42f7-ada5-a572bb5127a8`
+    - Scenario 3.2–3.4 Browser Budget Block Run, Manual Adjustment, CSV/JSON Export & Violation Triage (`Acknowledge` -> `Resolve` -> `Disable`): `2c3203fc-ba85-46c5-9a00-a2d75f8edcc0`
+    - Scenario 3.3b Active Pre-Execution Token Lease (`lease_d543c8e1-8d08-4ce0-9caa-92f8139acaf0`) Verified & Released via `/dashboard/costs`: `d543c8e1-8d08-4ce0-9caa-92f8139acaf0`
+    - Scenario 4.1 Governance Interactive Portal Verified: Upserted tenant `v156-gov-tenant`, issued one-time API key (`rg_...`), and revoked key via `/dashboard/governance`
+    - Scenario 4.1b Control Plane Interactive Portal Verified: Upserted workflow `analysis-v156`, registered tool `qa_custom_tool`, and executed `Trip Breaker` (`OPEN`) -> `Reset Breaker` (`closed`) via `/dashboard/control-plane`
+    - Scenario 4.3 Operations Evidence & Release Gate Snapshot Created: `release_version=v1.5.6` (`finops_burn_rate_health` verified)
+    - Section 6 Browser Checklist: `14/14` navigation routes HTTP 200, `0` `0E-8` artifacts, `0` Console errors/warnings, `0` Page errors, `0` failed HTTP requests (`>=400`).
+
+### Test Commands & Actual Execution Results
+
+| Test Command | Actual Result |
+| --- | --- |
+| `python scripts/security_check.py` | Passed: `Running RewardHacking Security & Secret Scan (v1.5.6)... [OK] No sensitive API keys, secrets, or credentials found in git history or working tree.` |
+| `ruff check app tests scripts` | Passed: `All checks passed!` |
+| `git diff --check` | Passed: `0` whitespace errors. |
+| `pytest tests/test_v156_burn_rate_broker_quotas_portals.py -q -W error::DeprecationWarning` | Passed: `9 passed in 6.22s` (`0 warnings`) covering burn-rate forecasting & `finops_burn_rate_warning`, Dynamic Token Broker lease acquisition & concurrent sibling-lease `fail_closed` budget enforcement, worker lease settlement & manual/denial/TTL lease release, per-user & per-tool sliding-window HTTP `429` quotas, automatic consecutive worker failure circuit-breaker tripping & manual reset, and interactive Governance/Control-Plane/Costs UI portal actions. |
+| `pytest -q -W error::DeprecationWarning` | Passed: `111 passed in 52.88s` (`0 warnings`). |
+| `docker compose up -d --build` & `docker compose ps` | Passed: built `rewardhacking-api` and `rewardhacking-worker` images; all 5 containers (`api`, `worker`, `kafka`, `postgres`, `redis`) Up and healthy. |
+| `docker compose exec -T api alembic upgrade head` & `alembic current` | Passed: connected to PostgreSQL, verified `202606010004 (head)` (zero new migrations required). |
+| `python scripts/browser_manual_test.py` | Passed (`[Browser Mode] headed`, default QA currency `TWD`): completed all interactive scenarios across `14` Dashboard routes with `0` Console errors, `0` Page errors, `0` HTTP `>=400` responses, and `0` `0E-8` scientific notation artifacts. |
+
+### Limitations & Known Observations
+- The Bounded Executor continues to operate in safe dry-run simulation mode with invocation transcripts; production external shell executions require microVM or isolated container boundaries (planned for `v1.6.0+`).
+- Safe MCP Gateway MVP (`mcp_server_id` registry, tool input/output JSON schema boundary validation, and per-MCP-server cost attribution) is scheduled for `v1.5.7` per `docs/roadmap.md`.
+
 ## 2026-11-04 - v1.5.5 FinOps Settled Ledger Correctness, Multi-Currency FX & Tax Accounting, and Reconciliation Ledger Export Verification
 
 - **Version**: `v1.5.5`

@@ -1,6 +1,6 @@
 # REST API Specification
 
-> **API Version**: `v1.5.5`
+> **API Version**: `v1.5.6`
 > **Base Path**: `/v1`  
 > **Interactive Documentation**: `http://localhost:8000/docs` (Swagger UI) or `http://localhost:8000/redoc` (ReDoc)
 
@@ -93,6 +93,9 @@ All REST API endpoints are exposed under the `/v1` route prefix. The service ret
 | `POST` | `/v1/control-plane/workflows` | Creates or updates workflow definition | `admin` |
 | `GET` | `/v1/control-plane/tools` | Lists registered tools, parameters, and risk classifications | `viewer`, `operator`, `admin` |
 | `POST` | `/v1/control-plane/tools` | Registers or modifies a tool definition | `admin` |
+| `GET` | `/v1/control-plane/breakers` | Lists tool circuit breaker states (`open`/`closed`) and recent failure counts | `viewer`, `operator`, `admin` |
+| `POST` | `/v1/control-plane/tools/{tool_name}/breaker/open` | Manually trips a tool circuit breaker to `open` | `operator`, `admin` |
+| `POST` | `/v1/control-plane/tools/{tool_name}/breaker/close` | Resets a tool circuit breaker to `closed` and clears failure counters | `operator`, `admin` |
 
 ---
 
@@ -106,8 +109,11 @@ All REST API endpoints are exposed under the `/v1` route prefix. The service ret
 | `DELETE` | `/v1/pricing/{pricing_id}` | Soft-deletes / supersedes pricing entry | `admin`, `finops_admin` |
 | `POST` | `/v1/usage-events` | Ingests a usage event and generates immutable cost event | `operator`, `admin` |
 | `GET` | `/v1/usage-events/runs/{run_id}` | Retrieves usage event ledger for a run | `viewer`, `operator`, `admin` |
-| `GET` | `/v1/cost/runs/{run_id}` | Queries estimated, actual, settled, FX, tax, and adjustment cost summary for a run | `viewer`, `operator`, `admin` |
-| `GET` | `/v1/cost/tenants/{tenant_id}` | Queries tenant settled cost totals, tax/billed/reconciled totals, cost center & currency breakdowns, top models, and savings (supports `project_id`, `cost_center`) | `viewer`, `operator`, `admin` |
+| `GET` | `/v1/cost/runs/{run_id}` | Queries estimated, actual, settled, FX, tax, adjustment, and token lease summary for a run | `viewer`, `operator`, `admin` |
+| `GET` | `/v1/cost/tenants/{tenant_id}` | Queries tenant settled cost totals, tax/billed/reconciled totals, burn-rate forecast, active token leases, cost center & currency breakdowns, top models, and savings (supports `project_id`, `cost_center`) | `viewer`, `operator`, `admin` |
+| `GET` | `/v1/cost/tenants/{tenant_id}/forecast` | Computes hourly/daily burn rate, projected period-end cost, and time-to-exhaustion warnings (`window_hours`, `project_id`) | `viewer`, `operator`, `admin`, `finops_admin` |
+| `GET` | `/v1/cost/tenants/{tenant_id}/leases` | Lists Dynamic Token Broker leases for a tenant (`active_only=true|false`) | `viewer`, `operator`, `admin`, `finops_admin` |
+| `POST` | `/v1/cost/leases/{run_id}/release` | Manually releases an active token budget lease for a run (`status="released"`) | `operator`, `admin`, `finops_admin` |
 | `GET` | `/v1/cost/tenants/{tenant_id}/export` | Exports tenant cost ledger as JSON or RFC 4180 CSV (`format=json|csv`, `settled_only`, `project_id`, `cost_center`, `reconciled`) | `viewer`, `operator`, `admin`, `finops_admin` |
 | `POST` | `/v1/cost/adjustments` | Creates a manual reconciliation adjustment (`cost_type="adjustment"`, `cost_adj_...`) with optional `invoice_id` and `mark_run_reconciled` | `admin`, `finops_admin` |
 | `GET` | `/v1/budgets` | Lists budget policies and limit thresholds (`scope_type`, `scope_id`, `active_only`) | `viewer`, `operator`, `admin` |
