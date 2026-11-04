@@ -60,7 +60,7 @@ RewardHacking is a production-grade safety guardrail and governance control plan
 | [Redis Keyspace](redis_keys.md) | State conventions, rate-limiting quotas, circuit breakers, and TTLs |
 | [Database Migrations](migrations.md) | Alembic migration history, schema revisions, and upgrade procedures |
 | [Project Roadmap](roadmap.md) | Evolutionary milestones and future roadmap items (v1.6+) |
-| [Agent FinOps Core Reference](v1.5.1_finops_core.md) | Model pricing catalogs, usage/cost ledgers, and budget enforcement |
+| [Agent FinOps Core Reference](finops_core.md) | Model pricing catalogs, usage/cost ledgers, and budget enforcement |
 | [Production Runbooks](runbook.md) | Operational runbooks, DLQ mitigation, and emergency procedures |
 | [Observability & Metrics](observability.md) | Prometheus metrics, SLO definitions, and alert rules |
 | [Model Pricing Seed Reference](pricing/model_pricing_seed.md) | Official model catalog YAML specification and ingestion |

@@ -117,7 +117,7 @@ pytest tests/test_v15x_<new_feature>.py -q -W error::DeprecationWarning
   - **Public Repository Documentation (`README.md`, `docs/*.md` reference guides)**: Keep in **English** (aligned since `v1.5.2` for international open-source and OpenAI Codex for OSS standards). Dashboard HTML templates retain bilingual headings (`English | 繁體中文`).
 - **Core Files to Synchronize on Release**:
   - Always update: `README.md`, `docs/OVERVIEW.md`, `docs/roadmap.md`, `docs/manual_test.md`, `docs/testing_guide.md`, `docs/test_report.md`.
-  - Update when affected: `docs/api.md`, `docs/dashboard.md`, `docs/runbook.md`, `docs/v1.5.1_finops_core.md`, `docs/data_model.md`.
+  - Update when affected: `docs/api.md`, `docs/dashboard.md`, `docs/runbook.md`, `docs/finops_core.md`, `docs/data_model.md`.
 - **Preserve Historical Context**: Do not delete historical release notes or alter core project positioning in `README.md` unless explicitly instructed. Prepend new release sections and move the previous release to the historical list.
 
 ---

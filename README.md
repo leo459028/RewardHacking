@@ -237,7 +237,7 @@ Comprehensive technical documentation is maintained under the [`docs/`](docs/) d
 - [Redis Keyspace & Rate Limiting](docs/redis_keys.md)
 - [Database Migrations Guide](docs/migrations.md)
 - [Project Roadmap](docs/roadmap.md)
-- [Agent FinOps Core Reference](docs/v1.5.1_finops_core.md)
+- [Agent FinOps Core Reference](docs/finops_core.md)
 - [Testing & Release Verification Report](docs/test_report.md)
 
 ---
