@@ -1,4 +1,4 @@
-"""v1.5.8 evidence-based evaluation persistence.
+"""v1.5.8 evidence-based evaluation persistence (extended in v1.5.9).
 
 - ``RunOutcome`` (``outcome_``): append-only agent outcome evidence submissions.
 - ``EvaluationReview`` (``review_``): post-execution review queue (separate from pre-execution approvals).
@@ -29,6 +29,15 @@ class RunOutcome(Base):
     assurance_level: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     evaluator_version: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     findings: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # v1.5.9 self-reported agent identity (monitor-only cohorts), honeypot outcome and CI attestation verification
+    agent_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False, default="")
+    agent_version: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    model_name: Mapped[str] = mapped_column(String(128), index=True, nullable=False, default="")
+    honeypot_probe_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False, default="")
+    honeypot_outcome: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    attestation_status: Mapped[str] = mapped_column(String(32), nullable=False, default="none")
+    attestation_digest: Mapped[str] = mapped_column(String(64), index=True, nullable=False, default="")
+    attestation_detail: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -53,6 +62,12 @@ class EvaluationReview(Base):
     reviewer: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     reviewer_key_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # v1.5.9 agent identity, per-finding labels and benchmark export link
+    agent_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False, default="")
+    agent_version: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    model_name: Mapped[str] = mapped_column(String(128), index=True, nullable=False, default="")
+    finding_labels: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    exported_sample_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     opened_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     decided_at = mapped_column(DateTime(timezone=True), nullable=True)

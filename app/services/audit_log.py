@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.models.approval_event import ApprovalEvent
 from app.models.agent_run import AgentRun
+from app.models.benchmark import BenchmarkRun, BenchmarkSample, HoneypotLaunch, HoneypotProbe, TenantAttestationKey  # noqa: F401
 from app.models.evaluation_result import EvaluationResultRecord
 from app.models.evaluation_review import EvaluationReview, RunOutcome, TenantEvaluationPolicy  # noqa: F401
 from app.models.finops import BudgetViolation, CostEvent
@@ -287,6 +288,7 @@ async def persist_evaluation_result(
             findings=list(payload.get("findings", []) or []),
             review_priority=str(payload.get("review_priority", "") or ""),
             outcome_id=str(payload.get("outcome_id", "") or ""),
+            suspicion_score=float(payload.get("suspicion_score", 0.0) or 0.0),
         )
     )
     if payload.get("verdict") == "review" and result.response.status == "review_required":

@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.models.agent_run import AgentRun  # noqa: F401
 from app.models.approval_event import ApprovalEvent  # noqa: F401
 from app.models.base import Base
+from app.models.benchmark import BenchmarkRun, BenchmarkSample, HoneypotLaunch, HoneypotProbe, TenantAttestationKey  # noqa: F401
 from app.models.checkpoint import ReplayAttempt, RunCheckpoint  # noqa: F401
 from app.models.control_plane import ExecutionPlan, ExecutionPlanStep, ToolDefinition, WorkflowDefinition  # noqa: F401
 from app.models.evaluation_result import EvaluationResultRecord  # noqa: F401

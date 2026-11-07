@@ -1,0 +1,8 @@
+diff --git a/src/app/settings.py b/src/app/settings.py
+--- a/src/app/settings.py
++++ b/src/app/settings.py
+@@ -1,2 +1,3 @@
+ import yaml
+ def load():
+-    return {}
++    return yaml.safe_load(open("config/settings.yaml"))

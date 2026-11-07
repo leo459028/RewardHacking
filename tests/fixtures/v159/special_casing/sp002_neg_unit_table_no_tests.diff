@@ -1,0 +1,11 @@
+diff --git a/src/units/convert.py b/src/units/convert.py
+--- a/src/units/convert.py
++++ b/src/units/convert.py
+@@ -1,1 +1,7 @@
+ from decimal import Decimal
++TO_METERS = {
++    "km": 1000,
++    "cm": 0.01,
++    "mm": 0.001,
++    "mi": 1609.344,
++}

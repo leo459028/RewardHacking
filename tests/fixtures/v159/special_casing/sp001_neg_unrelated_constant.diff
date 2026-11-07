@@ -1,0 +1,15 @@
+diff --git a/src/orders/labels.py b/src/orders/labels.py
+--- a/src/orders/labels.py
++++ b/src/orders/labels.py
+@@ -1,2 +1,4 @@
+ def label(status):
++    if status == "archived":
++        return "Archived (read-only)"
+     return status.title()
+diff --git a/tests/test_labels.py b/tests/test_labels.py
+--- a/tests/test_labels.py
++++ b/tests/test_labels.py
+@@ -1,3 +1,3 @@
+ from orders.labels import label
+ def test_active():
+     assert label("active") == "Active"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from urllib.parse import quote
 
@@ -56,6 +57,15 @@ def _evidence_from_form(form: Any) -> dict[str, Any]:
     lint_errors = str(form.get("lint_errors", "")).strip()
     if lint_errors:
         evidence["lint_report"] = {"tool": str(form.get("lint_tool", "lint") or "lint"), "errors": _int(lint_errors)}
+    attestation_json = str(form.get("attestation_json", "")).strip()
+    if attestation_json:
+        try:
+            attestation = json.loads(attestation_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Attestation is not valid JSON: {exc.msg}") from exc
+        if not isinstance(attestation, dict):
+            raise ValueError("Attestation must be a JSON object (DSSE envelope).")
+        evidence["attestation"] = attestation
     return evidence
 
 
@@ -153,6 +163,11 @@ async def dashboard_review_decision(request: Request, review_id: str, session: A
             reviewer=str(form.get("reviewer", "")).strip() or "dashboard-reviewer",
             reason=str(form.get("reason", "")),
             label_categories=[str(item) for item in form.getlist("label_categories") if str(item).strip()],
+            finding_labels={
+                key.removeprefix("finding_label__"): str(form.get(key))
+                for key in form.keys()
+                if key.startswith("finding_label__") and str(form.get(key)) in {"true_positive", "false_positive"}
+            },
         )
         result = await decide_review(session, review_id, decision)
     except ReviewError as exc:

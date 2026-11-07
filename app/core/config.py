@@ -89,6 +89,16 @@ class Settings(BaseSettings):
     evaluation_lint_suppression_threshold: int = 3
     evaluation_review_p0_sla_hours: int = 4
     evaluation_detector_modes: dict[str, str] = Field(default_factory=dict)
+    # v1.5.9 labeled benchmark, cheat-rate cohorts and CI attestation verification
+    evaluation_benchmark_min_tpr: float = 0.90
+    evaluation_benchmark_gate_fpr: float = 0.05
+    evaluation_benchmark_gate_enforced: bool = False
+    evaluation_benchmark_max_samples: int = 5000
+    evaluation_cheat_rate_min_samples: int = 20
+    evaluation_attestation_max_age_hours: int = 24
+    evaluation_attestation_max_bytes: int = 262144
+    evaluation_sigstore_enabled: bool = False
+    evaluation_inspect_import_max_bytes: int = 5242880
 
     @model_validator(mode="after")
     def _validate_finops_currency_settings(self) -> Settings:
@@ -146,9 +156,18 @@ class Settings(BaseSettings):
             "evaluation_max_file_content_bytes",
             "evaluation_lint_suppression_threshold",
             "evaluation_review_p0_sla_hours",
+            "evaluation_benchmark_max_samples",
+            "evaluation_cheat_rate_min_samples",
+            "evaluation_attestation_max_age_hours",
+            "evaluation_attestation_max_bytes",
+            "evaluation_inspect_import_max_bytes",
         ):
             if int(getattr(self, name)) < 1:
                 raise ValueError(f"{name.upper()} must be >= 1.")
+        if not 0.0 < float(self.evaluation_benchmark_min_tpr) <= 1.0:
+            raise ValueError("EVALUATION_BENCHMARK_MIN_TPR must be in (0, 1].")
+        if not 0.0 < float(self.evaluation_benchmark_gate_fpr) < 1.0:
+            raise ValueError("EVALUATION_BENCHMARK_GATE_FPR must be in (0, 1).")
         normalized_modes: dict[str, str] = {}
         for detector, mode in (self.evaluation_detector_modes or {}).items():
             mode_value = str(mode).strip().lower()

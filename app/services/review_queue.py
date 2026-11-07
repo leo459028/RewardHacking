@@ -23,6 +23,7 @@ from app.models.governance_event import GovernanceEvent
 from app.models.incident import Incident
 from app.observability.metrics import INCIDENTS_TOTAL
 from app.schemas.evaluation import ReviewDecisionRequest
+from app.services.cheat_rates import agent_identity
 from app.services.evaluation.evidence import DEFAULT_PROTECTED_PATHS, effective_protected_paths, normalize_path
 from app.services.evaluation.taxonomy import SEVERITY_RANK, higher_priority
 
@@ -89,6 +90,8 @@ async def open_or_merge_review(
     priority = str(evaluation.get("review_priority") or "P3")
     existing = await get_open_review(session, run_id)
     if existing is None:
+        run = await session.scalar(select(AgentRun).where(AgentRun.run_id == run_id))
+        identity = agent_identity(((run.request_payload if run is not None else {}) or {}).get("metadata"))
         review = EvaluationReview(
             review_id=new_review_id(),
             run_id=run_id,
@@ -107,10 +110,18 @@ async def open_or_merge_review(
             reviewer="",
             reviewer_key_id="",
             reason="",
+            agent_id=identity["agent_id"],
+            agent_version=identity["agent_version"],
+            model_name=identity["model_name"],
+            finding_labels={},
+            exported_sample_id="",
         )
         session.add(review)
         await session.flush()
         return review
+
+    if sample_reason == "honeypot":
+        existing.sample_reason = "honeypot"
 
     known = {str(item.get("finding_id")): item for item in list(existing.findings or [])}
     for item in findings:
@@ -189,8 +200,18 @@ async def decide_review(
             "The submitter of outcome evidence cannot decide the review of the same run.",
             403,
         )
+    finding_labels = dict(decision.finding_labels or {})
+    unknown = sorted(set(finding_labels) - set(review.finding_ids or []))
+    if unknown:
+        raise ReviewError(
+            "finding_labels_invalid",
+            f"finding_labels contains finding IDs that are not part of this review: {', '.join(unknown[:5])}.",
+            422,
+        )
 
     now = _now()
+    if finding_labels:
+        review.finding_labels = {**dict(review.finding_labels or {}), **finding_labels}
     review.label = decision.label
     review.label_categories = [str(item) for item in decision.label_categories] or list(review.categories or [])
     review.reviewer = decision.reviewer
@@ -262,6 +283,7 @@ async def decide_review(
                 "label_categories": list(review.label_categories or []),
                 "reviewer": decision.reviewer,
                 "finding_ids": list(review.finding_ids or []),
+                "finding_labels": dict(review.finding_labels or {}),
             },
         )
     )

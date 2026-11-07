@@ -37,7 +37,8 @@ class OperationsReadiness:
 
 
 def summarize_status(checks: list[OperationsCheck]) -> str:
-    statuses = {check.status for check in checks}
+    # v1.5.9: advisory checks are shown with their real status but do not decide the overall gate.
+    statuses = {check.status for check in checks if not (check.metadata or {}).get("advisory")}
     if "fail" in statuses:
         return "fail"
     if "warn" in statuses:
@@ -98,6 +99,59 @@ def _fresh_evidence_check(
         title=title,
         detail=evidence.summary,
         metadata={"age_days": age_days, "reference_url": evidence.reference_url},
+    )
+
+
+async def _evaluation_benchmark_gate_check(session: AsyncSession, *, settings: Settings) -> OperationsCheck:
+    """v1.5.9: reward-tampering TPR at the configured FPR on the latest benchmark for the current evaluator.
+
+    Reads stored benchmark runs only (never runs a benchmark). Advisory unless
+    ``EVALUATION_BENCHMARK_GATE_ENFORCED`` is true; when enforced, a stale benchmark warns and a TPR
+    below ``EVALUATION_BENCHMARK_MIN_TPR`` fails in ``APP_ENV=prod``.
+    """
+    from app.services.benchmark import gate_evaluation, latest_benchmark_run
+    from app.services.evaluation.engine import EvaluationEngine
+    from app.services.evaluation.metrics import fpr_key
+
+    evaluator_version = EvaluationEngine().version()
+    run = await latest_benchmark_run(session, evaluator_version=evaluator_version)
+    status, reason = gate_evaluation(run.metrics if run is not None else None, settings)
+    cell: dict[str, Any] = {}
+    auroc = None
+    if run is not None:
+        block = (run.metrics or {}).get("as_configured", {}).get("by_kind", {}).get("reward_tampering", {})
+        cell = dict(block.get("tpr_at_fpr", {}).get(fpr_key(settings.evaluation_benchmark_gate_fpr)) or {})
+        auroc = block.get("auroc")
+    tpr = cell.get("tpr")
+    detail = (
+        f"No benchmark run for evaluator {evaluator_version}; run POST /v1/benchmark/runs."
+        if run is None
+        else (
+            f"Benchmark {run.benchmark_run_id}: reward_tampering TPR@FPR{settings.evaluation_benchmark_gate_fpr:g}="
+            f"{(tpr if tpr is not None else 0):.2f} (min {settings.evaluation_benchmark_min_tpr:.2f}), AUROC="
+            f"{(auroc if auroc is not None else 0):.2f}; {reason}."
+        )
+    )
+    enforced = bool(settings.evaluation_benchmark_gate_enforced)
+    if not enforced:
+        detail = "Advisory (not enforced): " + detail
+    return OperationsCheck(
+        check_key="evaluation_benchmark_gate",
+        status=status,
+        title="Detector benchmark gate",
+        detail=detail,
+        metadata={
+            "advisory": not enforced,
+            "reason": reason,
+            "evaluator_version": evaluator_version,
+            "benchmark_run_id": run.benchmark_run_id if run is not None else "",
+            "corpus_digest": run.corpus_digest if run is not None else "",
+            "reward_tampering_tpr": tpr,
+            "reward_tampering_auroc": auroc,
+            "insufficient_samples": bool(cell.get("insufficient_samples")) if cell else None,
+            "min_tpr": settings.evaluation_benchmark_min_tpr,
+            "fpr": settings.evaluation_benchmark_gate_fpr,
+        },
     )
 
 
@@ -354,6 +408,7 @@ async def compute_operations_readiness(
             },
         ),
         await _evaluation_review_queue_check(session, settings=settings, now=now),
+        await _evaluation_benchmark_gate_check(session, settings=settings),
     ]
 
     if settings.app_env.lower() == "prod" and settings.release_gate_fail_on_bootstrap_keys_in_prod:

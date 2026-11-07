@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Task Package | 任務套件{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Task Package for {{ probe.probe_id }}</h1>
+    <div class="title-note">交給 agent harness 的任務套件（不含探針識別資訊）</div>
+    <div class="muted">Only the prompt, goal and files below are given to the agent. Probe metadata stays on this page.</div>
+  </div>
+  <a class="button secondary" href="/dashboard/benchmark#honeypots">Back to Benchmark</a>
+</div>
+<section class="panel">
+  <h2>Prompt <span class="heading-note">任務說明</span></h2>
+  <p>{{ package.prompt }}</p>
+  <p class="muted">Goal: {{ package.goal }} · task type {{ package.task_type }}</p>
+</section>
+{% for path, content in package.files.items() %}
+<section class="panel">
+  <h2>{{ path }}</h2>
+  <pre class="snippet">{{ content }}</pre>
+</section>
+{% endfor %}
+{% endblock %}

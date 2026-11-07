@@ -9,7 +9,10 @@ This document details the system topology, component responsibilities, and reque
 
 ## Architectural Evolution
 
-- **`v1.5.2` (Current)**: Open-Source Baseline. Unified documentation in English, standardized community templates, automated secret checks, and operations gate synchronization.
+- **`v1.5.9` (Current)**: Labeled Benchmark & Detector Measurement. Measurement layer over the evaluation engine (benchmark corpus and runs, shadow `special_casing`, honeypot probes, cheat rates) and CI attestation verification.
+- **`v1.5.8` (Historical)**: Evidence-based evaluation engine, outcome ingestion and post-execution review queue.
+- **`v1.5.3` – `v1.5.7` (Historical)**: Active FinOps governance, settled ledger, burn-rate forecasting and token broker, Safe MCP Gateway.
+- **`v1.5.2` (Historical)**: Open-Source Baseline. Unified documentation in English, standardized community templates, automated secret checks, and operations gate synchronization.
 - **`v1.5.1` (Historical)**: Added official model pricing catalog seed ingestion, dry-run evaluation, versioned pricing change logs, and Admin FinOps pricing dashboard.
 - **`v1.5.0` (Historical)**: Introduced Agent FinOps Core / Cost Ledger (`pricing_catalog`, `usage_events`, `cost_events`, `budget_policies`, `budget_violations`).
 - **`v1.4.0` (Historical)**: Added Checkpoint / Resume / Replay MVP, enabling submit checkpoints, resume checkpoints, and dry-run replay attempts.
@@ -110,6 +113,15 @@ flowchart LR
 - `evidence.py` bounds, parses (unified diff, JUnit XML) and redacts agent outcome evidence; `claims.py` extracts verification claims from the final message.
 - Versioned detectors (`test_tampering`, `grader_tampering`, `error_suppression`, `claim_evidence`, `scope`, `evidence_quality`, `legacy_text`) emit findings with evidence pointers; `aggregator.py` derives `verdict`, `review_priority` and `assurance_level`; `app/services/evaluator.py` remains the backward-compatible facade.
 - `app/services/outcomes.py` ingests `POST /v1/runs/{run_id}/outcome`; `app/services/review_queue.py` owns the post-execution review queue (`review_required` / `rejected`), which is separate from pre-execution approvals and never re-dispatches runs. See [`docs/evaluation.md`](evaluation.md).
+- `v1.5.9` measurement layer: `app/services/evaluation/metrics.py` (pure AUROC / TPR@FPR / Wilson / audit-budget curves), `app/services/benchmark.py` (labeled corpus, side-effect-free benchmark runs, readiness gate), `app/services/evaluation/detectors/special_casing.py` (shadow), `app/services/honeypot.py` (impossible-task probes with server-side run mapping), `app/services/cheat_rates.py` (monitor-only cohorts), `app/services/evaluation/attestation.py` + `app/services/attestation_keys.py` (DSSE / in-toto verification against tenant trust roots) and `app/services/inspect_import.py` (optional). APIs live in `app/api/routers/benchmark.py`; the Dashboard view in `app/ui/routers/benchmark.py`.
+
+```text
+seed YAML ─┐
+review export ─┼─► benchmark_samples ─► EvaluationEngine (pure; configured + what-if) ─► metrics.py ─► benchmark_runs ─► readiness gate / dashboard / Prometheus
+Inspect JSON ─┘
+honeypot launch ─► normal submit path ─► outcome evidence ─► judge (cheated / honest_refusal) ─► review + cheat rates
+ci_attested outcome ─► DSSE verify (tenant key, run binding, report digest, freshness, replay) ─► ci_attested or CE-009 / CE-010
+```
 
 ### 8. Agent FinOps Core & Cost Accounting (`app/services/finops.py`)
 - Maintains an official model pricing catalog with tiered token pricing, tool fees, and worker runtime rates.

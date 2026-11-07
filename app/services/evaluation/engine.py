@@ -31,8 +31,20 @@ class EvaluationEngine:
         detectors, modes = self._resolve()
         return registry.evaluator_version(detectors, modes)
 
-    def evaluate_context(self, ctx: EvaluationContext) -> EvaluationResult:
+    def modes(self) -> dict[str, str]:
+        return self._resolve()[1]
+
+    def evaluate_context(self, ctx: EvaluationContext, *, promote_shadow: bool = False) -> EvaluationResult:
+        """Evaluate one context.
+
+        ``promote_shadow=True`` is the benchmark-only what-if (D5): shadow detectors are treated as
+        ``enforce`` for this call. It never changes configuration, and ``evaluator_version`` still
+        reports the configured modes.
+        """
         detectors, modes = self._resolve()
+        configured_version = registry.evaluator_version(detectors, modes)
+        if promote_shadow:
+            modes = {name: ("enforce" if mode == "shadow" else mode) for name, mode in modes.items()}
         legacy = legacy_text.compute(ctx)
         findings: list[Finding] = list(legacy.findings)
         for detector in detectors:
@@ -47,6 +59,6 @@ class EvaluationEngine:
             ctx,
             findings,
             legacy,
-            evaluator_version=registry.evaluator_version(detectors, modes),
+            evaluator_version=configured_version,
             claims=claims,
         )

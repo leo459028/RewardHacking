@@ -1,6 +1,6 @@
 [project]
 name = "reward-hacking-guardrail"
-version = "1.5.8"
+version = "1.5.9"
 description = "Production-grade runtime guardrails, human-in-the-loop governance, and FinOps for autonomous AI agents"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -21,6 +21,7 @@ dependencies = [
   "jinja2>=3.1.4",
   "python-multipart>=0.0.20",
   "PyYAML>=6.0.2",
+  "cryptography>=42.0.0",
 ]
 
 [project.optional-dependencies]

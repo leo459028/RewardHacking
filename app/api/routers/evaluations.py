@@ -24,8 +24,18 @@ from app.schemas.evaluation import (
     ReviewDecisionRequest,
     ReviewRecord,
 )
+from app.schemas.benchmark import AttestationKeyCreateRequest, AttestationKeyRevokeRequest
+from app.services.attestation_keys import (
+    AttestationKeyServiceError,
+    create_attestation_key,
+    key_to_dict,
+    list_attestation_keys,
+    revoke_attestation_key,
+)
 from app.services.audit_log import get_run, list_evaluation_results
 from app.services.auth import AuthContext, auth_error, get_auth_context, require_role
+from app.services.cheat_rates import compute_cheat_rates
+from app.services.honeypot import can_see_honeypots
 from app.services.evaluation.evidence import EvidenceError
 from app.services.outcomes import list_outcomes, preview_evaluation, refresh_review_queue_gauge, submit_outcome
 from app.services.review_queue import (
@@ -57,6 +67,14 @@ def _key_identity(auth_context: AuthContext) -> str:
 
 def _evidence_http_error(exc: EvidenceError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.detail})
+
+
+def _review_view(review, auth_context: AuthContext) -> ReviewRecord:
+    """v1.5.9 (D15): roles that submit agent work never learn that a review came from a honeypot."""
+    record = ReviewRecord.model_validate(review)
+    if record.sample_reason == "honeypot" and not can_see_honeypots(auth_context.role, auth_context.enabled):
+        record = record.model_copy(update={"sample_reason": "rule_review"})
+    return record
 
 
 @router.get("/evaluations", response_model=list[EvaluationRecord])
@@ -99,7 +117,7 @@ async def post_run_outcome(
         run_status=run.status,
         submission_seq=outcome.submission_seq,
         evaluation=evaluation,
-        review=ReviewRecord.model_validate(review) if review is not None else None,
+        review=_review_view(review, auth_context) if review is not None else None,
     )
 
 
@@ -147,7 +165,7 @@ async def get_reviews(
     tenant_id = _scoped_tenant(tenant_id, auth_context)
     rows = await list_reviews(session, status=status, priority=priority, category=category, tenant_id=tenant_id, run_id=run_id, limit=limit)
     await refresh_review_queue_gauge(session)
-    return rows
+    return [_review_view(row, auth_context) for row in rows]
 
 
 @router.get("/reviews/{review_id}", response_model=ReviewRecord)
@@ -161,7 +179,7 @@ async def get_review_detail(
     if review is None:
         raise HTTPException(status_code=404, detail="Review not found.")
     _scoped_tenant(review.tenant_id, auth_context)
-    return review
+    return _review_view(review, auth_context)
 
 
 @router.post("/reviews/{review_id}/decision", response_model=ReviewRecord)
@@ -184,7 +202,7 @@ async def post_review_decision(
         raise HTTPException(status_code=404, detail="Review not found.")
     EVALUATION_REVIEWS_TOTAL.labels(label=decision.label).inc()
     await refresh_review_queue_gauge(session)
-    return result[0]
+    return _review_view(result[0], auth_context)
 
 
 @router.get("/tenants/{tenant_id}/evaluation-policy", response_model=EvaluationPolicyRecord)
@@ -215,3 +233,86 @@ async def put_tenant_evaluation_policy(
         updated_by=payload.updated_by,
     )
     return policy_to_dict(tenant_id, policy)
+
+
+# ---------------------------------------------------------------------------
+# v1.5.9 cheat rates (monitor-only) and CI attestation trust roots
+# ---------------------------------------------------------------------------
+
+
+@router.get("/evaluations/cheat-rates")
+async def get_cheat_rates(
+    group_by: str = Query(default="agent_id", pattern="^(agent_id|model_name|agent_version)$"),
+    tenant_id: str | None = None,
+    window_days: int = Query(default=30, ge=1, le=365),
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "reviewer", "tenant_admin", "admin")
+    tenant_id = _scoped_tenant(tenant_id, auth_context)
+    return await compute_cheat_rates(
+        session,
+        group_by=group_by,
+        tenant_id=tenant_id,
+        window_days=window_days,
+        min_samples=get_settings().evaluation_cheat_rate_min_samples,
+    )
+
+
+def _key_http_error(exc: AttestationKeyServiceError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.detail})
+
+
+@router.get("/tenants/{tenant_id}/attestation-keys")
+async def get_attestation_keys(
+    tenant_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "reviewer", "tenant_admin", "admin")
+    tenant_id = _scoped_tenant(tenant_id, auth_context) or tenant_id
+    rows = await list_attestation_keys(session, tenant_id)
+    return {"tenant_id": tenant_id, "keys": [key_to_dict(row) for row in rows]}
+
+
+@router.post("/tenants/{tenant_id}/attestation-keys", status_code=201)
+async def post_attestation_key(
+    tenant_id: str,
+    payload: AttestationKeyCreateRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "tenant_admin", "admin")
+    tenant_id = _scoped_tenant(tenant_id, auth_context) or tenant_id
+    try:
+        row = await create_attestation_key(
+            session,
+            tenant_id=tenant_id,
+            name=payload.name,
+            algorithm=payload.algorithm,
+            public_key_pem=payload.public_key_pem,
+            allowed_subjects=payload.allowed_subjects,
+            created_by=payload.created_by or (auth_context.key_id if auth_context.enabled else "") or "api",
+        )
+    except AttestationKeyServiceError as exc:
+        raise _key_http_error(exc) from exc
+    return key_to_dict(row)
+
+
+@router.post("/tenants/{tenant_id}/attestation-keys/{key_id}/revoke")
+async def post_attestation_key_revoke(
+    tenant_id: str,
+    key_id: str,
+    payload: AttestationKeyRevokeRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "tenant_admin", "admin")
+    tenant_id = _scoped_tenant(tenant_id, auth_context) or tenant_id
+    try:
+        row = await revoke_attestation_key(
+            session, tenant_id=tenant_id, key_id=key_id, actor=payload.revoked_by or (auth_context.key_id if auth_context.enabled else "") or "api"
+        )
+    except AttestationKeyServiceError as exc:
+        raise _key_http_error(exc) from exc
+    return key_to_dict(row)

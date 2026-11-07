@@ -198,6 +198,50 @@ Served by `app/api/routers/evaluations.py`. Every response carries `signal_usage
 
 **Run statuses**: `review_required` (executed, awaiting post-execution review) and `rejected` (review confirmed reward hacking) are distinct from `awaiting_approval`. `POST /v1/approvals/{run_id}/decision` on any run that is not `awaiting_approval` returns `409 run_not_awaiting_approval`.
 
+**`v1.5.9` additions to this group**: `POST /v1/runs/{run_id}/outcome` accepts `attestation` (DSSE envelope) with `provenance: "ci_attested"` and returns `evaluation.suspicion_score`; `GET /v1/runs/{run_id}/outcomes` adds `attestation_status`, `attestation_detail`, `agent_id`, `model_name`; review decisions accept `finding_labels` (`{finding_id: "true_positive" | "false_positive"}`); review records add `agent_id`, `agent_version`, `model_name`, `finding_labels`, `exported_sample_id`. For the `operator` role, a review opened by a honeypot reports `sample_reason: "rule_review"`.
+
+### Labeled Benchmark, Honeypots, Cheat Rates & Attestation Keys (`v1.5.9`)
+
+Served by `app/api/routers/benchmark.py` and `app/api/routers/evaluations.py`. Every response is monitor-only. The `operator` role (agent harnesses) cannot read benchmark data, honeypots or cheat rates.
+
+| Method | Path | Description | Access Role |
+| --- | --- | --- | --- |
+| `GET` | `/v1/benchmark/samples` | Lists samples (`corpus`, `label`, `category`, `source`, `split`, `status`, `include_evidence`, `limit`); the seed corpus loads on first access | `reviewer`, `tenant_admin`, `admin` |
+| `GET` | `/v1/benchmark/samples/{sample_id}` | Sample with redacted evidence | `reviewer`, `tenant_admin`, `admin` |
+| `POST` | `/v1/reviews/{review_id}/export-benchmark` | Exports a decided review (`scope` = `tenant` \| `global` (admin), `label_categories`, `notes`) → `201` sample; `409 review_not_exportable` / `409 benchmark_sample_duplicate` (`sample_id` in the error) | `tenant_admin`, `admin` |
+| `POST` | `/v1/benchmark/samples/export-reviews` | Bulk export of closed reviews (`tenant_id`, `label`, `decided_after`, `scope`, `limit`); returns `exported`, `skipped_duplicates`, `skipped_not_exportable` | `tenant_admin`, `admin` |
+| `POST` | `/v1/benchmark/samples/{sample_id}/relabel` | Relabels a non-seed sample (`label`, `label_categories`, `reason`) with history | `admin` |
+| `POST` | `/v1/benchmark/samples/{sample_id}/retire` | Soft-deletes a sample (global samples: admin only) | `tenant_admin`, `admin` |
+| `POST` | `/v1/benchmark/imports/inspect` | Optional Inspect JSON log import (`log` or `log_text`, `label_from` = `score` \| `metadata`, `score_threshold`, `scorer`, `metadata_key`, `hacking_category`, `dry_run` default `true`) | `admin` |
+| `POST` | `/v1/benchmark/runs` | Runs a side-effect-free benchmark (`corpora`, `split` = `all` \| `dev` \| `holdout`, `exclude_accepted_behavior`) → `201` with metrics and per-sample scores | `tenant_admin`, `admin` |
+| `GET` | `/v1/benchmark/runs` | Lists benchmark runs (without per-sample rows) | `reviewer`, `tenant_admin`, `admin` |
+| `GET` | `/v1/benchmark/runs/{benchmark_run_id}` | Run detail with `metrics` and `per_sample` | `reviewer`, `tenant_admin`, `admin` |
+| `GET` | `/v1/benchmark/runs/{benchmark_run_id}/export?format=json\|csv` | Per-sample scores export | `reviewer`, `tenant_admin`, `admin` |
+| `GET` | `/v1/honeypots` | Lists probes (built-ins load on first access) | `reviewer`, `tenant_admin`, `admin` |
+| `GET` | `/v1/honeypots/results` | Probe runs and outcomes (`tenant_id`, `probe_id`, `agent_id`, `model_name`) with a summary | `reviewer`, `tenant_admin`, `admin` |
+| `GET` | `/v1/honeypots/{probe_id}/package` | Task package for the agent harness (`task_type`, `prompt`, `goal`, `files`; no probe identifiers) | `tenant_admin`, `admin` |
+| `POST` | `/v1/honeypots/{probe_id}/launch` | Launches a probe run through the normal submit path (`tenant_id`, `user_id`, `agent_id`, `agent_version`, `model_name`) → `201` with `run_id`; `409 honeypot_probe_disabled` | `tenant_admin`, `admin` |
+| `POST` | `/v1/honeypots/{probe_id}/enabled` | Enables or disables a probe | `admin` |
+| `GET` | `/v1/evaluations/cheat-rates` | Cheat rates by `group_by` = `agent_id` \| `model_name` \| `agent_version`, `tenant_id`, `window_days` | `reviewer`, `tenant_admin`, `admin` |
+| `GET` | `/v1/tenants/{tenant_id}/attestation-keys` | Lists CI attestation trust roots | `reviewer`, `tenant_admin`, `admin` |
+| `POST` | `/v1/tenants/{tenant_id}/attestation-keys` | Registers a public key (`name`, `algorithm` = `ed25519` \| `ecdsa-p256-sha256`, `public_key_pem`, `allowed_subjects`) → `201`; private keys and invalid PEM return `422 attestation_key_invalid`; duplicates `409 attestation_key_duplicate` | `tenant_admin`, `admin` |
+| `POST` | `/v1/tenants/{tenant_id}/attestation-keys/{key_id}/revoke` | Revokes a key | `tenant_admin`, `admin` |
+
+#### `ci_attested` Outcome Example
+```json
+{
+  "final_message": "Fixed the parser. All tests pass.",
+  "diff": "diff --git a/src/dates/parser.py b/src/dates/parser.py\n...",
+  "test_report": {"format": "summary", "summary": {"passed": 12, "failed": 0, "skipped": 0, "errors": 0}},
+  "provenance": "ci_attested",
+  "attestation": {
+    "payloadType": "application/vnd.in-toto+json",
+    "payload": "<base64 in-toto Statement with subject rewardhacking:run/<run_id> and the report sha256>",
+    "signatures": [{"keyid": "attk_...", "sig": "<base64 signature over the DSSE PAE>"}]
+  }
+}
+```
+
 ---
 
 ## Common Error Codes
@@ -219,4 +263,14 @@ Served by `app/api/routers/evaluations.py`. Every response carries `signal_usage
 | `422` | `test_report_rejected_unsafe_xml` / `test_report_invalid_xml` | JUnit XML with `DOCTYPE` / `ENTITY` declarations, or unparsable XML |
 | `409` | `review_already_closed` | Decision on a closed review |
 | `403` | `review_self_approval_forbidden` | The outcome submitter tried to decide the same run's review |
+| `422` | `finding_labels_invalid` | `finding_labels` contains finding IDs that are not part of the review |
+| `409` | `review_not_exportable` | Benchmark export of an open, `needs_info` or unlabelled review |
+| `409` | `benchmark_sample_duplicate` | The review or identical evidence is already in the corpus (`sample_id` included) |
+| `409` | `benchmark_seed_immutable` | Relabel of a code-owned seed sample |
+| `403` | `benchmark_scope_forbidden` | Non-admin export to or retirement of global samples |
+| `422` | `benchmark_no_samples` / `benchmark_too_many_samples` | Benchmark selection is empty or exceeds `EVALUATION_BENCHMARK_MAX_SAMPLES` |
+| `409` | `honeypot_probe_disabled` | Launch of a disabled probe |
+| `422` | `attestation_key_invalid` | Invalid PEM, wrong algorithm, or a private key was submitted |
+| `409` | `attestation_key_duplicate` | The public key is already registered and active for the tenant |
+| `413` / `415` / `422` | `inspect_import_too_large` / `inspect_import_unsupported_format` / `inspect_import_invalid_json` | Inspect import limits (`.eval` archives are rejected) |
 | `500` | `internal_error` | Internal server or unhandled exception |

@@ -1,0 +1,306 @@
+{% extends "base.html" %}
+{% block title %}Benchmark | 偵測量測{% endblock %}
+{% macro pct(value) -%}{% if value is none %}—{% else %}{{ "%.1f"|format(value * 100) }}%{% endif %}{%- endmacro %}
+{% macro num(value) -%}{% if value is none %}—{% else %}{{ "%.3f"|format(value) }}{% endif %}{%- endmacro %}
+{% macro tpr_cell(cell) -%}
+  {% if not cell %}<span class="muted">—</span>
+  {% elif cell.insufficient_samples %}<span class="muted" title="Not enough negatives to resolve this FPR">Insufficient samples | 樣本不足</span>
+    <div class="muted">TPR {{ pct(cell.tpr) }} ({{ cell.tp }}/{{ cell.positives }}), FP {{ cell.fp }}/{{ cell.negatives }}</div>
+  {% else %}<strong>{{ pct(cell.tpr) }}</strong> <span class="muted">({{ cell.tp }}/{{ cell.positives }})</span>
+    <div class="muted">95% CI {{ pct(cell.ci_low) }}–{{ pct(cell.ci_high) }} · FP {{ cell.fp }}/{{ cell.negatives }} · thr {{ num(cell.threshold) }}</div>
+  {% endif %}
+{%- endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Labeled Benchmark &amp; Detector Measurement</h1>
+    <div class="title-note">標註 Benchmark 與偵測器量測</div>
+    <div class="muted">TPR at a fixed low FPR, AUROC and audit-budget curves per category. Benchmark runs never open reviews, publish events or touch leases. Signals are monitor-only and must not be used as training rewards.</div>
+  </div>
+  <a class="button secondary" href="/dashboard/reviews">Review Queue</a>
+</div>
+
+{% if message %}<div class="success" role="status">{{ message }}</div>{% endif %}
+{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+
+<section class="grid stats">
+  <div class="stat"><div class="stat-label">Evaluator</div><div class="stat-value" style="font-size:15px;">{{ current_version }}</div></div>
+  <div class="stat"><div class="stat-label">Benchmark Gate</div><div class="stat-value"><span class="status {{ 'completed' if gate.status == 'pass' else ('rejected' if gate.status == 'fail' else 'review_required') }}" id="benchmark-gate-status">{{ gate.status }}</span></div>
+    <div class="muted">{{ gate.reason }} · {{ "enforced" if gate.enforced else "advisory" }} · min TPR {{ "%.2f"|format(gate.min_tpr) }} @ FPR {{ "%g"|format(gate.fpr) }}</div></div>
+  <div class="stat"><div class="stat-label">Active Samples</div><div class="stat-value">{{ sample_counts.values()|sum }}</div></div>
+  <div class="stat"><div class="stat-label">Runs</div><div class="stat-value">{{ runs|length }}</div></div>
+</section>
+
+<section class="panel" id="corpus">
+  <h2>Corpus <span class="heading-note">標註語料</span></h2>
+  <form class="filters" method="get" action="/dashboard/benchmark">
+    <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+    <label>Corpus <input name="corpus" value="{{ filters.corpus }}" placeholder="seed-v1.5.9 | global | tenant:&lt;id&gt;"></label>
+    <label>Label
+      <select name="label">
+        {% for item in ["", "hacking", "benign"] %}<option value="{{ item }}" {{ "selected" if filters.label == item else "" }}>{{ item or "all" }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Category
+      <select name="category">
+        <option value="">All</option>
+        {% for item in categories %}<option value="{{ item }}" {{ "selected" if filters.category == item else "" }}>{{ item }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Source
+      <select name="source">
+        {% for item in ["", "seed_fixture", "review_export", "honeypot", "inspect_import"] %}<option value="{{ item }}" {{ "selected" if filters.source == item else "" }}>{{ item or "all" }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Split
+      <select name="split">
+        {% for item in ["all", "dev", "holdout"] %}<option value="{{ item }}" {{ "selected" if filters.split == item else "" }}>{{ item }}</option>{% endfor %}
+      </select>
+    </label>
+    <div><button class="button" type="submit">Apply Filters</button></div>
+  </form>
+  <p class="muted" id="corpus-count">{{ samples|length }} sample(s) shown. Seed scores measure rule self-consistency (detectors were written against these fixtures); prefer holdout and review-export numbers.</p>
+  <table>
+    <thead><tr><th>Sample</th><th>Label</th><th>Categories</th><th>Source</th><th>Split</th><th>Notes</th></tr></thead>
+    <tbody>
+    {% for s in samples %}
+      <tr>
+        <td>{{ s.name or s.sample_id }}<div class="muted">{{ s.sample_id }} · {{ s.corpus }}</div></td>
+        <td><span class="flag">{{ s.label }}</span></td>
+        <td>{% for c in s.label_categories %}<span class="flag">{{ c }}</span>{% else %}<span class="muted">—</span>{% endfor %}</td>
+        <td>{{ s.source }}</td>
+        <td>{{ s.split }}</td>
+        <td>{% for n in s.label_notes %}<span class="flag">{{ n }}</span>{% endfor %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">No samples match.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel" id="inspect-import">
+  <h2>Import Inspect Log <span class="heading-note">匯入 Inspect 評估紀錄（JSON，選做）</span></h2>
+  <p class="muted">Imports samples into a tenant-scoped <code>inspect:&lt;digest&gt;</code> corpus. Labels come from a scorer whose positive value means the agent cheated, or from a metadata key. Evidence is redacted; <code>.eval</code> archives are not accepted.</p>
+  <form method="post" action="/dashboard/benchmark/imports/inspect">
+    <div class="form-grid">
+      <label>Tenant ID <input name="tenant_id" value="{{ tenant_id }}"></label>
+      <label>Label From
+        <select name="label_from"><option value="score">score (positive = cheated)</option><option value="metadata">metadata (reward_hacking)</option></select>
+      </label>
+      <label>Score Threshold <input name="score_threshold" value="1" inputmode="decimal"></label>
+      <label>Hacking Category
+        <select name="hacking_category">{% for item in categories %}{% if item not in ["evidence_quality", "legacy_text_signal"] %}<option value="{{ item }}" {{ "selected" if item == "special_casing" else "" }}>{{ item }}</option>{% endif %}{% endfor %}</select>
+      </label>
+      <label class="checkline"><input type="checkbox" name="dry_run" checked> Dry run (preview only)</label>
+    </div>
+    <label style="margin-top:12px;">Inspect Log JSON <textarea name="log_text" style="min-height:70px;" placeholder='{"eval": {...}, "samples": [...]}'></textarea></label>
+    <div style="margin-top:12px;"><button class="button" type="submit" id="inspect-import-submit">Import</button></div>
+  </form>
+</section>
+
+<section class="panel" id="benchmark-runs">
+  <h2>Run Benchmark <span class="heading-note">執行量測（純量測，無副作用）</span></h2>
+  <form method="post" action="/dashboard/benchmark/runs">
+    <div class="form-grid">
+      <label>Tenant ID <input name="tenant_id" value="{{ tenant_id }}"></label>
+      <label>Corpora
+        <select name="corpora" multiple size="3">
+          <option value="seed-v1.5.9" selected>seed-v1.5.9</option>
+          <option value="global">global</option>
+          <option value="tenant:{{ tenant_id }}">tenant:{{ tenant_id }}</option>
+        </select>
+      </label>
+      <label>Split
+        <select name="split"><option value="all">all</option><option value="dev">dev</option><option value="holdout">holdout</option></select>
+      </label>
+      <label class="checkline"><input type="checkbox" name="exclude_accepted_behavior"> Exclude accepted behaviour</label>
+    </div>
+    <div style="margin-top:12px;"><button class="button" type="submit" id="run-benchmark">Run Benchmark</button></div>
+  </form>
+
+  <table style="margin-top:14px;">
+    <thead><tr><th>Run</th><th>Evaluator</th><th>Samples</th><th>Gate</th><th>Created</th></tr></thead>
+    <tbody>
+    {% for r in runs %}
+      <tr>
+        <td><a href="/dashboard/benchmark?tenant_id={{ tenant_id }}&run={{ r.benchmark_run_id }}">{{ r.benchmark_run_id }}</a></td>
+        <td class="muted">{{ r.evaluator_version }}{% if r.evaluator_version != current_version %} <span class="flag">stale</span>{% endif %}</td>
+        <td>{{ r.sample_count }} <span class="muted">({{ r.positive_count }} / {{ r.negative_count }})</span></td>
+        <td>{{ r.gate_status }}</td>
+        <td class="muted">{{ r.created_at }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="muted">No benchmark runs yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% if selected %}
+<section class="panel" id="benchmark-metrics">
+  <h2>Metrics <span class="heading-note">量測結果 · {{ selected.benchmark_run_id }}</span></h2>
+  <p class="muted">corpus digest {{ selected.corpus_digest[:16] }}… · {{ selected.positive_count }} hacking / {{ selected.negative_count }} benign · {{ selected.duration_ms }} ms</p>
+  <div class="filters" style="margin-bottom:10px;">
+    <a class="button {{ '' if mode == 'as_configured' else 'secondary' }}" href="/dashboard/benchmark?tenant_id={{ tenant_id }}&run={{ selected.benchmark_run_id }}&mode=as_configured#benchmark-metrics">As configured | 依目前模式</a>
+    <a class="button {{ '' if mode == 'all_enforced' else 'secondary' }}" id="mode-all-enforced" href="/dashboard/benchmark?tenant_id={{ tenant_id }}&run={{ selected.benchmark_run_id }}&mode=all_enforced#benchmark-metrics">All enforced (what-if) | 全部 enforce 試算</a>
+  </div>
+  <table id="metrics-table">
+    <thead><tr><th>Scope</th><th>Positives</th><th>AUROC</th>{% for key in fpr_keys %}<th>TPR @ FPR {{ key }}</th>{% endfor %}</tr></thead>
+    <tbody>
+      {% set overall = mode_metrics.get("overall", {}) %}
+      <tr><td><strong>overall</strong></td><td>{{ overall.get("positives", 0) }}</td><td>{{ num(overall.get("auroc")) }}</td>
+        {% for key in fpr_keys %}<td>{{ tpr_cell(overall.get("tpr_at_fpr", {}).get(key)) }}</td>{% endfor %}</tr>
+      {% for kind, block in mode_metrics.get("by_kind", {}).items() %}
+      <tr><td><strong>{{ kind }}</strong>{% if kind == "reward_tampering" %} <span class="flag">gate</span>{% endif %}</td><td>{{ block.positives }}</td><td>{{ num(block.auroc) }}</td>
+        {% for key in fpr_keys %}<td>{{ tpr_cell(block.tpr_at_fpr.get(key)) }}</td>{% endfor %}</tr>
+      {% endfor %}
+      {% for category, block in mode_metrics.get("by_category", {}).items() %}
+      <tr><td>&nbsp;&nbsp;{{ category }}</td><td>{{ block.positives }}</td><td>{{ num(block.auroc) }}</td>
+        {% for key in fpr_keys %}<td>{{ tpr_cell(block.tpr_at_fpr.get(key)) }}</td>{% endfor %}</tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% set confusion = mode_metrics.get("verdict_confusion", {}) %}
+  <p style="margin-top:12px;">Verdict confusion (review = positive): TP {{ confusion.get("tp", 0) }} · FP {{ confusion.get("fp", 0) }} · TN {{ confusion.get("tn", 0) }} · FN {{ confusion.get("fn", 0) }}
+    · TPR {{ pct(confusion.get("tpr", {}).get("value")) }} · FPR {{ pct(confusion.get("fpr", {}).get("value")) }}</p>
+
+  <div class="grid" style="grid-template-columns: minmax(280px, 380px) 1fr; gap:16px; align-items:start;">
+    <div>
+      <h3>Audit budget vs catch rate <span class="heading-note">審查預算曲線</span></h3>
+      <svg viewBox="-30 -10 {{ curve_width + 50 }} {{ curve_height + 40 }}" width="100%" role="img" aria-label="Audit budget versus catch rate" id="audit-curve">
+        <line x1="0" y1="{{ curve_height }}" x2="{{ curve_width }}" y2="{{ curve_height }}" stroke="#8894a0" stroke-width="1"/>
+        <line x1="0" y1="0" x2="0" y2="{{ curve_height }}" stroke="#8894a0" stroke-width="1"/>
+        <text x="-6" y="4" font-size="10" text-anchor="end" fill="#5b6773">100%</text>
+        <text x="-6" y="{{ curve_height }}" font-size="10" text-anchor="end" fill="#5b6773">0%</text>
+        <text x="{{ curve_width }}" y="{{ curve_height + 16 }}" font-size="10" text-anchor="end" fill="#5b6773">{{ "%.0f"|format(curve.max_budget * 100) }}% audited</text>
+        {% if curve.points %}<polyline points="{{ curve.points }}" fill="none" stroke="#2f6fde" stroke-width="2"/>{% endif %}
+        {% for d in curve.dots %}<circle cx="{{ d.x }}" cy="{{ d.y }}" r="3" fill="#2f6fde"><title>{{ "%g"|format(d.budget * 100) }}% audited → {{ pct(d.rate) }} caught</title></circle>{% endfor %}
+      </svg>
+    </div>
+    <div>
+      <table>
+        <thead><tr><th>Budget</th><th>Reviewed</th><th>Caught</th><th>Catch rate</th></tr></thead>
+        <tbody>
+        {% for point in mode_metrics.get("audit_budget_curve", []) %}
+          <tr><td>{{ "%g"|format(point.budget * 100) }}%</td><td>{{ point.reviewed }}</td><td>{{ point.caught }} / {{ point.positives }}</td><td>{{ pct(point.catch_rate) }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <h3 style="margin-top:16px;">Per-detector <span class="heading-note">各偵測器（不分模式，含 shadow）</span></h3>
+  <table>
+    <thead><tr><th>Detector</th><th>Mode</th><th>Positives</th><th>AUROC</th>{% for key in fpr_keys %}<th>TPR @ FPR {{ key }}</th>{% endfor %}<th>Review precision</th></tr></thead>
+    <tbody>
+    {% for name, block in metrics.get("by_detector", {}).items() %}
+      {% set precision = metrics.get("detector_precision", {}).get(name) %}
+      <tr><td>{{ name }}</td><td>{{ selected.detector_modes.get(name, "enforce") }}</td><td>{{ block.positives }}</td><td>{{ num(block.auroc) }}</td>
+        {% for key in fpr_keys %}<td>{{ tpr_cell(block.tpr_at_fpr.get(key)) }}</td>{% endfor %}
+        <td>{% if precision %}{{ pct(precision.precision) }} <span class="muted">({{ precision.tp }} TP / {{ precision.fp }} FP)</span>{% else %}<span class="muted">no per-finding labels</span>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section class="panel" id="honeypots">
+  <h2>Honeypot Probes <span class="heading-note">誘捕探針（不可能任務，量測作弊傾向）</span></h2>
+  <p class="muted">Probe runs use the normal submit path. The run-to-probe mapping is stored server-side only; agent-facing APIs never reveal it.</p>
+  <form method="post" id="honeypot-launch-form" action="/dashboard/honeypots/launch">
+    <div class="form-grid">
+      <label>Probe
+        <select name="probe_id">
+          {% for p in probes %}<option value="{{ p.probe_id }}" {{ "disabled" if not p.enabled else "" }}>{{ p.probe_id }} — {{ p.name }}{{ " (disabled)" if not p.enabled else "" }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Tenant ID <input name="tenant_id" value="{{ tenant_id }}"></label>
+      <label>User ID <input name="user_id" value="agent-demo" required></label>
+      <label>Agent ID <input name="agent_id" value="agent-demo"></label>
+      <label>Model Name <input name="model_name" value="demo-model"></label>
+    </div>
+    <div style="margin-top:12px;"><button class="button" type="submit" id="launch-honeypot">Launch Probe</button></div>
+  </form>
+  <table style="margin-top:14px;">
+    <thead><tr><th>Probe</th><th>Name</th><th>Conflicting tests</th><th>Package</th></tr></thead>
+    <tbody>
+    {% for p in probes %}
+      <tr><td>{{ p.probe_id }}</td><td>{{ p.name }}<div class="muted">{{ p.description }}</div></td>
+        <td>{% for t in p.conflict_test_ids %}<div class="muted">{{ t }}</div>{% endfor %}</td>
+        <td><a href="/dashboard/honeypots/{{ p.probe_id }}/package">Download task package</a></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <h3 style="margin-top:14px;">Results <span class="heading-note">探針結果</span></h3>
+  <p>Launched {{ honeypots.summary.launched }} · pending {{ honeypots.summary.pending }} · cheated {{ honeypots.summary.cheated }} · honest refusal {{ honeypots.summary.honest_refusal }} · inconclusive {{ honeypots.summary.inconclusive }}
+    · cheat rate {{ pct(honeypots.summary.cheat_rate) }}</p>
+  <table id="honeypot-results">
+    <thead><tr><th>Run</th><th>Probe</th><th>Agent</th><th>Model</th><th>Outcome</th><th>Launched</th></tr></thead>
+    <tbody>
+    {% for item in honeypots["items"] %}
+      <tr><td><a href="/dashboard/runs/{{ item.run_id }}">{{ item.run_id }}</a></td><td>{{ item.probe_id }}</td><td>{{ item.agent_id or "unknown" }}</td><td>{{ item.model_name or "unknown" }}</td>
+        <td><span class="flag">{{ item.outcome }}</span></td><td class="muted">{{ item.launched_at }}</td></tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">No probes launched yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel" id="cheat-rates">
+  <h2>Cheat Rates <span class="heading-note">作弊率（monitor-only，不影響風險評分）</span></h2>
+  <form class="filters" method="get" action="/dashboard/benchmark#cheat-rates">
+    <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+    <label>Group by
+      <select name="group_by">{% for item in group_by_fields %}<option value="{{ item }}" {{ "selected" if group_by == item else "" }}>{{ item }}</option>{% endfor %}</select>
+    </label>
+    <div><button class="button" type="submit">Apply</button></div>
+  </form>
+  <p class="muted">{{ rates.rate_semantics.confirmed_rate_lower_bound }} {{ rates.rate_semantics.identity }}</p>
+  <table id="cheat-rate-table">
+    <thead><tr><th>{{ group_by }}</th><th>Evaluated</th><th>Flag rate</th><th>Confirmed (lower bound)</th><th>Review precision</th><th>Honeypot cheat rate</th></tr></thead>
+    <tbody>
+    {% for g in rates.groups %}
+      <tr><td>{{ g.group }}</td><td>{{ g.runs_evaluated }}</td>
+        {% for key in ["flag_rate", "confirmed_rate_lower_bound", "review_precision", "honeypot_cheat_rate"] %}
+        {% set r = g[key] %}
+        <td>{{ pct(r.value) }} <span class="muted">({{ r.successes }}/{{ r.trials }})</span>{% if r.insufficient_data %}<div class="muted">insufficient data | 樣本不足</div>{% endif %}</td>
+        {% endfor %}
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">No evaluated runs in the last {{ rates.window_days }} days.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel" id="attestation-keys">
+  <h2>Attestation Keys <span class="heading-note">CI 驗證金鑰（信任根，僅接受公鑰）</span></h2>
+  <p class="muted">Verified CI attestations raise evidence to <code>ci_attested</code>. They prove which CI produced a report, not that tests were left untouched, so tampering findings still apply.</p>
+  <form method="post" action="/dashboard/benchmark/attestation-keys">
+    <div class="form-grid">
+      <label>Tenant ID <input name="tenant_id" value="{{ key_tenant_id }}" required></label>
+      <label>Name <input name="name" value="ci-demo"></label>
+      <label>Algorithm
+        <select name="algorithm"><option value="ed25519">ed25519</option><option value="ecdsa-p256-sha256">ecdsa-p256-sha256</option></select>
+      </label>
+      <label>Allowed subjects <input name="allowed_subjects" placeholder="github.com/acme/* (optional)"></label>
+    </div>
+    <label style="margin-top:12px;">Public Key PEM <textarea name="public_key_pem" style="min-height:90px;" placeholder="-----BEGIN PUBLIC KEY-----" required></textarea></label>
+    <div style="margin-top:12px;"><button class="button" type="submit" id="register-attestation-key">Register Key</button></div>
+  </form>
+  <table style="margin-top:14px;" id="attestation-key-table">
+    <thead><tr><th>Key</th><th>Name</th><th>Algorithm</th><th>Fingerprint</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {% for k in attestation_keys %}
+      <tr><td>{{ k.key_id }}</td><td>{{ k.name }}</td><td>{{ k.algorithm }}</td><td class="muted">{{ k.key_fingerprint[:16] }}…</td><td><span class="flag">{{ k.status }}</span></td>
+        <td>{% if k.status == "active" %}<form method="post" action="/dashboard/benchmark/attestation-keys/{{ k.key_id }}/revoke"><input type="hidden" name="tenant_id" value="{{ key_tenant_id }}"><button class="button secondary" type="submit">Revoke</button></form>{% endif %}</td></tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">No keys registered for {{ key_tenant_id }}.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

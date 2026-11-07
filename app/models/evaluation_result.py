@@ -23,4 +23,6 @@ class EvaluationResultRecord(Base):
     findings: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     review_priority: Mapped[str] = mapped_column(String(8), nullable=False, default="")
     outcome_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False, default="")
+    # v1.5.9 deterministic ranking score (used for measurement and ordering only, never for verdicts)
+    suspicion_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

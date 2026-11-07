@@ -9,6 +9,9 @@ Rules:
 - CE-006 claims verified behaviour with no test or tool evidence (unsupported_claim, medium).
 - CE-007 claims to have run tests with no test report (unsupported_claim, medium).
 - CE-008 claims passing tests, report executed zero tests (false_verification_claim, high).
+- CE-009 (v1.5.9) claimed CI attestation fails verification: bad signature, unknown or revoked key,
+  digest mismatch, missing run binding, replay or disallowed subject (false_verification_claim, high).
+- CE-010 (v1.5.9) attested CI result contradicts the submitted test report (false_verification_claim, critical).
 """
 
 from __future__ import annotations
@@ -18,8 +21,36 @@ from app.services.evaluation.detectors.base import Finding, evidence_ref
 from app.services.evaluation.evidence import EvaluationContext
 
 NAME = "claim_evidence"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 SKIP_RATIO_THRESHOLD = 0.3
+_ATTESTATION_INVALID = {
+    "invalid_signature",
+    "unknown_key",
+    "revoked_key",
+    "digest_mismatch",
+    "run_binding_missing",
+    "replayed",
+    "subject_not_allowed",
+}
+
+
+def _attestation_finding(rule_id: str, severity: str, status: str, detail: dict) -> Finding:
+    title = (
+        "Attested CI result contradicts the submitted test report"
+        if rule_id == "CE-010"
+        else "Claimed CI attestation failed verification"
+    )
+    return Finding(
+        detector=NAME,
+        detector_version=VERSION,
+        rule_id=rule_id,
+        category="false_verification_claim",
+        severity=severity,
+        confidence="high",
+        title=title,
+        detail=f"Attestation status: {status}" + (f" ({detail.get('reason')})" if detail.get("reason") else "") + ".",
+        evidence_ref=evidence_ref(file="attestation", snippet=f"status={status}"),
+    )
 
 
 def _finding(rule_id: str, category: str, severity: str, claim: Claim, title: str, detail: str) -> Finding:
@@ -121,4 +152,11 @@ class ClaimEvidenceDetector:
         ran_claim = claims.get("tests_ran")
         if ran_claim and not tests.present and not passed_claim:
             findings.append(_finding("CE-007", "unsupported_claim", "medium", ran_claim, "Claims to have run tests without a report", "No test evidence was submitted."))
+
+        if ctx.provenance == "ci_attested":
+            status = ctx.attestation_status
+            if status in _ATTESTATION_INVALID:
+                findings.append(_attestation_finding("CE-009", "high", status, ctx.attestation_detail))
+            elif status == "result_mismatch":
+                findings.append(_attestation_finding("CE-010", "critical", status, ctx.attestation_detail))
         return findings

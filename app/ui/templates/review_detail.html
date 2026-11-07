@@ -19,6 +19,7 @@
   <div class="stat"><div class="stat-label">Run Status</div><div class="stat-value">{% if run %}<span class="status {{ run.status }}">{{ run.status }}</span>{% else %}—{% endif %}</div></div>
   <div class="stat"><div class="stat-label">Label</div><div class="stat-value">{{ review.label or "—" }}</div></div>
   <div class="stat"><div class="stat-label">Sample Reason</div><div class="stat-value" style="font-size:16px;">{{ review.sample_reason }}</div></div>
+  <div class="stat"><div class="stat-label">Agent / Model</div><div class="stat-value" style="font-size:14px;">{{ review.agent_id or "unknown" }} / {{ review.model_name or "unknown" }}</div><div class="muted">self-reported</div></div>
 </section>
 
 <section class="panel">
@@ -45,6 +46,20 @@
       </label>
       <label>Reason <input name="reason" value="" placeholder="why"></label>
     </div>
+    {% if review.findings %}
+    <h3 style="margin-top:12px;">Per-finding labels <span class="heading-note">逐條標註（用於偵測器 precision）</span></h3>
+    <table>
+      <thead><tr><th>Finding</th><th>Rule</th><th>Label</th></tr></thead>
+      <tbody>
+      {% for f in review.findings %}
+        <tr><td>{{ f.title }}<div class="muted">{{ f.finding_id }}</div></td><td>{{ f.rule_id }} <span class="muted">{{ f.detector }}</span></td>
+          <td><select name="finding_label__{{ f.finding_id }}" aria-label="Label for {{ f.finding_id }}">
+            <option value="">not labelled</option><option value="true_positive">true_positive</option><option value="false_positive">false_positive</option>
+          </select></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
     <div style="margin-top:12px;"><button class="button" type="submit">Submit Decision</button></div>
   </form>
 </section>
@@ -54,13 +69,35 @@
   <p><strong>{{ review.label }}</strong> by {{ review.reviewer }} at {{ review.decided_at }}</p>
   <p class="muted">{{ review.reason }}</p>
   {% for c in review.label_categories %}<span class="flag">{{ c }}</span>{% endfor %}
+  {% if review.finding_labels %}
+  <p class="muted" style="margin-top:8px;">Per-finding labels:
+    {% for fid, value in review.finding_labels.items() %}<span class="flag">{{ fid[:12] }}… {{ value }}</span>{% endfor %}</p>
+  {% endif %}
 </section>
+{% if review.label in ["confirmed_hacking", "false_positive", "accepted"] %}
+<section class="panel" id="benchmark-export">
+  <h2>Benchmark Export <span class="heading-note">匯出為標註樣本（明確動作，證據再次遮罩）</span></h2>
+  {% if review.exported_sample_id %}
+    <p>Exported as <a href="/dashboard/benchmark?tenant_id={{ review.tenant_id }}&source=review_export&corpus=#corpus"><strong>{{ review.exported_sample_id }}</strong></a>.</p>
+  {% else %}
+  <form method="post" action="/dashboard/reviews/{{ review.review_id }}/export-benchmark">
+    <div class="form-grid">
+      <label>Scope
+        <select name="scope"><option value="tenant">tenant ({{ review.tenant_id }})</option><option value="global">global (admin)</option></select>
+      </label>
+      <label>Exported By <input name="exported_by" value="dashboard-admin"></label>
+    </div>
+    <div style="margin-top:12px;"><button class="button" type="submit" id="export-to-benchmark">Export to Benchmark</button></div>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
 {% endif %}
 
 <section class="panel">
   <h2>Outcome Submissions <span class="heading-note">產出證據提交紀錄（append-only）</span></h2>
   <table>
-    <thead><tr><th>#</th><th>Outcome</th><th>Provenance</th><th>Verdict</th><th>Priority</th><th>Assurance</th><th>Submitted By</th><th>Created</th></tr></thead>
+    <thead><tr><th>#</th><th>Outcome</th><th>Provenance</th><th>Verdict</th><th>Priority</th><th>Assurance</th><th>Attestation</th><th>Submitted By</th><th>Created</th></tr></thead>
     <tbody>
     {% for o in outcomes %}
       <tr>
@@ -70,11 +107,12 @@
         <td>{{ o.verdict }}</td>
         <td>{% if o.review_priority %}<span class="priority {{ o.review_priority }}">{{ o.review_priority }}</span>{% else %}—{% endif %}</td>
         <td><span class="assurance {{ o.assurance_level }}">{{ o.assurance_level }}</span></td>
+        <td>{{ o.attestation_status }}{% if o.honeypot_outcome %}<div class="muted">honeypot: {{ o.honeypot_outcome }}</div>{% endif %}</td>
         <td>{{ o.submitted_by }}</td>
         <td class="muted">{{ o.created_at }}</td>
       </tr>
     {% else %}
-      <tr><td colspan="8" class="muted">No outcome evidence submitted (review opened from executor evaluation).</td></tr>
+      <tr><td colspan="9" class="muted">No outcome evidence submitted (review opened from executor evaluation).</td></tr>
     {% endfor %}
     </tbody>
   </table>

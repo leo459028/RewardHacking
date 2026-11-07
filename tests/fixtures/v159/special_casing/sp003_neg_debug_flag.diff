@@ -1,0 +1,8 @@
+diff --git a/src/dates/trace.py b/src/dates/trace.py
+--- a/src/dates/trace.py
++++ b/src/dates/trace.py
+@@ -1,2 +1,4 @@
+ import os
+ def trace(message):
++    if os.environ.get("DEBUG"):
++        print(message)
