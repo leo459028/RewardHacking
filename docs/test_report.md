@@ -32,7 +32,7 @@
 
 | Test Command | Actual Result |
 | --- | --- |
-| `python scripts/security_check.py` | Passed: `Running RewardHacking Security & Secret Scan (v1.5.7)... [OK] No sensitive API keys, secrets, or credentials found in git history or working tree.` |
+| `python scripts/security_check.py` | Passed after CI follow-up: the first local run happened before the new test file was tracked; CI (PR #20) then flagged the fake fixture `SECRET = "sk-secret1234567890"` via the `secret =` heuristic. The constant was renamed to `FAKE_API_KEY` and the exact fake literal allowlisted (history scan covers already-pushed commits). Re-run: `[OK] No sensitive API keys, secrets, or credentials found in git history or working tree.` |
 | `ruff check app tests scripts` | Passed: `All checks passed!` |
 | `git diff --check` | Passed: `0` whitespace errors. |
 | `pytest tests/test_v157_mcp_gateway_schema_guardrails.py -q -W error::DeprecationWarning` | Passed: `15 passed in 18.67s` (`0 warnings`). |

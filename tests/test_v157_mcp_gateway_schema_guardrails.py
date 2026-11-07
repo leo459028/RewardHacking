@@ -27,7 +27,7 @@ from app.services.run_state import InMemoryRunStateStore
 from app.workers.consumer import process_run_by_id
 from tests.test_v15_finops_core import finops_client, reset_v15_settings
 
-SECRET = "sk-secret1234567890"
+FAKE_API_KEY = "sk-secret1234567890"
 
 
 def _payload(task_type: str, tools: list[str], *, tenant: str = "v157-tenant", args: dict | None = None, **constraints) -> dict:
@@ -263,7 +263,7 @@ def test_v157_sensitive_argument_redaction_across_audit_trail(client, session_fa
         "query_data": {
             "query": "SELECT * FROM metrics WHERE owner = 'ops@example.com'",
             "limit": 10,
-            "api_key": SECRET,
+            "api_key": FAKE_API_KEY,
         }
     }
     res = client.post("/v1/agent/submit", json=_payload("data_query", ["query_data"], args=args))
@@ -286,13 +286,13 @@ def test_v157_sensitive_argument_redaction_across_audit_trail(client, session_fa
     assert tool_execs[0]["sandbox_policy"]["sanitized_arguments"]["api_key"] == "[REDACTED]"
     assert tool_execs[0]["sandbox_policy"]["schema_validation"] == "passed"
     for blob in (run, plan, tool_execs, bundle):
-        assert SECRET not in json.dumps(blob)
+        assert FAKE_API_KEY not in json.dumps(blob)
         assert "ops@example.com" not in json.dumps(blob)
 
     stored = _query(session_factory, select(AgentRun.request_payload).where(AgentRun.run_id == run_id))
     plans = _query(session_factory, select(ExecutionPlan.selected_tools).where(ExecutionPlan.run_id == run_id))
     execs = _query(session_factory, select(ToolExecution.sandbox_policy).where(ToolExecution.run_id == run_id))
-    assert SECRET not in json.dumps(stored) + json.dumps(plans) + json.dumps(execs)
+    assert FAKE_API_KEY not in json.dumps(stored) + json.dumps(plans) + json.dumps(execs)
 
     cleaned, redacted = sanitize_tool_arguments(
         {"headers": {"Authorization": "Bearer abc.def"}, "note": "token Bearer xyz123", "password": "p"},

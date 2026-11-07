@@ -38,6 +38,8 @@ ALLOWLIST_PATTERNS = [
     r"app:app@localhost",
     r"dummy",
     r"mock",
+    # v1.5.7 MCP redaction test fixture (fake, non-functional value asserted to be redacted)
+    r"sk-secret1234567890",
 ]
 
 
