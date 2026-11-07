@@ -980,3 +980,108 @@ def test_evaluator_version_unchanged_by_judge():
     from app.services.evaluation import registry
 
     assert registry.ENGINE_VERSION == "v1.5.9"
+
+
+# ---------------------------------------------------------------------------
+# P6: API routers, RBAC and concealment
+# ---------------------------------------------------------------------------
+
+
+def _enable_auth(monkeypatch, tenant: str) -> dict[str, dict[str, str]]:
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv(
+        "API_KEYS",
+        f"op-key-v1510:{tenant}:operator,rev-key-v1510:{tenant}:reviewer,ta-key-v1510:{tenant}:tenant_admin,adm-key-v1510:{tenant}:admin",
+    )
+    monkeypatch.setenv("QUOTA_ENABLED", "false")
+    get_settings.cache_clear()
+    return {
+        "operator": {"X-API-Key": "op-key-v1510"},
+        "reviewer": {"X-API-Key": "rev-key-v1510"},
+        "tenant_admin": {"X-API-Key": "ta-key-v1510"},
+        "admin": {"X-API-Key": "adm-key-v1510"},
+    }
+
+
+def _auth_completed_run(client, session_factory, headers, tenant: str) -> str:
+    payload = {
+        "tenant_id": tenant,
+        "user_id": "agent-1",
+        "task_type": "code_fix",
+        "prompt": "Fix the failing date parser test.",
+        "goal": "Fix the failing date parser",
+        "allowed_tools": ["read_repo", "run_tests"],
+        "constraints": {"max_tool_calls": 2},
+    }
+    body = client.post("/v1/agent/submit", json=payload, headers=headers).json()
+    assert body["status"] == "queued", body
+    _work(client, session_factory, body["run_id"])
+    return body["run_id"]
+
+
+def test_sample_reason_and_triage_hidden_from_operator_role(client, session_factory, monkeypatch):
+    tenant = "v1510-hidden"
+    keys = _enable_auth(monkeypatch, tenant)
+    _sampling_env(monkeypatch)
+    run_id = _auth_completed_run(client, session_factory, keys["operator"], tenant)
+    body = {"final_message": "Slug helper.", "diff": SHADOW_ONLY_DIFF, "test_report": REPORT_PASS, "submitted_by": "agent-bot"}
+    submitted = client.post(f"/v1/runs/{run_id}/outcome", json=body, headers=keys["operator"])
+    assert submitted.status_code == 200, submitted.text
+    operator_view = submitted.json()["review"]
+    assert operator_view["sample_reason"] == "rule_review"
+    assert operator_view["triage_priority"] == "" and operator_view["triage_score"] is None and operator_view["judge_assessment_id"] == ""
+    review_id = operator_view["review_id"]
+    as_operator = client.get(f"/v1/reviews/{review_id}", headers=keys["operator"]).json()
+    assert as_operator["sample_reason"] == "rule_review" and as_operator["triage_source"] == ""
+    as_reviewer = client.get(f"/v1/reviews/{review_id}", headers=keys["reviewer"]).json()
+    assert as_reviewer["sample_reason"] == "threshold_sample"
+    assert as_reviewer["triage_priority"] in {"P1", "P2", "P3"} and as_reviewer["judge_assessment_id"].startswith("jdg_")
+    assert as_reviewer["effective_priority"] in {"P1", "P2", "P3"}
+    listed = client.get("/v1/reviews?order=triage", headers=keys["operator"]).json()
+    assert all(item["triage_priority"] == "" for item in listed)
+
+
+def test_v1510_api_rbac(client, session_factory, monkeypatch):
+    tenant = "v1510-rbac"
+    keys = _enable_auth(monkeypatch, tenant)
+    run_id = _auth_completed_run(client, session_factory, keys["operator"], tenant)
+    body = {"final_message": "All tests pass.", "diff": GRADER_DIFF, "test_report": REPORT_PASS, "submitted_by": "agent-bot"}
+    review_id = client.post(f"/v1/runs/{run_id}/outcome", json=body, headers=keys["operator"]).json()["review"]["review_id"]
+    reviewer_only = (
+        f"/v1/reviews/{review_id}/judge-assessments",
+        "/v1/evaluations/judge/status",
+        "/v1/evaluations/sampling/summary",
+        "/v1/evaluations/sampling/decisions",
+    )
+    for path in reviewer_only:
+        assert client.get(path, headers=keys["operator"]).status_code == 403, path
+        assert client.get(path, headers=keys["reviewer"]).status_code == 200, path
+    assert client.post(f"/v1/reviews/{review_id}/judge-assessments", headers=keys["reviewer"]).status_code == 403
+    again = client.post(f"/v1/reviews/{review_id}/judge-assessments", headers=keys["tenant_admin"])
+    assert again.status_code == 200 and again.json()["deduplicated"] is True
+    bench_llm = client.post("/v1/benchmark/runs", json={"judge_provider": "openai_compatible"}, headers=keys["tenant_admin"])
+    assert bench_llm.status_code == 403
+    bench_det = client.post("/v1/benchmark/runs", json={"judge_provider": "deterministic"}, headers=keys["tenant_admin"])
+    assert bench_det.status_code == 201 and bench_det.json()["judge_config"]["provider"] == "deterministic"
+    assert client.post("/v1/benchmark/runs", json={"judge_provider": "magic"}, headers=keys["admin"]).status_code == 422
+
+
+def test_v1510_responses_mark_signal_usage_monitor_only(client, session_factory):
+    run_id = _completed_run(client, session_factory, "v1510-signal")
+    review_id = _submit(client, run_id)["review"]["review_id"]
+    assessments = client.get(f"/v1/reviews/{review_id}/judge-assessments").json()
+    assert assessments["signal_usage"] == "monitor_only" and assessments["assessments"][0]["used_for_verdict"] is False
+    assert "never changes verdicts" in assessments["safety_statement"]
+    status = client.get("/v1/evaluations/judge/status").json()
+    assert status["signal_usage"] == "monitor_only" and status["used_for_verdict"] is False and status["used_for_hard_deny"] is False
+    assert status["provider"] == "deterministic" and status["mode"] == "shadow" and status["default_order"] == "rule"
+    assert "api_key" not in str(status).lower()
+    summary = client.get("/v1/evaluations/sampling/summary?tenant_id=v1510-signal").json()
+    assert summary["signal_usage"] == "monitor_only" and summary["totals"]["candidates"] == 0
+    decisions = client.get("/v1/evaluations/sampling/decisions?slice=threshold").json()
+    assert decisions["signal_usage"] == "monitor_only"
+    review = client.get(f"/v1/reviews/{review_id}").json()
+    assert review["signal_usage"] == "monitor_only" and review["effective_priority"] == "P0"
+    ordered = client.get("/v1/reviews?order=triage").json()
+    assert ordered[0]["priority"] == "P0"
+    assert client.get("/v1/reviews?order=sideways").status_code == 422

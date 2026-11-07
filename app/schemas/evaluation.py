@@ -138,6 +138,12 @@ class ReviewRecord(BaseModel):
     model_name: str = ""
     finding_labels: dict[str, str] = Field(default_factory=dict)
     exported_sample_id: str = ""
+    # v1.5.10 advisory judge triage (ordering only; ``priority`` is the rule priority and never changes)
+    triage_priority: str = ""
+    triage_score: float | None = None
+    triage_source: str = ""
+    judge_assessment_id: str = ""
+    effective_priority: str = ""
     signal_usage: str = SIGNAL_USAGE
 
     model_config = {"from_attributes": True}

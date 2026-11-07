@@ -7,6 +7,8 @@ All evaluation and review responses carry ``signal_usage: "monitor_only"``.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -37,8 +39,17 @@ from app.services.auth import AuthContext, auth_error, get_auth_context, require
 from app.services.cheat_rates import compute_cheat_rates
 from app.services.honeypot import can_see_honeypots
 from app.services.evaluation.evidence import EvidenceError
+from app.services.judge_triage import (
+    assessment_to_dict,
+    default_order,
+    effective_priority,
+    judge_status,
+    list_assessments,
+    triage_review,
+)
 from app.services.outcomes import list_outcomes, preview_evaluation, refresh_review_queue_gauge, submit_outcome
 from app.services.review_queue import (
+    CONCEALED_SAMPLE_REASONS,
     ReviewError,
     decide_review,
     get_evaluation_policy,
@@ -47,6 +58,7 @@ from app.services.review_queue import (
     policy_to_dict,
     upsert_evaluation_policy,
 )
+from app.services.review_sampling import decision_to_dict, list_decisions, sampling_summary
 
 router = APIRouter(prefix="/v1", tags=["evaluation"])
 
@@ -70,11 +82,26 @@ def _evidence_http_error(exc: EvidenceError) -> HTTPException:
 
 
 def _review_view(review, auth_context: AuthContext) -> ReviewRecord:
-    """v1.5.9 (D15): roles that submit agent work never learn that a review came from a honeypot."""
+    """Roles that submit agent work never learn that a review came from a honeypot (v1.5.9, D15) or from
+    sampling (v1.5.10, D20), and never see judge triage, which would teach an agent how to evade the judge."""
     record = ReviewRecord.model_validate(review)
-    if record.sample_reason == "honeypot" and not can_see_honeypots(auth_context.role, auth_context.enabled):
-        record = record.model_copy(update={"sample_reason": "rule_review"})
+    record = record.model_copy(update={"effective_priority": effective_priority(review)})
+    if not can_see_honeypots(auth_context.role, auth_context.enabled):
+        update: dict = {
+            "triage_priority": "",
+            "triage_score": None,
+            "triage_source": "",
+            "judge_assessment_id": "",
+            "effective_priority": record.priority,
+        }
+        if record.sample_reason in CONCEALED_SAMPLE_REASONS:
+            update["sample_reason"] = "rule_review"
+        record = record.model_copy(update=update)
     return record
+
+
+def _require_reviewer_view(auth_context: AuthContext) -> None:
+    require_role(auth_context, "reviewer", "tenant_admin", "admin")
 
 
 @router.get("/evaluations", response_model=list[EvaluationRecord])
@@ -158,12 +185,24 @@ async def get_reviews(
     tenant_id: str | None = None,
     run_id: str | None = None,
     limit: int = Query(default=100, ge=1, le=500),
+    order: str | None = Query(default=None, pattern="^(rule|triage)$", description="rule (v1.5.8 order) | triage (v1.5.10 advisory order)"),
     auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
     require_role(auth_context, "viewer", "operator", "admin")
     tenant_id = _scoped_tenant(tenant_id, auth_context)
-    rows = await list_reviews(session, status=status, priority=priority, category=category, tenant_id=tenant_id, run_id=run_id, limit=limit)
+    if not can_see_honeypots(auth_context.role, auth_context.enabled):
+        order = "rule"  # triage order would leak judge output to roles that submit agent work
+    rows = await list_reviews(
+        session,
+        status=status,
+        priority=priority,
+        category=category,
+        tenant_id=tenant_id,
+        run_id=run_id,
+        limit=limit,
+        order=order or default_order(get_settings()),
+    )
     await refresh_review_queue_gauge(session)
     return [_review_view(row, auth_context) for row in rows]
 
@@ -316,3 +355,91 @@ async def post_attestation_key_revoke(
     except AttestationKeyServiceError as exc:
         raise _key_http_error(exc) from exc
     return key_to_dict(row)
+
+
+# ---------------------------------------------------------------------------
+# v1.5.10 advisory judge triage and quota-capped review sampling (monitor-only)
+# ---------------------------------------------------------------------------
+
+JUDGE_SAFETY_STATEMENT = "Judge output only orders review work; it never changes verdicts, priorities or review status."
+
+
+@router.get("/reviews/{review_id}/judge-assessments")
+async def get_review_judge_assessments(
+    review_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    _require_reviewer_view(auth_context)
+    review = await get_review(session, review_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail="Review not found.")
+    _scoped_tenant(review.tenant_id, auth_context)
+    rows = await list_assessments(session, review_id=review_id)
+    return {
+        "review_id": review_id,
+        "rule_priority": review.priority,
+        "triage_priority": review.triage_priority,
+        "assessments": [assessment_to_dict(row) for row in rows],
+        "safety_statement": JUDGE_SAFETY_STATEMENT,
+        "signal_usage": "monitor_only",
+    }
+
+
+@router.post("/reviews/{review_id}/judge-assessments")
+async def post_review_judge_assessment(
+    review_id: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "tenant_admin", "admin")
+    review = await get_review(session, review_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail="Review not found.")
+    _scoped_tenant(review.tenant_id, auth_context)
+    settings = get_settings()
+    if settings.evaluation_judge_mode == "off":
+        raise HTTPException(status_code=409, detail={"code": "judge_disabled", "message": "EVALUATION_JUDGE_MODE is off."})
+    assessment, deduplicated = await triage_review(session, review, settings)
+    if assessment is None:
+        raise HTTPException(status_code=503, detail={"code": "judge_unavailable", "message": "The judge assessment could not be stored."})
+    body = {"assessment": assessment_to_dict(assessment), "deduplicated": deduplicated, "safety_statement": JUDGE_SAFETY_STATEMENT, "signal_usage": "monitor_only"}
+    return JSONResponse(status_code=200 if deduplicated else 201, content=jsonable_encoder(body))
+
+
+@router.get("/evaluations/judge/status")
+async def get_judge_status(
+    tenant_id: str | None = None,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    _require_reviewer_view(auth_context)
+    tenant_id = _scoped_tenant(tenant_id, auth_context)
+    return {**(await judge_status(session, get_settings(), tenant_id=tenant_id)), "signal_usage": "monitor_only"}
+
+
+@router.get("/evaluations/sampling/summary")
+async def get_sampling_summary(
+    tenant_id: str | None = None,
+    window_days: int = Query(default=7, ge=1, le=90),
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    _require_reviewer_view(auth_context)
+    tenant_id = _scoped_tenant(tenant_id, auth_context)
+    return await sampling_summary(session, get_settings(), tenant_id=tenant_id, window_days=window_days)
+
+
+@router.get("/evaluations/sampling/decisions")
+async def get_sampling_decisions(
+    tenant_id: str | None = None,
+    decision: str | None = Query(default=None, pattern="^(sampled|skipped|not_selected)$"),
+    slice_name: str | None = Query(default=None, alias="slice", pattern="^(threshold|random|none)$"),
+    limit: int = Query(default=100, ge=1, le=1000),
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    _require_reviewer_view(auth_context)
+    tenant_id = _scoped_tenant(tenant_id, auth_context)
+    rows = await list_decisions(session, tenant_id=tenant_id, decision=decision, slice_name=slice_name, limit=limit)
+    return {"decisions": [decision_to_dict(row) for row in rows], "signal_usage": "monitor_only"}
