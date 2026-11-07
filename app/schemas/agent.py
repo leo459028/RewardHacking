@@ -34,6 +34,8 @@ class AgentResponse(BaseModel):
         "awaiting_approval",
         "completed",
         "failed",
+        "review_required",
+        "rejected",
     ]
     decision_reason: str
     risk_score: float

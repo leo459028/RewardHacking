@@ -682,7 +682,8 @@ async def sync_execution_plan_on_worker_completion(
     if failure_reason:
         plan.status = "failed" if run_status == "failed" else "planned"
     else:
-        plan.status = "completed" if run_status == "completed" else plan.status
+        # v1.5.8: execution has finished for runs awaiting post-execution review or rejected by review.
+        plan.status = "completed" if run_status in {"completed", "review_required", "rejected"} else plan.status
 
     exec_plan_dict = dict(summary.get("execution_plan") or {})
     if exec_plan_dict:

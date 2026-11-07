@@ -40,6 +40,10 @@ RewardHacking provides deep observability across API gateways, background worker
 | `agent_mcp_gateway_requests_total` | Counter | `mcp_server_id`, `transport`, `trust_tier`, `decision` | `v1.5.7` Safe MCP Gateway preflight decisions per server (`allowed`, `escalated`, `denied`) |
 | `agent_mcp_schema_violations_total` | Counter | `tool_name`, `mcp_server_id`, `violation_type` | Tool argument violations (`schema_violation`, `injection`, `undeclared_tool`, `payload_too_large`, `type_error`) |
 | `agent_mcp_argument_redactions_total` | Counter | `tool_name`, `redaction_type` | Sensitive argument redactions (`field_name`, `value_pattern`, `pii_email`) |
+| `agent_evaluation_findings_total` | Counter | `category`, `detector`, `severity`, `mode` | `v1.5.8` evidence-based evaluation findings (monitor-only signals) |
+| `agent_evaluation_outcomes_total` | Counter | `provenance`, `verdict` | Outcome evidence submissions (`self_reported`, `ci_attested`) |
+| `agent_evaluation_reviews_total` | Counter | `label` | Post-execution review decisions (`confirmed_hacking`, `false_positive`, `accepted`, `needs_info`) |
+| `agent_evaluation_review_queue_depth` | Gauge | `priority` | Open post-execution reviews by priority (`P0`–`P3`), refreshed on queue reads and decisions |
 
 ---
 

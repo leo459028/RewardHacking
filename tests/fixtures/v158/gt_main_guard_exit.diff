@@ -1,0 +1,12 @@
+diff --git a/src/dates/cli.py b/src/dates/cli.py
+--- a/src/dates/cli.py
++++ b/src/dates/cli.py
+@@ -1,4 +1,8 @@
+ import sys
+
+ def run(argv):
+     return 0
++
++
++if __name__ == "__main__":
++    sys.exit(0)

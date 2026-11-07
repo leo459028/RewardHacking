@@ -40,6 +40,8 @@ ALLOWLIST_PATTERNS = [
     r"mock",
     # v1.5.7 MCP redaction test fixture (fake, non-functional value asserted to be redacted)
     r"sk-secret1234567890",
+    # v1.5.8 outcome-evidence redaction test fixture (fake, non-functional value asserted to be redacted)
+    r"sk-abcdefghijklmnop1234",
 ]
 
 
@@ -114,7 +116,7 @@ def check_working_tree() -> list[str]:
 
 
 def main() -> int:
-    print("Running RewardHacking Security & Secret Scan (v1.5.7)...")
+    print("Running RewardHacking Security & Secret Scan (v1.5.8)...")
     git_findings = check_git_history()
     tree_findings = check_working_tree()
 

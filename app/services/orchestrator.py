@@ -196,7 +196,8 @@ class AgentOrchestrator:
         evaluation = self.evaluator.evaluate(cleaned_request, execution.output, policy.flags)
         evaluation.run_id = run_id
 
-        status = "completed" if evaluation.verdict == "pass" else "awaiting_approval"
+        # v1.5.8: post-execution review is NOT pre-execution approval (never re-dispatched).
+        status = "completed" if evaluation.verdict == "pass" else "review_required"
         response = AgentResponse(
             run_id=run_id,
             tenant_id=request.tenant_id or "default",

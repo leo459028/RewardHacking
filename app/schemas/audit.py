@@ -85,6 +85,14 @@ class EvaluationRecord(BaseModel):
     rubric: dict[str, Any] = Field(default_factory=dict)
     judge_signal: dict[str, Any] = Field(default_factory=dict)
     explanation: str
+    tenant_id: str = "default"
+    evaluator_version: str = ""
+    evaluation_source: str = "executor"
+    assurance_level: str = "simulated"
+    review_priority: str = ""
+    outcome_id: str = ""
+    findings: list[dict[str, Any]] = Field(default_factory=list)
+    signal_usage: str = "monitor_only"
     created_at: datetime
 
     model_config = {"from_attributes": True}

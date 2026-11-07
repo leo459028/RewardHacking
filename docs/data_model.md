@@ -66,6 +66,27 @@ Enables resumable runs and reproducible dry-run replay analysis.
 
 ---
 
+## Evidence-Based Evaluation & Review Models (`v1.5.8`, Alembic `202611070001`)
+
+### `EvaluationResultRecord` (`evaluation_results`) — new columns
+`tenant_id` (default `default`), `evaluator_version`, `evaluation_source` (`executor` | `outcome`), `assurance_level` (`simulated` | `none` | `self_reported` | `ci_attested_unverified`), `findings` (JSON list), `review_priority` (`P0`–`P3` or empty), `outcome_id`. Server defaults keep pre-`v1.5.8` rows valid.
+
+### `RunOutcome` (`run_outcomes`, `outcome_` IDs)
+Append-only agent outcome evidence: `run_id`, `tenant_id`, `submission_seq`, `provenance`, `submitted_by`, `submitted_by_key_id`, redacted `evidence` (JSON), `evidence_digest` (SHA-256), `verdict`, `review_priority`, `assurance_level`, `evaluator_version`, `findings`.
+
+### `EvaluationReview` (`evaluation_reviews`, `review_` IDs)
+Post-execution review queue (at most one open review per run): `status` (`open` | `needs_info` | `closed`), `priority`, `categories`, `finding_ids`, `findings`, `sample_reason` (`rule_review`; `judge_sample` / `random_sample` reserved for `v1.5.10`), `evaluator_version`, `submitted_by` / `submitted_by_key_id`, `label` (`confirmed_hacking` | `false_positive` | `accepted` | `needs_info`), `label_categories`, `reviewer`, `reviewer_key_id`, `reason`, `opened_at`, `decided_at`.
+
+### `TenantEvaluationPolicy` (`tenant_evaluation_policies`)
+`tenant_id` (unique), `protected_paths` (JSON globs), `allow_default_protected_paths`, `updated_by`.
+
+### Run statuses
+`AgentRun.status` adds `review_required` (executed, awaiting post-execution review) and `rejected` (review confirmed reward hacking). Both are execution-finished states: token leases settle and execution plans complete.
+
+**Finding IDs** use the `fnd_` prefix and are deterministic (hash of detector, rule, file, line, snippet).
+
+---
+
 ## Multi-Tenant Governance Models
 
 ### 5. `Tenant` (`tenants`) & `TenantApiKey` (`tenant_api_keys`)

@@ -106,9 +106,10 @@ flowchart LR
 - Tracks tool failure frequencies in Redis; trips circuit breakers if consecutive failures exceed thresholds.
 - Simulates tool execution safely during dry-run and test modes without invoking external side-effects.
 
-### 7. Task Evaluator (`app/services/evaluator.py`)
-- Evaluates agent outputs against rubrics (shortcut detection, unverified completion claims, policy adherence).
-- Emits structured evaluation verdicts recorded in PostgreSQL.
+### 7. Evidence-Based Evaluation Engine (`app/services/evaluation/`, `v1.5.8`)
+- `evidence.py` bounds, parses (unified diff, JUnit XML) and redacts agent outcome evidence; `claims.py` extracts verification claims from the final message.
+- Versioned detectors (`test_tampering`, `grader_tampering`, `error_suppression`, `claim_evidence`, `scope`, `evidence_quality`, `legacy_text`) emit findings with evidence pointers; `aggregator.py` derives `verdict`, `review_priority` and `assurance_level`; `app/services/evaluator.py` remains the backward-compatible facade.
+- `app/services/outcomes.py` ingests `POST /v1/runs/{run_id}/outcome`; `app/services/review_queue.py` owns the post-execution review queue (`review_required` / `rejected`), which is separate from pre-execution approvals and never re-dispatches runs. See [`docs/evaluation.md`](evaluation.md).
 
 ### 8. Agent FinOps Core & Cost Accounting (`app/services/finops.py`)
 - Maintains an official model pricing catalog with tiered token pricing, tool fees, and worker runtime rates.

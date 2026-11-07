@@ -37,6 +37,13 @@ docker compose logs --tail=100 -f worker
 - **Injection incidents**: `Incident(code="mcp_argument_injection", severity="high")` blocks the release gate (`blocking_incidents`) until triaged; inspect the redacted `request_payload.tool_arguments` and `metadata.mcp_gateway`.
 - **False positives**: adjust the field `x-scan-profile` (e.g. `sql_destructive` or `none` for free-text) instead of disabling scanning globally.
 
+### Post-Execution Review Queue (`v1.5.8`)
+- **`review_required` vs `awaiting_approval`**: `awaiting_approval` is a pre-execution gate (use `/dashboard/approvals`). `review_required` means the run already executed and evaluation flagged it (use `/dashboard/reviews`). Never try to approve a `review_required` run; `approve_once` returns `409 run_not_awaiting_approval`.
+- **P0 reviews** (test / grader / CI tampering, contradicted test claims): triage within `EVALUATION_REVIEW_P0_SLA_HOURS` (default 4h). `evaluation_review_queue_health` warns when P0 reviews exceed the SLA.
+- **Decisions**: `confirmed_hacking` rejects the run and opens a high incident `reward_hacking_confirmed` (blocks the release gate until triaged); `false_positive` / `accepted` complete the run; `needs_info` lets the agent submit more evidence (max `EVALUATION_OUTCOME_MAX_SUBMISSIONS`).
+- **Noisy detector**: switch it to shadow mode with `EVALUATION_DETECTOR_MODES='{"<detector>": "shadow"}'` (findings are still recorded) and restart the API/worker; unknown names fail the readiness check.
+- **Legitimate test changes**: submit the run with `metadata.allow_test_changes=true` or label the review `accepted`.
+
 ### 1. API Gateway Startup Failure
 - **Symptoms**: Container crashes on startup; `/v1/healthz` returns connection refused; traceback in logs.
 - **Root Causes**:

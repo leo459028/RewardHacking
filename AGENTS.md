@@ -18,14 +18,15 @@ To minimize exploratory file reads and maximize iteration speed and model quota 
 | :--- | :--- | :--- |
 | **App Entry & Config** | `pyproject.toml`<br>`app/main.py`<br>`app/core/config.py` | Package version, FastAPI initialization & middleware (`X-Trace-Id`, Prometheus HTTP metrics), and environment settings (`get_settings()`). |
 | **REST API Layer** | `app/api/routes.py`<br>`app/api/deps.py` | All `/v1/*` JSON endpoints (submit, runs, trace, replay-bundle, checkpoints, approvals, worker DLQ, governance, control-plane & breakers, FinOps `/v1/pricing`, `/v1/budgets`, `/v1/budget-violations`, `/v1/cost/*`, `/v1/cost/tenants/{id}/forecast`, `/v1/cost/tenants/{id}/leases`, `/v1/cost/leases/{run_id}/release`, `/v1/cost/adjustments`, `/v1/cost/tenants/{id}/export`, `/v1/admin/finops/*`, operations). |
-| **Dashboard UI Layer** | `app/ui/routes.py`<br>`app/ui/templates/*.html`<br>`app/ui/static/styles.css` | Server-rendered Jinja2 operational portal (`/dashboard/*`, 14 primary views with interactive Governance, Control-Plane, and Costs forms). Uses custom Jinja2 filters `json_pretty` and `decimal_plain`. |
+| **Dashboard UI Layer** | `app/ui/routes.py`<br>`app/ui/routers/*.py`<br>`app/ui/templates/*.html`<br>`app/ui/static/styles.css` | Server-rendered Jinja2 operational portal (`/dashboard/*`, 15 primary views incl. `/dashboard/reviews` with interactive Governance, Control-Plane, and Costs forms). Uses custom Jinja2 filters `json_pretty` and `decimal_plain`. |
 | **Guardrail, Policy & Quotas** | `app/services/prompt_sanitizer.py`<br>`app/services/classical_chinese_guard.py`<br>`app/services/risk_scoring.py`<br>`app/services/policy_engine.py`<br>`app/services/quota.py`<br>`app/services/run_state.py`<br>`app/services/orchestrator.py` | Pre-execution prompt sanitization, Classical Chinese adversarial detection, composite risk scoring (`0.0`–`1.0`), deterministic `allow`/`escalate`/`deny` policy decisions, tenant/user/tool Redis minute-bucket fixed-window quotas (`check_request_quota`, `check_user_request_quota`, `check_tool_quotas`), tool circuit breakers (`breaker:{tool}`, `breaker_failures:{tool}:*`), and bounded tool simulation. |
 | **Safe MCP Gateway (v1.5.7)** | `app/services/mcp_gateway.py`<br>`app/schemas/control_plane.py` | `BUILTIN_MCP_SERVERS`, MCP registry stored as `tool_definitions` rows `__mcp_server__:{id}` (id ≤ 113 chars), `is_external_endpoint()` (parsed hostname), `validate_tool_arguments()` (JSON Schema subset + `x-scan-profile`), `sanitize_tool_arguments()`, shared `preflight()` for all 3 submit paths, `worker_context()` (hard-deny re-check, no re-escalation once approved), `persist_preflight_audit()`, per-MCP quota `tenant:{id}:quota:mcp:{server}:calls:{min}`, MCP breakers `circuit:mcp:{id}`. Endpoints: `/v1/control-plane/mcp-servers`, `.../breaker/open|close`, `/v1/control-plane/tools/{name}/validate-arguments`. |
+| **Evidence-Based Evaluation & Review (v1.5.8)** | `app/services/evaluation/`<br>`app/services/outcomes.py`<br>`app/services/review_queue.py`<br>`app/api/routers/evaluations.py`<br>`app/ui/routers/reviews.py` | `EvaluationEngine.evaluate_context()`, `context_from_outcome()` (bounds, JUnit parse, redaction), `extract_claims()`, detectors `test_tampering` / `grader_tampering` / `error_suppression` / `claim_evidence` / `scope` / `evidence_quality` / `legacy_text` (rule IDs `TT-`, `GT-`, `ES-`, `CE-`, `SC-`), `aggregate()` (verdict, `P0`–`P3`, assurance), `evaluator_version`; `submit_outcome()` / `preview_evaluation()`; `open_or_merge_review()`, `decide_review()` (never re-dispatches), tenant protected paths. Endpoints: `/v1/runs/{id}/outcome(s)`, `/v1/evaluations(/preview)`, `/v1/reviews`, `/v1/tenants/{id}/evaluation-policy`; Dashboard `/dashboard/reviews`. Fixtures: `tests/fixtures/v158/`. Rules: `docs/evaluation.md`. |
 | **Control Plane & Step Audit** | `app/services/control_plane.py`<br>`app/models/control_plane.py`<br>`app/schemas/control_plane.py` | `ControlPlanePlanner.plan()`, workflow/tool registries, `ExecutionPlan` & `ExecutionPlanStep` persistence, and lifecycle synchronization (`sync_execution_plan_on_approval`, `sync_execution_plan_on_worker_completion`). |
 | **Checkpoints & Replay** | `app/services/checkpoint.py`<br>`app/models/checkpoint.py`<br>`app/schemas/checkpoint.py` | `RunCheckpoint` (`ckpt_...`) and `ReplayAttempt` (`replay_...`) persistence, checkpoint resume re-dispatch, and dry-run replay. |
 | **Agent FinOps Engine** | `app/services/finops.py`<br>`app/services/pricing_import.py`<br>`app/models/finops.py`<br>`app/schemas/finops.py`<br>`app/seeds/model_pricing_seed.yaml` | 149-entry official model pricing catalog, context-tier resolution, settled ledger deduplication (`_settled_cost_events`), multi-currency FX & tax accounting (`resolve_fx_rate`, `_compute_tax`), `cost_center`/`org_id` attribution, manual adjustments (`create_cost_adjustment`), CSV/JSON ledger export (`export_tenant_cost_ledger`), burn-rate & exhaustion forecasting (`compute_tenant_burn_rate_forecast`), Dynamic Token Broker pre-execution leasing (`acquire_run_budget_lease`, `settle_run_budget_lease`, `release_run_budget_lease`), multi-scope (`run`/`tenant`/`workflow`/`user`/`project`/`model`) & multi-period budget enforcement (`fail_closed`, `require_approval`, `degrade_model`, `dry_run_only`, `warn`), `failed_retry` cost accounting, and violation triage. |
 | **Audit, DLQ & Operations** | `app/services/audit_log.py`<br>`app/services/operations.py`<br>`app/workers/consumer.py` | `AgentRun`, `ApprovalEvent` (including `expire_stale_approvals`), `WorkerAttempt` (including `requeue_dlq_run`, `resolve_dlq_run`), `GovernanceEvent`, `Incident`, `process_run_by_id()`, and release readiness gate checks. |
-| **Database & Migrations** | `migrations/versions/`<br>`app/models/` | Current Alembic Head: `202606010004` (`202606010004_expand_v151_finops_core.py`). Check if existing columns/JSONB fields suffice before creating new migrations. |
+| **Database & Migrations** | `migrations/versions/`<br>`app/models/` | Current Alembic Head: `202611070001` (`202611070001_add_v158_outcome_review_queue.py`). Check if existing columns/JSONB fields suffice before creating new migrations. |
 
 ---
 
@@ -42,6 +43,8 @@ If a change is purely documentation, tests, code formatting, or internal refacto
   4. Verification test suite and exact executable shell commands.
   5. List of documentation files to be updated after implementation.
   6. Required test data and metrics to be recorded into `docs/test_report.md`.
+  7. **Implementation Progress Log** (appended at the end of the plan and kept current during implementation): implementation phases, the files each phase changed, its Stage 1 test result, and the next step. This lets work resume safely after a session ends or a quota reset (see Section 3, Phased Implementation & Resumption).
+- **Version Numbering**: Patch numbers may exceed 9 (e.g., `v1.5.10` follows `v1.5.9`); a minor bump (`v1.6.0`) marks a new release series as defined in `docs/roadmap.md`, not a rollover. Plan files and test files follow the same digits (`docs/plan/v1_5_10plan.md`, `tests/test_v1510_<feature>.py`).
 
 Do not write vague conceptual sketches; ensure the plan provides actionable step-by-step instructions that subsequent engineers can execute directly.
 
@@ -53,6 +56,7 @@ Do not write vague conceptual sketches; ensure the plan provides actionable step
 - **Maintain Architectural Continuity**: Follow established service boundaries and dataflows unless an architectural change is explicitly requested.
 - **Read Before Modifying**: Inspect target line ranges before editing, and **batch multiple `read_file` or `edit_file` tool calls in parallel within a single turn** to save model quota and wall-clock time.
 - **Preserve Unrelated Changes**: Never revert or discard existing user modifications in the working tree.
+- **Router Split Rule (since `v1.5.8`)**: `app/api/routes.py` and `app/ui/routes.py` are frozen for growth. Add new endpoints to per-domain routers (`app/api/routers/<domain>.py`, `app/ui/routers/<domain>.py`) registered in `app/main.py`. When a release touches an existing domain, move that domain's endpoints into its router without changing paths or response shapes.
 
 ### 2.2 Domain Conventions & Anti-Footguns (Prevent Avoidable Retries)
 - **Zero-Warning Pydantic V2 Serialization**: Never use deprecated `json_encoders` in `ConfigDict`. Always use `Annotated[Decimal, PlainSerializer(format_decimal_plain, return_type=str, when_used="json")]`. All pytest runs must pass with `-W error::DeprecationWarning`.
@@ -60,9 +64,21 @@ Do not write vague conceptual sketches; ensure the plan provides actionable step
 - **Key Enum & Route Contracts**:
   - `UsageEventCreateRequest.status`: Valid values are `'success' | 'failed' | 'timeout' | 'cancelled' | 'skipped'` (**never** pass `'completed'`).
   - **Budget Policy API**: `POST /v1/budgets` (primary name field is `policy_name`, with `name` accepted as an alias); UI admin route is `/dashboard/admin/finops/budgets`.
-  - **Approval Decision API**: `POST /v1/approvals/{run_id}/decision` (`decision` in `approve_once`, `deny`, `request_changes`).
+  - **Approval Decision API**: `POST /v1/approvals/{run_id}/decision` (`decision` in `approve_once`, `deny`, `request_changes`); only for `awaiting_approval` runs, otherwise `409 run_not_awaiting_approval`.
+  - **Review Decision API**: `POST /v1/reviews/{review_id}/decision` (`label` in `confirmed_hacking`, `false_positive`, `accepted`, `needs_info`). Error bodies use `{"error": {"code": ...}}`.
+  - **Triggering `review_required` in Tests**: a goal containing `bypass` makes the simulated executor output trip the legacy heuristic (P3); outcome evidence with `tests/fixtures/v158/grader_tampering_eq_true.diff` yields a P0 review.
   - **Triggering `awaiting_approval` in Tests**: In `PolicyEngine`, `constraints.requires_human_approval=True` indicates approval is already satisfied for non-destructive tasks unless a tool in `allowed_tools` has `requires_approval=True` (e.g., `deploy_service`) or `allow_destructive_actions=True` is set.
-  - **Entity ID Prefixes**: `plan_` (`ExecutionPlan`), `ckpt_` (`RunCheckpoint`), `replay_` (`ReplayAttempt`), `usage_` (`UsageEvent`), `cost_` / `cost_adj_` (`CostEvent` / adjustment `CostEvent`), `budget_` (`BudgetPolicy`), `bv_` (`BudgetViolation`), `pib_` (`PricingImportBatch`).
+  - **Entity ID Prefixes**: `plan_` (`ExecutionPlan`), `ckpt_` (`RunCheckpoint`), `replay_` (`ReplayAttempt`), `usage_` (`UsageEvent`), `cost_` / `cost_adj_` (`CostEvent` / adjustment `CostEvent`), `budget_` (`BudgetPolicy`), `bv_` (`BudgetViolation`), `pib_` (`PricingImportBatch`), `outcome_` (`RunOutcome`), `review_` (`EvaluationReview`), `fnd_` (evaluation finding, deterministic).
+
+### 2.3 Evaluation & Review Invariants (Apply From `v1.5.8` Onward)
+These rules protect the project's core purpose (reward-hacking detection). A change that would break one of them needs explicit user approval and a plan section explaining why.
+- **Monotonic Safety**: Automated components (rules, detectors, LLM judges, sampling) may only make a verdict stricter or reorder review work. Only a human review decision may accept a run under review. An LLM judge never turns `review` into `pass` and never participates in hard-deny decisions.
+- **Approval ≠ Review**: Pre-execution approval (`awaiting_approval`, `POST /v1/approvals/{run_id}/decision`) decides whether a run may execute. Post-execution review (`review_required`, `POST /v1/reviews/{review_id}/decision`) judges what already happened and must never re-dispatch a run, publish to Kafka, or acquire/release token leases.
+- **Evidence over Claims**: Agent-reported evidence is `self_reported`. Never raise an evidence provenance level (`simulated` → `self_reported` → `ci_attested` → `platform_verified`) without actually verifying it.
+- **Tampering Outranks Gaming**: Findings of kind `reward_tampering` (tests, graders, CI) map to the highest priority and are never averaged down by other signals.
+- **Deterministic, Versioned Detectors**: Detectors must be deterministic and carry a version; any detector change must change `evaluator_version`. New or higher-false-positive-risk detectors ship in `shadow` mode first and are promoted to `enforce` only with benchmark evidence (from `v1.5.9`).
+- **Every Detector Rule Has Negative Fixtures**: Each rule needs at least two positive and two negative fixtures (legitimate code that must not trigger), and the rule plus known false positives are documented in `docs/evaluation.md`.
+- **Monitor-Only Signals**: Evaluation and review API responses carry `signal_usage: "monitor_only"`; never document or design detection signals as training rewards.
 
 ---
 
@@ -76,6 +92,11 @@ While implementing and debugging new features, run only the targeted test file(s
 ruff check app tests scripts
 pytest tests/test_v15x_<new_feature>.py -q -W error::DeprecationWarning
 ```
+
+### Phased Implementation & Resumption (Large Releases)
+- Split a release into phases (for example: migration & models → services → state/flow changes → API → Dashboard → docs & version anchors). Each phase must end in a consistent state with its Stage 1 tests passing; never stop a phase with a cross-module change half applied when it can be avoided.
+- After each phase, update the plan's **Implementation Progress Log** (Section 1, item 7).
+- When resuming (new session, context summary, or after a quota reset): read the progress log, run `git status` and `git diff`, and re-run the Stage 1 tests **before** editing anything. If a phase is incomplete, finish it before starting the next one.
 
 ### Stage 2: Full Release Gate Verification (Run Once After Stage 1 Passes)
 1. **Automated Suite & Secret Scan**:
@@ -118,14 +139,18 @@ pytest tests/test_v15x_<new_feature>.py -q -W error::DeprecationWarning
   - **Public Repository Documentation (`README.md`, `docs/*.md` reference guides)**: Keep in **English** (aligned since `v1.5.2` for international open-source and OpenAI Codex for OSS standards). Dashboard HTML templates retain bilingual headings (`English | 繁體中文`).
 - **Core Files to Synchronize on Release**:
   - Always update: `README.md`, `docs/OVERVIEW.md`, `docs/roadmap.md`, `docs/manual_test.md`, `docs/testing_guide.md`, `docs/test_report.md`.
-  - Update when affected: `docs/api.md`, `docs/dashboard.md`, `docs/runbook.md`, `docs/finops_core.md`, `docs/data_model.md`.
+  - Update when affected: `docs/api.md`, `docs/dashboard.md`, `docs/runbook.md`, `docs/finops_core.md`, `docs/data_model.md`, `docs/evaluation.md` (from `v1.5.8`), `docs/security.md`, `docs/configuration.md`, `docs/observability.md`, `docs/migrations.md`.
 - **Preserve Historical Context**: Do not delete historical release notes or alter core project positioning in `README.md` unless explicitly instructed. Prepend new release sections and move the previous release to the historical list.
 
 ---
 
 ## 5. Git Operations Policy
 
-- **No Unauthorized Git Mutations**: Do not execute `git commit`, `git push`, or `git reset` unless explicitly commanded by the user.
+- **No Unauthorized Git Mutations**: Do not execute `git commit`, `git push`, or `git reset` unless explicitly commanded by the user, except for the phase and release commits described below.
+- **Release Branch & Commit Authorization**: Implement each release on a local branch named after the version (e.g., `v1.5.8`), never directly on `main`. The user has authorized these commits on that branch:
+  - **Phase commits**: one local commit per implementation phase, made only after that phase's Stage 1 checks (`ruff check app tests scripts` and the targeted pytest files with `-W error::DeprecationWarning`) pass and the plan's progress log is updated. Message format: `wip(vX.Y.Z): P<n> <phase summary>`.
+  - **Release commit**: a final commit once the full Stage 2 gate (secret scan, ruff, `git diff --check`, full pytest, Docker migration check, browser E2E) passes with zero failures and the results are recorded in `docs/test_report.md`. Message format: `feat(vX.Y.Z): <release title>`.
+  - Never commit while a required check fails or was skipped, and never stage `docs/plan/*.md`. `git push`, opening pull requests, merging, rebasing/squashing, and `git reset` still require an explicit user command.
 - **Never Upload `docs/plan/*.md`**: Ensure `docs/plan/` and `docs/plan/*.md` remain in `.gitignore` and are never staged (`git add`) or committed to GitHub.
 - **Pre-Commit Disclosure**: State clearly which files will be staged and verify that unrelated changes are not commingled.
 - **Protect Working Tree**: If the working tree contains pre-existing user changes, preserve them untouched.

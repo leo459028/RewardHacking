@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.models.agent_run import AgentRun
 from app.models.approval_event import ApprovalEvent
+from app.models.evaluation_review import EvaluationReview
 from app.models.finops import BudgetViolation, PricingCatalog
 from app.models.incident import Incident
 from app.models.operations import OperationsEvidence, ReleaseGateItem, ReleaseGateRun
@@ -97,6 +98,51 @@ def _fresh_evidence_check(
         title=title,
         detail=evidence.summary,
         metadata={"age_days": age_days, "reference_url": evidence.reference_url},
+    )
+
+
+async def _evaluation_review_queue_check(session: AsyncSession, *, settings: Settings, now: datetime) -> OperationsCheck:
+    """v1.5.8: P0 reviews waiting beyond the SLA warn; unknown detector mode overrides fail."""
+    from app.services.evaluation.registry import unknown_detector_overrides
+
+    sla_cutoff = now - timedelta(hours=settings.evaluation_review_p0_sla_hours)
+    open_rows = (
+        await session.execute(
+            select(EvaluationReview.priority, func.count())
+            .where(EvaluationReview.status.in_(("open", "needs_info")))
+            .group_by(EvaluationReview.priority)
+        )
+    ).all()
+    open_by_priority = {str(priority): int(count) for priority, count in open_rows}
+    overdue_p0 = (
+        await session.scalar(
+            select(func.count())
+            .select_from(EvaluationReview)
+            .where(
+                EvaluationReview.status.in_(("open", "needs_info")),
+                EvaluationReview.priority == "P0",
+                EvaluationReview.opened_at < sla_cutoff,
+            )
+        )
+        or 0
+    )
+    unknown = unknown_detector_overrides(settings.evaluation_detector_modes)
+    status = "fail" if unknown else ("warn" if overdue_p0 else "pass")
+    return OperationsCheck(
+        check_key="evaluation_review_queue_health",
+        status=status,
+        title="Evaluation review queue health",
+        detail=(
+            f"Open reviews by priority: {open_by_priority or 'none'}; P0 reviews older than "
+            f"{settings.evaluation_review_p0_sla_hours}h: {overdue_p0}; unknown detector overrides: {', '.join(unknown) or 'none'}."
+        ),
+        metadata={
+            "open_by_priority": open_by_priority,
+            "overdue_p0": int(overdue_p0),
+            "p0_sla_hours": settings.evaluation_review_p0_sla_hours,
+            "unknown_detector_overrides": unknown,
+            "detector_modes": dict(settings.evaluation_detector_modes or {}),
+        },
     )
 
 
@@ -307,6 +353,7 @@ async def compute_operations_readiness(
                 "open_mcp_breakers": sorted(open_mcp_breakers),
             },
         ),
+        await _evaluation_review_queue_check(session, settings=settings, now=now),
     ]
 
     if settings.app_env.lower() == "prod" and settings.release_gate_fail_on_bootstrap_keys_in_prod:

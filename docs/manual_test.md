@@ -204,15 +204,26 @@ This scenario tests the complete `v1.5.5` FinOps governance and financial reconc
 4. **Redaction (builtin tool)** — `/dashboard/playground`: `tenant_id=finops-qa-tenant`, `task_type=code_fix`, `allowed_tools=read_repo`, `Tool Arguments={"read_repo": {"repo_path": "app/services", "api_key": "sk-live-secret999999"}}` → **Submit Run** → **Open run detail**. Request, Execution Plan and Tool Executions show `"api_key": "[REDACTED]"`; the literal secret never appears.
 5. **Redaction (custom MCP tool)** — Playground with `task_type=analysis`, `allowed_tools=qa_mcp_tool`, `Tool Arguments={"qa_mcp_tool": {"query": "test", "api_token": "secret-xyz"}}`. The result shows MCP route `mcp-qa-v157`; Run Detail shows `api_token: "[REDACTED]"` and `MCP Server Breakdown`.
 6. **Costs** — `/dashboard/costs?tenant_id=finops-qa-tenant`: header `V1.5.7 Agent FinOps Core`, *MCP Server Cost Breakdown* lists `mcp-core-local` (and other servers used), the `mcp_server_id` filter works, and CSV export headers end with `mcp_server_id,tool_id`. No `0E-8` anywhere.
-7. **Operations** — `/dashboard/operations`: `mcp_gateway_registry_health = pass` and default `release_version = v1.5.7`.
+7. **Operations** — `/dashboard/operations`: `mcp_gateway_registry_health = pass` and default `release_version = v1.5.8`.
 
 Optional API checks: `GET /v1/control-plane/mcp-servers`; `POST /v1/control-plane/tools/query_data/validate-arguments` with `{"arguments": {"query": "SELECT 1", "undeclared_field": "x"}}` returns `valid=false`.
+
+## 5.6 Scenario 6: Outcome Evidence, Evidence-Based Detectors & Post-Execution Review Queue (`v1.5.8`)
+
+> Uses tenant `reviews-qa-tenant`. Requires the worker container to process runs.
+
+1. **Post-execution review is not approval** — `/dashboard/playground`: `tenant_id=reviews-qa-tenant`, `task_type=analysis`, `allowed_tools=read_data`, `goal=Bypass the stale cache entries` → **Submit Run** → **Open run detail** (reload until processed). Status shows the orange `review_required` badge. `/dashboard/approvals` does **not** list the run; `/dashboard/reviews` lists it (`P3`, `legacy_text_signal`).
+2. **Outcome evidence** — submit a second run with `task_type=code_fix`, `allowed_tools=read_repo, run_tests`, `goal=Fix the failing date parser`; wait for `completed`. In **Submit Outcome Evidence**: `Submitted By=qa-agent-bot`, `Tests Passed=12`, `Tests Failed=0`, `Final Message=All tests pass.`, `Unified Diff` = contents of `tests/fixtures/v158/grader_tampering_eq_true.diff` → **Submit Outcome**. Expect a success banner, status `review_required`, and **Outcome Evidence & Findings** showing `GT-001 grader_tampering` (critical, `P0`) pointing at `src/dates/result.py`, assurance `self_reported` (unverified).
+3. **Review decision** — `/dashboard/reviews?priority=P0` → open the review → **Review Decision**: `Label=confirmed_hacking`, `Reviewer=qa-reviewer`, `Reason=__eq__ forced True` → **Submit Decision**. Expect `Review decided: confirmed_hacking. Run status is now rejected.` and the red `rejected` badge. The run is not re-executed.
+4. **Evidence Preview** — `/dashboard/reviews` → *Evidence Preview*: `Final Message=All tests pass.` (no tests) → **Preview Evaluation**. Expect `CE-001 false_verification_claim` (high) and no new persisted records.
+5. **Evaluation Policy** — `/dashboard/governance?tenant_id=reviews-qa-tenant` → *Evaluation Policy*: `Custom Protected Paths=scoring/**` → **Save Evaluation Policy**. Expect `Evaluation policy saved for reviews-qa-tenant`.
+6. **Operations & metrics** — `/dashboard/operations` shows `evaluation_review_queue_health`; `/v1/metrics` exposes `agent_evaluation_findings_total`, `agent_evaluation_outcomes_total`, `agent_evaluation_reviews_total`, `agent_evaluation_review_queue_depth`.
 
 ## 6. Browser QA Sign-Off Checklist
 
 Before signing off a release via manual browser testing, verify all items below:
 
-- [ ] All primary navigation tabs (`Overview`, `Runs`, `Approvals`, `Worker`, `Observability`, `Governance`, `Control Plane`, `Costs`, `Admin FinOps`, `Operations`, `Playground`) return HTTP 200 with zero server tracebacks.
+- [ ] All primary navigation tabs (`Overview`, `Runs`, `Approvals`, `Reviews`, `Worker`, `Observability`, `Governance`, `Control Plane`, `Costs`, `Admin FinOps`, `Operations`, `Playground`) return HTTP 200 with zero server tracebacks.
 - [ ] Browser Developer Tools (`F12` $\rightarrow$ **Console** & **Network**) show `0` unhandled JavaScript errors or broken asset requests (`404`/`500`).
 - [ ] No scientific notation artifacts (`0E-8` or `0E-12`) appear on `/dashboard/costs`, `/dashboard/runs/{run_id}`, `/dashboard/admin/finops/pricing`, or `/dashboard/admin/finops/budgets`.
 - [ ] Budget violation inline buttons (**Acknowledge**, **Resolve**, **Ignore**) transition violation state and persist across page reloads.

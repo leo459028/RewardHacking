@@ -7,11 +7,13 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.api.routers.evaluations import router as evaluations_router
 from app.api.routes import router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.infra.postgres import close_engine, init_engine
 from app.observability.metrics import HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_TOTAL
+from app.ui.routers.reviews import router as reviews_ui_router
 from app.ui.routes import router as ui_router
 
 settings = get_settings()
@@ -27,7 +29,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="1.5.7",
+    version="1.5.8",
     description="Guardrail service for preventing reward hacking in agent systems.",
     lifespan=lifespan,
 )
@@ -99,4 +101,6 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 
 app.include_router(router)
+app.include_router(evaluations_router)
 app.include_router(ui_router)
+app.include_router(reviews_ui_router)

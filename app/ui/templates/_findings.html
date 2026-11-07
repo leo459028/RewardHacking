@@ -1,0 +1,23 @@
+{# v1.5.8 findings table partial. Expects `findings` (list of finding dicts). #}
+<table>
+  <thead><tr><th>Severity</th><th>Category</th><th>Rule</th><th>Finding</th><th>Evidence</th><th>Mode</th></tr></thead>
+  <tbody>
+  {% for f in findings %}
+    <tr>
+      <td><span class="sev {{ f.severity }}">{{ f.severity }}</span><div class="muted">{{ f.confidence }} confidence</div></td>
+      <td>{{ f.category }}<div class="muted">{{ f.kind }}</div></td>
+      <td>{{ f.rule_id }}<div class="muted">{{ f.detector }}@{{ f.detector_version }}</div></td>
+      <td>{{ f.title }}{% if f.detail %}<div class="muted">{{ f.detail }}</div>{% endif %}</td>
+      <td>
+        {% set ref = f.evidence_ref or {} %}
+        {% if ref.file %}<strong>{{ ref.file }}</strong>{% if ref.line %}:{{ ref.line }}{% endif %}{% endif %}
+        {% if ref.snippet %}<pre class="snippet">{{ ref.snippet }}</pre>{% endif %}
+        {% if f.claim_ref %}<div class="muted">claim: {{ f.claim_ref.type }}</div>{% endif %}
+      </td>
+      <td>{{ f.mode }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" class="muted">No findings.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>

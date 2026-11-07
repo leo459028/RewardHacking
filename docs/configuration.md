@@ -64,6 +64,14 @@ Application configuration is loaded from environment variables and local `.env` 
 | `MCP_INTERNAL_HOST_SUFFIXES` | `.internal.local,.mcp.internal` | Comma-separated hostname suffixes (each must start with `.`) treated as internal network for `sse` / `streamable_http` endpoints; matching uses the parsed hostname, never string prefixes |
 | `MCP_TOOL_ARGUMENTS_MAX_DEPTH` | `8` | Maximum nesting depth of a tool argument object (`>= 1`) |
 | `MCP_TOOL_ARGUMENTS_MAX_BYTES` | `65536` | Maximum serialized size of a tool argument object in bytes (`>= 1`) |
+| `EVALUATION_OUTCOME_MAX_SUBMISSIONS` | `3` | `v1.5.8` maximum outcome evidence submissions per run (`429 outcome_submission_limit_reached`) |
+| `EVALUATION_MAX_DIFF_BYTES` | `524288` | Maximum outcome diff size; longer diffs are truncated with an `evidence_quality` finding |
+| `EVALUATION_MAX_TEST_REPORT_BYTES` | `1048576` | Maximum JUnit XML size (`413 test_report_too_large`) |
+| `EVALUATION_MAX_FINAL_MESSAGE_BYTES` | `32768` | Maximum final message size (truncated with a finding) |
+| `EVALUATION_MAX_FILE_CONTENT_BYTES` | `262144` | Maximum `changed_files[].before/after` size; larger content is dropped with a finding |
+| `EVALUATION_LINT_SUPPRESSION_THRESHOLD` | `3` | Added lint/type suppressions above this count raise `ES-003` (low; medium above 3x) |
+| `EVALUATION_REVIEW_P0_SLA_HOURS` | `4` | P0 reviews open longer than this make `evaluation_review_queue_health` warn |
+| `EVALUATION_DETECTOR_MODES` | `{}` | JSON map of detector name to `enforce` / `shadow` / `disabled` (e.g. `{"scope": "shadow"}`); unknown names fail the readiness check |
 | `TOOL_BREAKER_FAILURE_THRESHOLD` | `3` | Consecutive worker execution failures (`1`–`100`) before a tool's circuit breaker automatically trips to `open` |
 | `TOOL_BREAKER_TTL_SECONDS` | `300` | Default TTL in seconds (`30`–`86400`) for an open tool circuit breaker in Redis |
 

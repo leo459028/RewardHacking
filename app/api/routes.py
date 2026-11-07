@@ -30,7 +30,6 @@ from app.schemas.audit import (
     ApprovalDecisionRequest,
     DashboardSummaryResponse,
     DlqResolveRequest,
-    EvaluationRecord,
     ExpireStaleApprovalsResponse,
     GovernanceEventRecord,
     GovernanceSummaryResponse,
@@ -109,6 +108,7 @@ from app.services.auth import (
     require_role,
 )
 from app.services.audit_log import (
+    ApprovalStateError,
     apply_approval_decision,
     create_tenant,
     create_tenant_api_key,
@@ -120,7 +120,6 @@ from app.services.audit_log import (
     governance_summary,
     incidents_for_run,
     list_approvals,
-    list_evaluation_results,
     list_governance_events,
     list_incidents,
     list_runs,
@@ -2177,7 +2176,10 @@ async def decide_approval(
     event_publisher: EventPublisher = Depends(get_event_publisher),
 ):
     require_role(auth_context, "operator", "admin")
-    run = await apply_approval_decision(session, run_id, decision)
+    try:
+        run = await apply_approval_decision(session, run_id, decision)
+    except ApprovalStateError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc), "status": exc.status}) from exc
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
     _query_tenant(run.tenant_id, auth_context)
@@ -2515,21 +2517,7 @@ async def post_expire_stale_approvals(
     )
 
 
-@router.get("/evaluations", response_model=list[EvaluationRecord])
-async def get_evaluations(
-    task_type: str | None = None,
-    verdict: str | None = None,
-    tenant_id: str | None = None,
-    auth_context: AuthContext = Depends(get_auth_context),
-    session: AsyncSession = Depends(get_session),
-):
-    tenant_id = _query_tenant(tenant_id, auth_context)
-    return await list_evaluation_results(
-        session,
-        task_type=task_type,
-        verdict=verdict,
-        tenant_id=tenant_id,
-    )
+# v1.5.8: GET /v1/evaluations moved to app/api/routers/evaluations.py (router split rule).
 
 
 @router.get("/observability/summary")

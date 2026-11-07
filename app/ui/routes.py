@@ -27,6 +27,7 @@ from app.services.events import EventPublisher
 from app.schemas.agent import AgentConstraints, AgentRequest
 from app.services.auth import generate_api_key, hash_api_key
 from app.services.audit_log import (
+    ApprovalStateError,
     apply_approval_decision,
     create_tenant,
     create_tenant_api_key,
@@ -269,11 +270,25 @@ async def dashboard_run_detail(
     checkpoints = await list_run_checkpoints(session, run_id=run_id)
     replay_attempts = await list_replay_attempts(session, run_id=run_id)
     cost_summary = await run_cost_summary(session, run_id=run_id)
+    from app.services.outcomes import list_outcomes
+    from app.services.review_queue import list_reviews
+
+    outcomes = await list_outcomes(session, run_id)
+    run_reviews = await list_reviews(session, run_id=run_id, limit=20)
+    executor_eval = dict((run.evaluation_summary or {}).get("evaluation_event", {}).get("payload", {}) or {})
+    latest_outcome = outcomes[-1] if outcomes else None
     return templates.TemplateResponse(
         request,
         "run_detail.html",
         {
             "run": run,
+            "outcomes": outcomes,
+            "latest_outcome": latest_outcome,
+            "run_reviews": run_reviews,
+            "executor_eval": executor_eval,
+            "outcome_max_submissions": get_settings().evaluation_outcome_max_submissions,
+            "message": request.query_params.get("message", ""),
+            "error": request.query_params.get("error", ""),
             "incidents": incidents,
             "attempts": attempts,
             "tool_executions": tool_executions,
@@ -590,10 +605,18 @@ async def dashboard_governance(
     summary = await governance_summary(session, tenant_id=selected_tenant)
     events = await list_governance_events(session, tenant_id=tenant_id or None, limit=25)
     api_keys = await list_tenant_api_keys(session, tenant_id=selected_tenant)
+    from app.services.review_queue import get_evaluation_policy, policy_to_dict
+    from app.ui.routers.reviews import list_evaluation_policies
+
+    evaluation_policies = await list_evaluation_policies(session)
+    selected_policy = policy_to_dict(selected_tenant, await get_evaluation_policy(session, selected_tenant))
     return templates.TemplateResponse(
         request,
         "governance.html",
         {
+            "evaluation_policies": evaluation_policies,
+            "selected_policy": selected_policy,
+            "governance_message": request.query_params.get("message", ""),
             "summary": summary,
             "events": events,
             "runs": runs,
@@ -728,10 +751,16 @@ async def _issue_tenant_api_key_and_render(
     summary = await governance_summary(session, tenant_id=tenant_id)
     events = await list_governance_events(session, tenant_id=tenant_id, limit=25)
     api_keys = await list_tenant_api_keys(session, tenant_id=tenant_id)
+    from app.services.review_queue import get_evaluation_policy, policy_to_dict
+    from app.ui.routers.reviews import list_evaluation_policies
+
     response = templates.TemplateResponse(
         request,
         "governance.html",
         {
+            "evaluation_policies": await list_evaluation_policies(session),
+            "selected_policy": policy_to_dict(tenant_id, await get_evaluation_policy(session, tenant_id)),
+            "governance_message": "",
             "summary": summary,
             "events": events,
             "runs": runs,
@@ -1366,7 +1395,7 @@ async def dashboard_operations_release_gate(
     readiness = await compute_operations_readiness(session, settings=get_settings(), state_store=state_store)
     await persist_release_gate(
         session,
-        release_version=str(form.get("release_version", "v1.5.7")),
+        release_version=str(form.get("release_version", "v1.5.8")),
         created_by=str(form.get("created_by", "dashboard")),
         trace_id=str(getattr(request.state, "trace_id", "")),
         readiness=readiness,
@@ -1516,7 +1545,10 @@ async def dashboard_approval_decision(
         reviewer=str(form.get("reviewer", "dashboard-operator")),
         reason=str(form.get("reason", "Dashboard decision")),
     )
-    run = await apply_approval_decision(session, run_id, decision)
+    try:
+        run = await apply_approval_decision(session, run_id, decision)
+    except ApprovalStateError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc), "status": exc.status}) from exc
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
     if decision.decision == "deny":
