@@ -1,17 +1,18 @@
 # Project Documentation Overview
 
-> **Current Version**: `v1.5.7`
-> **Previous Version**: `v1.5.6`
+> **Current Version**: `v1.5.9`
+> **Previous Version**: `v1.5.8`
 
 This directory contains the comprehensive technical documentation for the **RewardHacking Guardrail** platform.
 
 ---
 
-## Release Baseline: `v1.5.8`
+## Release Baseline: `v1.5.9`
 
 ### Release Evolution
 
-- **`v1.5.8` (Current)**: Agent Outcome Ingestion, Evidence-Based Reward-Hacking Detectors & Post-Execution Review Queue. Adds `POST /v1/runs/{run_id}/outcome` (diff, test/lint reports, final message, provenance, redaction, append-only and capped submissions), the `app/services/evaluation/` engine (taxonomy, claim extraction, versioned detectors with shadow mode, deterministic aggregation, `evaluator_version`), five evidence detectors (test / grader / CI tampering, claim–evidence mismatch, error suppression, scope), and a post-execution review queue (`review_required`, `rejected`, `/dashboard/reviews`) that is separate from pre-execution approval and never re-executes runs. Alembic head `202611070001`. See [`docs/evaluation.md`](evaluation.md).
+- **`v1.5.9` (Current)**: Labeled Benchmark & Detector Measurement. Adds versioned labeled samples (`benchmark_samples`, seed corpus `seed-v1.5.9`, review export, per-finding labels, optional Inspect JSON import), side-effect-free benchmark runs with AUROC, TPR at FPR 1% / 5% (Wilson intervals, insufficient-sample flags) and audit-budget curves (`/v1/benchmark/*`, `/dashboard/benchmark`), the shadow `special_casing` detector (`SP-001`–`SP-004`), six honeypot impossible-task probes with server-side run mapping, monitor-only per-agent / per-model cheat rates, and DSSE / in-toto CI attestation verification against tenant trust roots (`ci_attested` assurance, `CE-009` / `CE-010`). Readiness gains the advisory `evaluation_benchmark_gate`. Alembic head `202611080001`. See [`docs/evaluation.md`](evaluation.md).
+- **`v1.5.8` (Historical)**: Agent Outcome Ingestion, Evidence-Based Reward-Hacking Detectors & Post-Execution Review Queue. Adds `POST /v1/runs/{run_id}/outcome` (diff, test/lint reports, final message, provenance, redaction, append-only and capped submissions), the `app/services/evaluation/` engine (taxonomy, claim extraction, versioned detectors with shadow mode, deterministic aggregation, `evaluator_version`), five evidence detectors (test / grader / CI tampering, claim–evidence mismatch, error suppression, scope), and a post-execution review queue (`review_required`, `rejected`, `/dashboard/reviews`) that is separate from pre-execution approval and never re-executes runs. Alembic head `202611070001`. See [`docs/evaluation.md`](evaluation.md).
 - **`v1.5.7` (Historical)**: Safe MCP Gateway MVP, Tool Schema Guardrails & Per-MCP-Server FinOps Attribution. Adds the MCP Server Registry with trust tiers, transport/external-network guardrails, tenant allow-lists, per-server quotas and breakers (`/v1/control-plane/mcp-servers`), `AgentRequest.tool_arguments` JSON Schema validation with per-field injection scan profiles and recursive sensitive-argument redaction (`POST /v1/control-plane/tools/{name}/validate-arguments`), dynamic executor registry closure with worker-side hard-deny re-checks, and `UsageEvent.mcp_server_id` / `tool_breakdown` / `mcp_server_breakdown` / `scope="mcp_server"` FinOps attribution with zero migrations (`app/services/mcp_gateway.py`).
 - **`v1.5.6` (Historical)**: FinOps Burn-Rate Forecasting, Dynamic Token Broker, Per-User/Per-Tool Quotas & Interactive Governance Portals. Adds real-time tenant/project burn-rate and time-to-exhaustion forecasting (`GET /v1/cost/tenants/{tenant_id}/forecast`, `finops_burn_rate_warning`), pre-execution token budget leasing (`lease_...`) with concurrent sibling-lease reservation in `evaluate_budget_policies()` and automatic/manual lease release (`POST /v1/cost/leases/{run_id}/release`), per-user and per-tool Redis sliding-window rate limits, automatic worker-failure circuit-breaker tripping and manual trip/reset endpoints (`POST /v1/control-plane/tools/{name}/breaker/open|close`), and interactive management forms across `/dashboard/governance`, `/dashboard/control-plane`, and `/dashboard/costs`.
 - **`v1.5.5` (Historical)**: FinOps Settled Ledger Correctness, Multi-Currency FX & Tax Accounting, and Reconciliation Ledger Export. Eliminates estimated/actual double-counting via settled cost deduplication (`_settled_cost_events`), activates multi-currency FX conversion (`fx_rate`, `fx_rate_source`, `base_currency_cost`) and tax accounting (`tax_rate`, `tax_inclusive`, `tax_amount`) with pre-tax base-currency budget enforcement, adds `cost_center`/`org_id` allocation attribution (`finops_missing_cost_center`), supports manual reconciliation adjustments (`POST /v1/cost/adjustments`), and provides RFC 4180 CSV/JSON tenant ledger exports (`GET /v1/cost/tenants/{tenant_id}/export`).
@@ -39,7 +40,7 @@ RewardHacking is a production-grade safety guardrail and governance control plan
 - **Asynchronous Bounded Execution**: Queues low-risk requests via Kafka (`agent.requests`) to background workers with tool circuit breakers and retry DLQs.
 - **Human-in-the-Loop Approval Gates**: Quarantines destructive or policy-violating actions into a TTL-guarded approval queue (`/dashboard/approvals`).
 - **Traceability & Checkpoint Replay**: Links all requests, plans, and audit steps to an `X-Trace-Id`, enabling checkpoint recovery and replay bundles.
-- **Independent Task Evaluation**: Uses evaluation rubrics to detect reward hacking, shortcuts, and fabricated completions.
+- **Evidence-Based Evaluation & Measurement**: Deterministic, versioned detectors over agent outcome evidence, a post-execution review queue, and a labeled benchmark that measures detection rates at low false-positive rates (monitor-only signals).
 - **Agent FinOps Ledger**: Enforces immutable usage and cost tracking across runs, tenants, and models.
 - **Operational Dashboard**: Jinja2-rendered real-time views for runs, approvals, control plane, governance, operations, and costs.
 
@@ -63,6 +64,7 @@ RewardHacking is a production-grade safety guardrail and governance control plan
 | [Database Migrations](migrations.md) | Alembic migration history, schema revisions, and upgrade procedures |
 | [Project Roadmap](roadmap.md) | Evolutionary milestones and future roadmap items (v1.6+) |
 | [Agent FinOps Core Reference](finops_core.md) | Model pricing catalogs, usage/cost ledgers, and budget enforcement |
+| [Evidence-Based Evaluation](evaluation.md) | Outcome evidence, detector rules, review queue, benchmark metrics, honeypots and CI attestation |
 | [Production Runbooks](runbook.md) | Operational runbooks, DLQ mitigation, and emergency procedures |
 | [Observability & Metrics](observability.md) | Prometheus metrics, SLO definitions, and alert rules |
 | [Model Pricing Seed Reference](pricing/model_pricing_seed.md) | Official model catalog YAML specification and ingestion |

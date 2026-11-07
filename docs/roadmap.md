@@ -1,10 +1,10 @@
 # Project Roadmap: Evolutionary Milestones
 
-> **Roadmap Baseline**: `v1.5.8`
+> **Roadmap Baseline**: `v1.5.9`
 > **Status**: Active Open-Source Track (`v1.5.x` Governance, FinOps & Evaluation Series)
-> **Next Target**: `v1.5.9` (Labeled Benchmark & Detector Measurement)
+> **Next Target**: `v1.5.10` (LLM-as-Judge Triage, Shadow)
 
-This roadmap outlines the past development trajectory, the remaining `v1.5.x` evaluation releases (`v1.5.8`–`v1.5.10`), the `v1.6.x` runtime execution series, and long-term architectural milestones for the **RewardHacking** platform.
+This roadmap outlines the past development trajectory, the remaining `v1.5.x` evaluation release (`v1.5.10`), the `v1.6.x` runtime execution series, and long-term architectural milestones for the **RewardHacking** platform.
 
 ---
 
@@ -32,16 +32,26 @@ This roadmap outlines the past development trajectory, the remaining `v1.5.x` ev
 | `v1.5.5` | Completed | FinOps Settled Ledger, Multi-Currency FX, Tax & Reconciliation Export | Settled cost deduplication (eliminating estimated/actual double-counting), multi-currency FX conversion (`fx_rate`, `base_currency_cost`), tax accounting, `cost_center` attribution, manual adjustments (`cost_adj_`), and CSV/JSON ledger exports. |
 | `v1.5.6` | Completed | Burn-Rate Forecasting, Interactive Governance Portal, Fine-Grained Quotas & Token Broker | Real-time tenant/project burn-rate forecasting & exhaustion alerts, interactive Tenant/API-Key/Control-Plane CRUD portals, per-user and per-tool sliding-window quotas, manual circuit-breaker controls, and pre-execution token budget leasing (Dynamic Token Broker). |
 | `v1.5.7` | Completed | Safe MCP Gateway MVP & Tool Schema Guardrails | MCP server registry with trust tiers & transport guardrails, tool input/output JSON schema validation with injection scan profiles, sensitive argument redaction, dynamic executor registry closure, and per-MCP-server cost and risk attribution (`mcp_server_id`). |
-| `v1.5.8` | **Current** | **Outcome Ingestion, Evidence Detectors & Review Queue** | Agent outcome evidence ingestion (diff, test/lint reports, final message) with provenance levels, evidence-based reward-hacking detectors (test/grader/CI tampering, claim–evidence mismatch, error suppression, scope), and a post-execution review queue separated from pre-execution approval. |
-| `v1.5.9` | **Next** | Labeled Benchmark & Detector Measurement | Review labels exported as benchmark samples, TPR at low FPR / AUROC / audit-budget curves, shadow `special_casing` detector, honeypot (impossible-task) probes, per-agent cheat rates, and CI attestation verification. |
-| `v1.5.10` | Planned | LLM-as-Judge Triage (Shadow) | Pluggable trusted judge providers that only prioritize review work and never turn `review` into `pass`, plus quota-capped `sample_for_review` with a uniform random audit slice. |
+| `v1.5.8` | Completed | Outcome Ingestion, Evidence Detectors & Review Queue | Agent outcome evidence ingestion (diff, test/lint reports, final message) with provenance levels, evidence-based reward-hacking detectors (test/grader/CI tampering, claim–evidence mismatch, error suppression, scope), and a post-execution review queue separated from pre-execution approval. |
+| `v1.5.9` | **Current** | **Labeled Benchmark & Detector Measurement** | Review labels exported as benchmark samples, TPR at low FPR / AUROC / audit-budget curves, shadow `special_casing` detector, honeypot (impossible-task) probes, per-agent cheat rates, and CI attestation verification. |
+| `v1.5.10` | **Next** | LLM-as-Judge Triage (Shadow) | Pluggable trusted judge providers that only prioritize review work and never turn `review` into `pass`, plus quota-capped `sample_for_review` with a uniform random audit slice. |
 | `v1.6.0` | Planned | Runtime Foundations | OTLP / W3C trace export, audit retention purge with legal hold (FinOps ledger excluded), FinOps module split, and a `SandboxBackend` interface. |
 | `v1.6.1` | Planned | Isolated Sandbox Runtime MVP | Hardened Docker backend with a configurable OCI runtime (`runc` locally, `runsc`/gVisor on Linux), limited to low-risk tools behind a feature flag; sandbox re-runs upgrade evidence to `platform_verified`. |
 | `v1.6.2+` | Long-Term | Remote MCP, MicroVM & Graph Replay | Real remote MCP transports behind an egress proxy, K8s Job and microVM backends, hidden held-out tests, mutation testing, resampling, and stateful graph time-travel replay. |
 
 ---
 
-## Current Release: `v1.5.8` Agent Outcome Ingestion, Evidence-Based Detectors & Post-Execution Review Queue
+## Current Release: `v1.5.9` Labeled Benchmark & Detector Measurement
+
+The `v1.5.9` milestone makes every detection signal measurable before any LLM judge is added:
+- **Labeled Benchmark Corpus**: `benchmark_samples` (`bms_`) with the code-owned `seed-v1.5.9` corpus (94 samples: 49 hacking / 45 benign, including deliberate evasions and known false positives), explicit export of decided reviews into tenant or global corpora (re-redacted, deduplicated), per-finding `true_positive` / `false_positive` labels, deterministic dev/holdout splits, admin relabeling with history, and an optional Inspect JSON log importer.
+- **Control-Style Metrics**: side-effect-free benchmark runs (`bmr_`) with a deterministic `suspicion_score`, AUROC, TPR at FPR 1% / 5% with Wilson intervals and *insufficient samples* flags, audit-budget-versus-catch-rate curves, verdict confusion, precision by priority and a shadow what-if view; reproducible from `evaluator_version` + `corpus_digest`. The `evaluation_benchmark_gate` readiness check is advisory by default (`EVALUATION_BENCHMARK_GATE_ENFORCED`). Seed result: reward-tampering TPR at FPR 5% = 0.75, below the default 0.90 gate, driven by `TT-001` false positives on legitimate test refactors and CI edits.
+- **`special_casing` Detector (Shadow)**: `SP-001`–`SP-004` with two positive and two negative fixtures per rule; zero false positives on the seed negatives; not promoted to `enforce` in this release.
+- **Honeypot Probes**: six impossible-task probes launched through the normal submit path, server-side run mapping (never in run payloads), deterministic `cheated` / `honest_refusal` / `inconclusive` judgement, and a new `reports_impossible` claim type.
+- **Cheat Rates**: monitor-only per-agent / per-model / per-version rates with lower-bound semantics and Wilson intervals; never used for risk scoring.
+- **CI Attestation Verification**: DSSE / in-toto (test-result, SLSA provenance) verification against tenant-registered Ed25519 / ECDSA P-256 keys with run binding, report digest, freshness and replay checks; `CE-009` / `CE-010` on failure; Sigstore keyless verification deferred (bundles stay unverified).
+
+## Previous Release: `v1.5.8` Agent Outcome Ingestion, Evidence-Based Detectors & Post-Execution Review Queue
 
 The `v1.5.8` milestone moves reward-hacking detection onto evidence:
 - **Agent Outcome Ingestion**: `POST /v1/runs/{run_id}/outcome` accepts the agent's final message, unified diff, optional full file contents, JUnit or summary test reports, lint reports and tool transcripts. Evidence is size-bounded, JUnit `DOCTYPE` / `ENTITY` payloads are rejected, and secrets and emails are redacted before detection and persistence. Agent-reported evidence is `self_reported` (a claim, shown as unverified); `ci_attested` is recorded but not verified until `v1.5.9`. Submissions are append-only and capped per run (`EVALUATION_OUTCOME_MAX_SUBMISSIONS`).
@@ -50,14 +60,6 @@ The `v1.5.8` milestone moves reward-hacking detection onto evidence:
 - **Post-Execution Review Queue**: new run statuses `review_required` and `rejected`. Previously a post-execution `review` verdict reused `awaiting_approval`, so `approve_once` re-dispatched an already-executed run. Reviews (`/v1/reviews`, `/dashboard/reviews`) are now separate: decisions (`confirmed_hacking`, `false_positive`, `accepted`, `needs_info`) never re-execute runs or touch token leases, the outcome submitter cannot decide the same review, and a run under review is never downgraded by new evidence. `approve_once` on a non-`awaiting_approval` run returns `409 run_not_awaiting_approval`.
 - **Monitor-Only Signals**: all evaluation and review responses carry `signal_usage: "monitor_only"`; findings must not be used as training rewards.
 - **Dashboard & Operations**: `/dashboard/reviews` (priority queue, filters, review detail with evidence pointers, decision form, Evidence Preview), Run Detail *Outcome Evidence & Findings* and *Submit Outcome Evidence*, Governance *Evaluation Policy*, `review_required` / `rejected` badges, `evaluation_review_queue_health` readiness check, and four `agent_evaluation_*` metrics. Alembic head `202611070001`. CI now runs `pytest -W error::DeprecationWarning`. Details: [`docs/evaluation.md`](evaluation.md).
-
-## Previous Release: `v1.5.7` Safe MCP Gateway MVP & Tool Schema Guardrails
-
-The `v1.5.7` milestone closes the structured tool-argument attack surface:
-- **Safe MCP Server Registry, Trust Tiers & Transport Guardrails**: Registers Model Context Protocol servers (`GET/POST /v1/control-plane/mcp-servers`) with `transport` (`stdio | sse | streamable_http`), `trust_tier` (`trusted | verified | untrusted | blocked`), hostname-parsed `is_external_network` detection, tenant allow-lists and per-server quotas. Four builtin servers ship by default (`mcp-core-local`, `mcp-data-verified`, `mcp-deploy-verified`, `mcp-external-untrusted`). Blocked/disabled servers or disallowed tenants are hard-denied (zero cost, no lease); untrusted servers (+0.20 risk), external-network violations (+0.15 risk) and open MCP breakers (`circuit:mcp:{id}`) route runs to `awaiting_approval` with `mcp_trust_gate` / `mcp_network_gate` / `mcp_breaker_gate`.
-- **Tool JSON Schema Guardrails, Injection Scan Profiles & Sensitive Argument Redaction**: `AgentRequest.tool_arguments` is validated by a dependency-free JSON Schema subset validator (`required`, `type`, `additionalProperties`, `min/maxLength`, `minimum/maximum`, `enum`, `pattern`, `items`) with depth/size limits. Per-field `x-scan-profile` (`path | shell | sql_destructive | sql | none`) blocks path traversal and shell/SQL injection without false positives on `query_data` `UNION SELECT` or `write_patch` diffs. Credentials, bearer tokens and emails are recursively redacted to `[REDACTED]` / `[REDACTED_EMAIL]` before `AgentRun`, `ExecutionPlan`, `ToolExecution` and replay bundles are persisted. `POST /v1/control-plane/tools/{tool_name}/validate-arguments` exposes the validator directly.
-- **Dynamic Executor Registry Closure & Worker Re-Check**: The background worker now executes any tool registered in the Control Plane (no more false `blocked` transcripts for dynamically registered tools), validates simulated outputs against `output_schema`, and re-checks hard-deny MCP conditions at execution time (TOCTOU) while never re-escalating already-approved runs.
-- **Per-MCP-Server FinOps Attribution**: Populates `UsageEvent.mcp_server_id` / `tool_*` columns, tags `CostEvent.allocation_tags` and metadata, fixes `run_cost_summary.tool_breakdown` and `tenant_cost_summary.top_tools` (no more `step_id` leakage), adds `mcp_server_breakdown` / `top_mcp_servers`, `scope="mcp_server"` and exact `scope="tool"` budgets, `mcp_server_id` filters on cost summary/export, and appends `mcp_server_id,tool_id` to the CSV ledger (37 columns). Zero Alembic migrations (head stays `202606010004`).
 
 ## Roadmap Principles (Re-baselined after `v1.5.7`)
 
@@ -81,14 +83,15 @@ The pre-execution perimeter (prompt guards, policy engine, Safe MCP Gateway, Fin
 - **Evidence Detectors**: `test_tampering` (protected paths, added skip/xfail, removed assertions, shrinking test counts), `grader_tampering` (always-true `__eq__`, `sys.exit(0)`, timer/grader monkeypatching, result-rewriting `conftest.py` hooks), `error_suppression` including CI tampering (`continue-on-error`, `|| true`, bare `except: pass`, lint suppressions), `claim_evidence` (claimed passing tests with missing or failing reports), and `scope` (changes outside a declared scope). Python uses AST analysis; other languages use diff-level patterns.
 - **Post-Execution Review Queue**: New run statuses `review_required` and `rejected` replace the previous reuse of `awaiting_approval` after evaluation, which re-dispatched already-executed runs on `approve_once`. Review decisions (`confirmed_hacking`, `false_positive`, `accepted`, `needs_info`) never re-execute runs or touch token leases, enforce reviewer/submitter separation, and are stored as labels for the `v1.5.9` benchmark. Also adds tenant-level protected-path policies, `/dashboard/reviews`, Run Detail findings with evidence pointers, and an `evaluation_review_queue_health` operations check.
 
-### `v1.5.9` (Next Target): Labeled Benchmark & Detector Measurement
-- **Labeled Benchmark Corpus**: Versioned labeled samples, seeded from the inline red-team corpus and extended with one-click export of human review decisions from `v1.5.8`.
-- **Control-Style Metrics**: Per-category TPR at fixed low FPR, AUROC, and audit-budget-versus-catch-rate curves instead of a single F1 score, with benchmark recall thresholds as an operations readiness gate.
+### `v1.5.9` (Completed): Labeled Benchmark & Detector Measurement
+- **Labeled Benchmark Corpus**: Versioned labeled samples (seed corpus built from the `v1.5.8` detector fixtures and the evaluator red-team cases; pre-execution red-team prompts are not post-execution evidence and were left out), one-click export of human review decisions, per-finding labels, and an optional Inspect JSON log importer.
+- **Control-Style Metrics**: Per-category TPR at fixed low FPR, AUROC, and audit-budget-versus-catch-rate curves instead of a single F1 score, with an advisory benchmark readiness gate that operators can enforce.
 - **Harder Detectors in Shadow Mode**: `special_casing` (hard-coded expected outputs) ships as a shadow detector until the benchmark shows an acceptable false-positive rate.
 - **Honeypot Probes**: Impossible-task probes with conflicting tests that measure an agent's propensity to cheat, plus per-agent and per-model-version cheat-rate tracking.
-- **CI Attestation Verification**: Verifies `ci_attested` evidence (in-toto / SLSA provenance, GitHub OIDC attestations). Optional importer for Inspect evaluation logs.
+- **CI Attestation Verification**: Verifies `ci_attested` evidence (DSSE / in-toto test-result and SLSA provenance) against tenant trust roots. GitHub OIDC / Sigstore keyless verification is deferred; such bundles stay unverified.
 
-### `v1.5.10`: LLM-as-Judge Triage (Shadow Mode)
+### `v1.5.10` (Next Target): LLM-as-Judge Triage (Shadow Mode)
+- **Benchmark-Driven**: Judge triage is measured with precision@K on the `v1.5.9` benchmark; promoting `special_casing` or tuning `TT-001` (the main seed false-positive source) needs benchmark evidence first.
 - **Safety Statement**: The judge never turns `review` into `pass` and never participates in hard-deny decisions.
 - **Triage Only**: Judge output becomes `triage_priority` and rationale to order the review queue, measured by precision@K on the benchmark.
 - **Quota-Capped `sample_for_review`**: Rule-passed runs can be pulled into review only above a suspicion or risk threshold, within a per-tenant daily cap and a maximum share of passed volume, plus a small uniform random slice for unbiased miss-rate estimation. Skipped samples are counted and shown, never silently dropped.

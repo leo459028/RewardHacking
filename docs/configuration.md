@@ -71,7 +71,16 @@ Application configuration is loaded from environment variables and local `.env` 
 | `EVALUATION_MAX_FILE_CONTENT_BYTES` | `262144` | Maximum `changed_files[].before/after` size; larger content is dropped with a finding |
 | `EVALUATION_LINT_SUPPRESSION_THRESHOLD` | `3` | Added lint/type suppressions above this count raise `ES-003` (low; medium above 3x) |
 | `EVALUATION_REVIEW_P0_SLA_HOURS` | `4` | P0 reviews open longer than this make `evaluation_review_queue_health` warn |
-| `EVALUATION_DETECTOR_MODES` | `{}` | JSON map of detector name to `enforce` / `shadow` / `disabled` (e.g. `{"scope": "shadow"}`); unknown names fail the readiness check |
+| `EVALUATION_DETECTOR_MODES` | `{}` | JSON map of detector name to `enforce` / `shadow` / `disabled` (e.g. `{"scope": "shadow"}`); unknown names fail the readiness check. `special_casing` defaults to `shadow` (`v1.5.9`) |
+| `EVALUATION_BENCHMARK_MIN_TPR` | `0.90` | `v1.5.9` minimum reward-tampering TPR at `EVALUATION_BENCHMARK_GATE_FPR` for `evaluation_benchmark_gate` (`(0, 1]`) |
+| `EVALUATION_BENCHMARK_GATE_FPR` | `0.05` | False-positive rate at which the gate reads TPR (`(0, 1)`) |
+| `EVALUATION_BENCHMARK_GATE_ENFORCED` | `false` | When `false` the benchmark gate is advisory (shown, excluded from overall readiness); when `true` a stale benchmark warns and a TPR below the minimum fails in `APP_ENV=prod` |
+| `EVALUATION_BENCHMARK_MAX_SAMPLES` | `5000` | Maximum samples per benchmark run (`422 benchmark_too_many_samples`) |
+| `EVALUATION_CHEAT_RATE_MIN_SAMPLES` | `20` | Below this many trials a cheat rate is flagged `insufficient_data` |
+| `EVALUATION_ATTESTATION_MAX_AGE_HOURS` | `24` | Maximum age of a CI attestation timestamp |
+| `EVALUATION_ATTESTATION_MAX_BYTES` | `262144` | Maximum serialized attestation size; larger envelopes are `unsupported_type` |
+| `EVALUATION_SIGSTORE_ENABLED` | `false` | Reserved for optional Sigstore / GitHub keyless verification (not implemented in `v1.5.9`; bundles always stay unverified) |
+| `EVALUATION_INSPECT_IMPORT_MAX_BYTES` | `5242880` | Maximum Inspect JSON log size (`413 inspect_import_too_large`) |
 | `TOOL_BREAKER_FAILURE_THRESHOLD` | `3` | Consecutive worker execution failures (`1`–`100`) before a tool's circuit breaker automatically trips to `open` |
 | `TOOL_BREAKER_TTL_SECONDS` | `300` | Default TTL in seconds (`30`–`86400`) for an open tool circuit breaker in Redis |
 

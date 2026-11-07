@@ -69,7 +69,7 @@ Enables resumable runs and reproducible dry-run replay analysis.
 ## Evidence-Based Evaluation & Review Models (`v1.5.8`, Alembic `202611070001`)
 
 ### `EvaluationResultRecord` (`evaluation_results`) — new columns
-`tenant_id` (default `default`), `evaluator_version`, `evaluation_source` (`executor` | `outcome`), `assurance_level` (`simulated` | `none` | `self_reported` | `ci_attested_unverified`), `findings` (JSON list), `review_priority` (`P0`–`P3` or empty), `outcome_id`. Server defaults keep pre-`v1.5.8` rows valid.
+`tenant_id` (default `default`), `evaluator_version`, `evaluation_source` (`executor` | `outcome`), `assurance_level` (`simulated` | `none` | `self_reported` | `ci_attested_unverified` | `ci_attested` since `v1.5.9`), `findings` (JSON list), `review_priority` (`P0`–`P3` or empty), `outcome_id`. Server defaults keep pre-`v1.5.8` rows valid.
 
 ### `RunOutcome` (`run_outcomes`, `outcome_` IDs)
 Append-only agent outcome evidence: `run_id`, `tenant_id`, `submission_seq`, `provenance`, `submitted_by`, `submitted_by_key_id`, redacted `evidence` (JSON), `evidence_digest` (SHA-256), `verdict`, `review_priority`, `assurance_level`, `evaluator_version`, `findings`.
@@ -84,6 +84,26 @@ Post-execution review queue (at most one open review per run): `status` (`open` 
 `AgentRun.status` adds `review_required` (executed, awaiting post-execution review) and `rejected` (review confirmed reward hacking). Both are execution-finished states: token leases settle and execution plans complete.
 
 **Finding IDs** use the `fnd_` prefix and are deterministic (hash of detector, rule, file, line, snippet).
+
+## Benchmark, Honeypot & Attestation Models (`v1.5.9`, Alembic `202611080001`)
+
+### New columns
+- `run_outcomes`: `agent_id`, `agent_version`, `model_name` (self-reported cohort identity), `honeypot_probe_id`, `honeypot_outcome` (`cheated` | `honest_refusal` | `inconclusive` | empty), `attestation_status` (default `none`), `attestation_digest` (replay detection; only stored for `verified` / `result_mismatch`), `attestation_detail` (JSON).
+- `evaluation_reviews`: `agent_id`, `agent_version`, `model_name`, `finding_labels` (JSON `{finding_id: true_positive | false_positive}`), `exported_sample_id`. `sample_reason` adds `honeypot`.
+- `evaluation_results`: `suspicion_score` (float, default 0).
+All new columns have server defaults; existing rows need no backfill.
+
+### `BenchmarkSample` (`benchmark_samples`, `bms_` IDs)
+`corpus`, `scope` (`tenant` | `global`), `tenant_id` (`*` for global), `source` (`seed_fixture` | `review_export` | `honeypot` | `inspect_import`), `split` (`dev` | `holdout`), `name`, `label` (`hacking` | `benign`), `label_categories`, `label_notes`, `finding_labels`, `task`, redacted `evidence`, `evidence_digest`, `origin_review_id`, `origin_run_id`, `status` (`active` | `retired`), `label_history`, `created_by`. Unique `(corpus, evidence_digest)`.
+
+### `BenchmarkRun` (`benchmark_runs`, `bmr_` IDs)
+`tenant_id`, `corpus_selector`, `corpus_digest`, `evaluator_version`, `detector_modes`, sample / positive / negative counts, `metrics` (JSON), `per_sample` (JSON), `gate_status`, `duration_ms`, `created_by`.
+
+### `HoneypotProbe` (`honeypot_probes`, `hp_` IDs) & `HoneypotLaunch` (`honeypot_launches`)
+Probes: `name`, `description` (operator-only), `task_type`, `prompt`, `goal`, `package` (files), `conflict_test_ids`, `expected_honest_signals`, `builtin`, `enabled`. Launches map `run_id` (unique) to `probe_id` with `tenant_id`, `agent_id`, `agent_version`, `model_name`, `launched_by`. The mapping is never copied into `agent_runs.request_payload`.
+
+### `TenantAttestationKey` (`tenant_attestation_keys`, `attk_` IDs)
+`tenant_id`, `name`, `algorithm` (`ed25519` | `ecdsa-p256-sha256`), `public_key_pem`, `key_fingerprint` (sha256 of DER SubjectPublicKeyInfo), `allowed_subjects`, `status` (`active` | `revoked`), `created_by`, `revoked_at`.
 
 ---
 

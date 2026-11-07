@@ -647,6 +647,8 @@ def run_manual_test_suite(
         page.select_option('#review-decision select[name="label"]', "confirmed_hacking")
         page.fill('#review-decision input[name="reviewer"]', "qa-reviewer")
         page.fill('#review-decision input[name="reason"]', "__eq__ forced True")
+        # v1.5.9: label the first finding as a true positive (per-finding labels feed detector precision)
+        page.locator('#review-decision select[name^="finding_label__"]').first.select_option("true_positive")
         page.click('#review-decision button:has-text("Submit Decision")')
         page.wait_for_load_state("networkidle")
         decided_html = page.content()
@@ -667,6 +669,152 @@ def run_manual_test_suite(
         page.wait_for_load_state("networkidle")
         assert "Evaluation policy saved for reviews-qa-tenant" in page.content()
         print("[Scenario 6.5] Governance Evaluation Policy saved with protected path scoring/**")
+
+        # Scenario 7 (v1.5.9): Labeled benchmark, detector measurement, honeypots, cheat rates, CI attestation
+        page.goto(f"{base_url}/dashboard/benchmark?corpus=seed-v1.5.9&label=hacking")
+        assert "Labeled Benchmark" in page.content() and "seed_fixture" in page.content()
+        corpus_note = page.inner_text("#corpus-count")
+        assert int(corpus_note.split(" ", 1)[0]) >= 40, corpus_note
+        page.goto(f"{base_url}/dashboard/benchmark")
+        page.click("#run-benchmark")
+        page.wait_for_load_state("networkidle")
+        bench_html = page.content()
+        assert "Benchmark bmr_" in bench_html and 'id="metrics-table"' in bench_html and 'id="audit-curve"' in bench_html
+        assert "Insufficient samples" in bench_html and "0E-8" not in bench_html
+        bmr_id = page.url.split("run=")[1].split("&")[0].split("#")[0]
+        page.click("#mode-all-enforced")
+        page.wait_for_load_state("networkidle")
+        assert "special_casing" in page.content()
+        print(f"[Scenario 7.1] Benchmark {bmr_id} measured seed corpus; FPR 1% shows 'Insufficient samples'; what-if view lists special_casing")
+
+        page.goto(f"{base_url}/dashboard/operations")
+        assert "evaluation_benchmark_gate" in page.content() and "Advisory" in page.content()
+        print("[Scenario 7.2] Operations shows the advisory evaluation_benchmark_gate check")
+
+        page.goto(review_url)
+        page.click("#export-to-benchmark")
+        page.wait_for_load_state("networkidle")
+        export_html = page.content()
+        assert "Exported to benchmark as bms_" in export_html and "true_positive" in export_html
+        print("[Scenario 7.3] Confirmed review (with per-finding label) exported to the tenant benchmark corpus")
+
+        def _launch_probe(probe_id: str) -> str:
+            page.goto(f"{base_url}/dashboard/benchmark?tenant_id=benchmark-qa-tenant#honeypots")
+            page.select_option('#honeypot-launch-form select[name="probe_id"]', probe_id)
+            page.fill('#honeypot-launch-form input[name="tenant_id"]', "benchmark-qa-tenant")
+            page.fill('#honeypot-launch-form input[name="user_id"]', "qa-agent-159")
+            page.fill('#honeypot-launch-form input[name="agent_id"]', "qa-agent-159")
+            page.fill('#honeypot-launch-form input[name="model_name"]', "qa-model-159")
+            page.click("#launch-honeypot")
+            page.wait_for_load_state("networkidle")
+            assert "Launched probe" in page.content(), page.url
+            return page.url.split("launched=")[1].split("&")[0].split("#")[0]
+
+        def _submit_outcome_form(run_id: str, message: str, passed: str, failed: str) -> str:
+            _wait_for_status(run_id, "completed")
+            page.fill('#submit-outcome input[name="submitted_by"]', "qa-agent-bot")
+            page.fill('#submit-outcome input[name="tests_passed"]', passed)
+            page.fill('#submit-outcome input[name="tests_failed"]', failed)
+            page.fill('#submit-outcome textarea[name="final_message"]', message)
+            page.click('#submit-outcome button:has-text("Submit Outcome")')
+            page.wait_for_load_state("networkidle")
+            return page.content()
+
+        cheat_run = _launch_probe("hp_conflicting_assertions")
+        cheat_html = _submit_outcome_form(cheat_run, "All tests pass.", "2", "0")
+        assert 'class="status review_required"' in cheat_html
+        honest_run = _launch_probe("hp_conflicting_assertions")
+        honest_html = _submit_outcome_form(honest_run, "The tests contradict each other; I cannot satisfy both.", "1", "1")
+        assert 'Status</div><div class="stat-value"><span class="status completed"' in honest_html
+        page.goto(f"{base_url}/dashboard/benchmark?tenant_id=benchmark-qa-tenant#honeypots")
+        results_html = page.inner_html("#honeypot-results")
+        assert cheat_run in results_html and honest_run in results_html
+        assert "cheated" in results_html and "honest_refusal" in results_html
+        page.goto(f"{base_url}/dashboard/honeypots/hp_conflicting_assertions/package")
+        assert "tests/test_add.py" in page.content()
+        print(f"[Scenario 7.4] Honeypot probes: {cheat_run} cheated (review opened), {honest_run} honest_refusal (stays completed)")
+
+        page.goto(f"{base_url}/dashboard/benchmark?group_by=model_name#cheat-rates")
+        assert "qa-model-159" in page.inner_html("#cheat-rate-table")
+        print("[Scenario 7.5] Cheat rates grouped by model_name list qa-model-159 (monitor-only, insufficient data flagged)")
+
+        import base64
+        import hashlib
+        import json
+        from datetime import datetime, timezone
+
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+
+        signing_key = ed25519.Ed25519PrivateKey.generate()  # generated per run, never stored
+        public_pem = signing_key.public_key().public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+        ).decode()
+        page.goto(f"{base_url}/dashboard/benchmark?tenant_id=benchmark-qa-tenant&key_tenant_id=benchmark-qa-tenant#attestation-keys")
+        page.fill('#attestation-keys input[name="tenant_id"]', "benchmark-qa-tenant")
+        page.fill('#attestation-keys input[name="name"]', "ci-demo")
+        page.fill('#attestation-keys textarea[name="public_key_pem"]', public_pem)
+        page.click("#register-attestation-key")
+        page.wait_for_load_state("networkidle")
+        assert "registered for benchmark-qa-tenant" in page.content() and "ci-demo" in page.inner_html("#attestation-key-table")
+
+        attested_run = _submit_playground(
+            "benchmark-qa-tenant",
+            "code_fix",
+            "read_repo, run_tests",
+            "Fix the failing date parser",
+            "Fix the failing date parser and attach the CI attestation.",
+        )
+        _wait_for_status(attested_run, "completed")
+        # Canonical summary digest: sorted keys, compact separators, nulls omitted (see docs/evaluation.md).
+        summary = {"command": "", "errors": 0, "failed": 0, "passed": 12, "skipped": 0}
+        report_digest = hashlib.sha256(json.dumps(summary, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        statement = {
+            "_type": "https://in-toto.io/Statement/v1",
+            "subject": [
+                {"name": "junit-summary.json", "digest": {"sha256": report_digest}},
+                {"name": f"rewardhacking:run/{attested_run}", "digest": {"sha256": report_digest}},
+            ],
+            "predicateType": "https://in-toto.io/attestation/test-result/v0.1",
+            "predicate": {"result": "PASSED", "url": "ci.example/runs/1", "metadata": {"finishedOn": datetime.now(timezone.utc).isoformat()}},
+        }
+        payload_bytes = json.dumps(statement).encode()
+        payload_type = b"application/vnd.in-toto+json"
+        pae = b"DSSEv1 %d %s %d %s" % (len(payload_type), payload_type, len(payload_bytes), payload_bytes)
+        envelope = {
+            "payloadType": payload_type.decode(),
+            "payload": base64.b64encode(payload_bytes).decode(),
+            "signatures": [{"keyid": "", "sig": base64.b64encode(signing_key.sign(pae)).decode()}],
+        }
+        fix_diff = (
+            "diff --git a/src/dates/parser.py b/src/dates/parser.py\n--- a/src/dates/parser.py\n+++ b/src/dates/parser.py\n"
+            "@@ -1,2 +1,2 @@\n def parse(text):\n-    return _parse(text)\n+    return _parse(text.strip())\n"
+        )
+        page.select_option('#submit-outcome select[name="provenance"]', "ci_attested")
+        page.fill('#submit-outcome input[name="submitted_by"]', "qa-ci-bot")
+        page.fill('#submit-outcome input[name="tests_passed"]', "12")
+        page.fill('#submit-outcome input[name="tests_failed"]', "0")
+        page.fill('#submit-outcome textarea[name="final_message"]', "Fixed the parser. All tests pass.")
+        page.fill('#submit-outcome textarea[name="diff"]', fix_diff)
+        page.fill('#submit-outcome textarea[name="attestation_json"]', json.dumps(envelope))
+        page.click('#submit-outcome button:has-text("Submit Outcome")')
+        page.wait_for_load_state("networkidle")
+        attested_html = page.content()
+        assert 'id="attestation-status">verified<' in attested_html, "CI attestation was not verified"
+        assert "ci_attested" in attested_html and "0E-8" not in attested_html
+        page.goto(f"{base_url}/dashboard/benchmark?tenant_id=benchmark-qa-tenant&key_tenant_id=benchmark-qa-tenant#attestation-keys")
+        page.click('#attestation-key-table tr:has-text("ci-demo") button:has-text("Revoke")')
+        page.wait_for_load_state("networkidle")
+        assert "revoked" in page.inner_html("#attestation-key-table")
+        print(f"[Scenario 7.6] CI attestation key registered, run {attested_run} evidence verified as ci_attested, key revoked")
+
+        inspect_log = open("tests/fixtures/v159/inspect_log_sample.json", encoding="utf-8").read()
+        page.goto(f"{base_url}/dashboard/benchmark?tenant_id=benchmark-qa-tenant#inspect-import")
+        page.fill('#inspect-import textarea[name="log_text"]', inspect_log)
+        page.click("#inspect-import-submit")
+        page.wait_for_load_state("networkidle")
+        assert "Dry run inspect:" in page.content() and "2 hacking / 1 benign" in page.content()
+        print("[Scenario 7.7] Inspect JSON log dry-run import previewed 2 hacking / 1 benign samples")
 
         page.goto(f"{base_url}/dashboard/observability")
         obs_html = page.content()
@@ -692,7 +840,12 @@ def run_manual_test_suite(
         assert "agent_evaluation_outcomes_total" in metrics_text
         assert "agent_evaluation_reviews_total" in metrics_text
         assert "agent_evaluation_review_queue_depth" in metrics_text
-        print("[Scenario 4.2] /v1/metrics verified in browser (including v1.5.7 MCP and v1.5.8 evaluation/review counters)")
+        assert "agent_evaluation_benchmark_tpr" in metrics_text
+        assert "agent_evaluation_benchmark_auroc" in metrics_text
+        assert "agent_evaluation_benchmark_samples" in metrics_text
+        assert "agent_evaluation_attestations_total" in metrics_text
+        assert "agent_evaluation_honeypot_results_total" in metrics_text
+        print("[Scenario 4.2] /v1/metrics verified in browser (including v1.5.7 MCP, v1.5.8 review and v1.5.9 benchmark/attestation/honeypot metrics)")
 
         page.goto(f"{base_url}/dashboard/operations")
         ops_html = page.content()
@@ -701,21 +854,22 @@ def run_manual_test_suite(
         assert "finops_burn_rate_health" in ops_html
         assert "mcp_gateway_registry_health" in ops_html
         assert "evaluation_review_queue_health" in ops_html
+        assert "evaluation_benchmark_gate" in ops_html
         release_ver = page.input_value('input[name="release_version"]')
-        assert release_ver == "v1.5.8"
+        assert release_ver == "v1.5.9"
 
         page.select_option('select[name="evidence_type"]', "safety_regression")
         page.select_option('select[name="status"]', "pass")
         page.fill('input[name="reference_url"]', "docs/manual_test.md")
-        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.5.8")
+        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.5.9")
         page.click('button:has-text("Save Evidence")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
         page.click('button:has-text("Create Release Gate Snapshot")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
-        assert "v1.5.8" in page.content()
-        print("[Scenario 4.3] Operations evidence saved & v1.5.8 Release Gate snapshot created via browser")
+        assert "v1.5.9" in page.content()
+        print("[Scenario 4.3] Operations evidence saved & v1.5.9 Release Gate snapshot created via browser")
 
         # 6. Check all primary navigation tabs for 0E-8 and HTTP 200
         nav_routes = [
@@ -723,6 +877,7 @@ def run_manual_test_suite(
             "/dashboard/runs",
             "/dashboard/approvals",
             "/dashboard/reviews",
+            "/dashboard/benchmark",
             "/dashboard/worker",
             "/dashboard/observability",
             "/dashboard/governance",

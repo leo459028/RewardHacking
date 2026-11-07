@@ -44,6 +44,14 @@ docker compose logs --tail=100 -f worker
 - **Noisy detector**: switch it to shadow mode with `EVALUATION_DETECTOR_MODES='{"<detector>": "shadow"}'` (findings are still recorded) and restart the API/worker; unknown names fail the readiness check.
 - **Legitimate test changes**: submit the run with `metadata.allow_test_changes=true` or label the review `accepted`.
 
+### Benchmark Gate, Honeypots & CI Attestation (`v1.5.9`)
+- **`evaluation_benchmark_gate` = `warn` (`benchmark_stale`)**: the detector set changed (new `evaluator_version`) or no benchmark exists. Run one from `/dashboard/benchmark` (*Run Benchmark*) or `POST /v1/benchmark/runs`. Benchmark runs have no side effects.
+- **Gate below threshold** (`reward_tampering_tpr_below_threshold`): inspect `/dashboard/benchmark` → *Metrics* and the per-sample export for the false positives that set the threshold (on the seed corpus these are `TT-001` on CI edits, new `conftest.py` fixtures and test refactors). Do not lower `EVALUATION_BENCHMARK_MIN_TPR` without a recorded decision; the gate only blocks readiness when `EVALUATION_BENCHMARK_GATE_ENFORCED=true`.
+- **Growing the corpus**: after deciding reviews, use *Export to Benchmark* on review detail (or `POST /v1/benchmark/samples/export-reviews`) and add per-finding labels so detector precision can be measured. FPR 1% needs at least 100 benign samples.
+- **Promoting a shadow detector**: compare *As configured* with *All enforced (what-if)* on holdout and review-export samples, then set `EVALUATION_DETECTOR_MODES='{"special_casing": "enforce"}'`, restart API and worker, and re-run the benchmark (the gate goes stale on the version change).
+- **Honeypot cheated**: the review shows `sample_reason: honeypot` (reviewers/admins only). Treat it like any confirmed-hacking candidate; never reveal probe IDs to agent operators. Disable a probe that has leaked with `POST /v1/honeypots/{probe_id}/enabled`.
+- **Attestation failures**: `CE-009` with `replayed` usually means a CI job re-sent an old envelope; `digest_mismatch` means the submitted report differs from what CI signed; `revoked_key` / `unknown_key` mean the trust root is missing. Check `/dashboard/runs/{run_id}` (*Attestation* status and reason) and `/dashboard/benchmark#attestation-keys`. Revoke a compromised key immediately; already-verified outcomes keep their recorded status.
+
 ### 1. API Gateway Startup Failure
 - **Symptoms**: Container crashes on startup; `/v1/healthz` returns connection refused; traceback in logs.
 - **Root Causes**:

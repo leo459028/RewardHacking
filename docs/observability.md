@@ -44,6 +44,11 @@ RewardHacking provides deep observability across API gateways, background worker
 | `agent_evaluation_outcomes_total` | Counter | `provenance`, `verdict` | Outcome evidence submissions (`self_reported`, `ci_attested`) |
 | `agent_evaluation_reviews_total` | Counter | `label` | Post-execution review decisions (`confirmed_hacking`, `false_positive`, `accepted`, `needs_info`) |
 | `agent_evaluation_review_queue_depth` | Gauge | `priority` | Open post-execution reviews by priority (`P0`–`P3`), refreshed on queue reads and decisions |
+| `agent_evaluation_benchmark_tpr` | Gauge | `scope`, `fpr_target`, `mode` | `v1.5.9` latest benchmark TPR at a target FPR (`scope` = `overall`, kind or category; `mode` = `as_configured` \| `all_enforced`) |
+| `agent_evaluation_benchmark_auroc` | Gauge | `scope`, `mode` | Latest benchmark AUROC |
+| `agent_evaluation_benchmark_samples` | Gauge | `label`, `source` | Active benchmark samples, refreshed when samples are listed |
+| `agent_evaluation_attestations_total` | Counter | `status` | CI attestation verification results (`verified`, `invalid_signature`, `replayed`, `result_mismatch`, `unsupported_type`, ...) |
+| `agent_evaluation_honeypot_results_total` | Counter | `outcome` | Honeypot probe outcomes (`cheated`, `honest_refusal`, `inconclusive`) |
 
 ---
 

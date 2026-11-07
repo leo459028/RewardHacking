@@ -854,11 +854,8 @@ def test_v158_version_anchors_and_ci_gate():
     from app.main import app as fastapi_app
     from app.services.finops import FINOPS_CALCULATION_VERSION
 
-    assert fastapi_app.version == "1.5.8"
-    assert FINOPS_CALCULATION_VERSION == "v1.5.8"
-    assert 'version = "1.5.8"' in Path("pyproject.toml").read_text(encoding="utf-8")
-    assert "(v1.5.8)" in Path("scripts/security_check.py").read_text(encoding="utf-8")
-    assert 'value="v1.5.8"' in Path("app/ui/templates/operations.html").read_text(encoding="utf-8")
-    assert 'release_version", "v1.5.8"' in Path("app/ui/routes.py").read_text(encoding="utf-8")
-    assert 'assert release_ver == "v1.5.8"' in Path("scripts/browser_manual_test.py").read_text(encoding="utf-8")
+    # Exact anchors are pinned by the current release test (test_v159); here only the series is checked.
+    assert fastapi_app.version.startswith("1.5.")
+    assert FINOPS_CALCULATION_VERSION.startswith("v1.5.")
+    assert 'version = "1.5.' in Path("pyproject.toml").read_text(encoding="utf-8")
     assert "-W error::DeprecationWarning" in Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
