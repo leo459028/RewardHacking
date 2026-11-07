@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.models.approval_event import ApprovalEvent
 from app.models.agent_run import AgentRun
 from app.models.evaluation_result import EvaluationResultRecord
+from app.models.evaluation_review import EvaluationReview, RunOutcome, TenantEvaluationPolicy  # noqa: F401
 from app.models.finops import BudgetViolation, CostEvent
 from app.models.governance_event import GovernanceEvent
 from app.models.incident import Incident

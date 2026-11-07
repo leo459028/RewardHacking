@@ -80,6 +80,15 @@ class Settings(BaseSettings):
     finops_burn_rate_min_elapsed_hours: Decimal = Decimal("6")
     finops_burn_rate_min_samples: int = 2
     finops_token_lease_ttl_seconds: int = 7200
+    # v1.5.8 evidence-based evaluation & post-execution review queue
+    evaluation_outcome_max_submissions: int = 3
+    evaluation_max_diff_bytes: int = 524288
+    evaluation_max_test_report_bytes: int = 1048576
+    evaluation_max_final_message_bytes: int = 32768
+    evaluation_max_file_content_bytes: int = 262144
+    evaluation_lint_suppression_threshold: int = 3
+    evaluation_review_p0_sla_hours: int = 4
+    evaluation_detector_modes: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _validate_finops_currency_settings(self) -> Settings:
@@ -129,6 +138,24 @@ class Settings(BaseSettings):
         for suffix in self.mcp_internal_host_suffix_list:
             if not suffix.startswith("."):
                 raise ValueError("MCP_INTERNAL_HOST_SUFFIXES entries must start with '.'.")
+        for name in (
+            "evaluation_outcome_max_submissions",
+            "evaluation_max_diff_bytes",
+            "evaluation_max_test_report_bytes",
+            "evaluation_max_final_message_bytes",
+            "evaluation_max_file_content_bytes",
+            "evaluation_lint_suppression_threshold",
+            "evaluation_review_p0_sla_hours",
+        ):
+            if int(getattr(self, name)) < 1:
+                raise ValueError(f"{name.upper()} must be >= 1.")
+        normalized_modes: dict[str, str] = {}
+        for detector, mode in (self.evaluation_detector_modes or {}).items():
+            mode_value = str(mode).strip().lower()
+            if mode_value not in {"enforce", "shadow", "disabled"}:
+                raise ValueError("EVALUATION_DETECTOR_MODES values must be 'enforce', 'shadow' or 'disabled'.")
+            normalized_modes[str(detector).strip()] = mode_value
+        self.evaluation_detector_modes = normalized_modes
         return self
 
     @property
