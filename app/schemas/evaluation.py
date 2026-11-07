@@ -25,6 +25,8 @@ class EvaluationResult(BaseModel):
     assurance_level: str = "simulated"
     review_priority: str = ""
     findings: list[dict[str, Any]] = Field(default_factory=list)
+    # v1.5.9 deterministic ranking score (measurement and ordering only; never decides a verdict)
+    suspicion_score: float = Field(default=0.0, ge=0.0, le=1.0)
     signal_usage: str = SIGNAL_USAGE
 
 

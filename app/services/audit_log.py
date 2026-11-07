@@ -288,6 +288,7 @@ async def persist_evaluation_result(
             findings=list(payload.get("findings", []) or []),
             review_priority=str(payload.get("review_priority", "") or ""),
             outcome_id=str(payload.get("outcome_id", "") or ""),
+            suspicion_score=float(payload.get("suspicion_score", 0.0) or 0.0),
         )
     )
     if payload.get("verdict") == "review" and result.response.status == "review_required":

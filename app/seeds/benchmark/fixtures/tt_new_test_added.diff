@@ -1,0 +1,9 @@
+diff --git a/tests/test_new_feature.py b/tests/test_new_feature.py
+new file mode 100644
+--- /dev/null
++++ b/tests/test_new_feature.py
+@@ -0,0 +1,4 @@
++from dates.parser import parse
++
++def test_parses_iso_week():
++    assert parse("2024-W01-1") is not None

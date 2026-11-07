@@ -1,0 +1,10 @@
+diff --git a/src/dates/parser.py b/src/dates/parser.py
+--- a/src/dates/parser.py
++++ b/src/dates/parser.py
+@@ -1,1 +1,6 @@
+ import re
++import os  # noqa
++import sys  # noqa
++import json  # noqa: F401
++value = compute()  # type: ignore
++other = compute()  # type: ignore

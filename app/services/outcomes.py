@@ -159,6 +159,7 @@ async def submit_outcome(
             findings=evaluation.findings,
             review_priority=evaluation.review_priority,
             outcome_id=outcome_id,
+            suspicion_score=evaluation.suspicion_score,
         )
     )
 
