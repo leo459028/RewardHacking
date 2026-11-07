@@ -4,6 +4,7 @@ import json
 import re
 import secrets
 import uuid
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -51,6 +52,14 @@ from app.services.audit_log import (
     resolve_dlq_run,
     revoke_tenant_api_key,
     update_tenant,
+)
+from app.schemas.control_plane import McpServerCreateRequest
+from app.services.mcp_gateway import (
+    get_mcp_server_map,
+    list_mcp_servers,
+    persist_preflight_audit as persist_mcp_preflight_audit,
+    preflight as mcp_preflight,
+    upsert_mcp_server,
 )
 from app.services.orchestrator import AgentOrchestrator
 from app.services.quota import (
@@ -289,10 +298,15 @@ async def dashboard_control_plane(
     plans = await latest_execution_plans(session, limit=25)
     step_summaries = await execution_plan_step_summaries(session, [plan.run_id for plan in plans])
     open_breakers = await state_store.list_open_breakers()
+    mcp_servers = await list_mcp_servers(session, get_settings())
+    open_mcp_breakers = await state_store.list_open_mcp_breakers()
     return templates.TemplateResponse(
         request,
         "control_plane.html",
         {
+            "mcp_servers": mcp_servers,
+            "open_mcp_breakers": open_mcp_breakers,
+            "control_plane_error": str(request.query_params.get("error", ""))[:300],
             "workflows": workflows,
             "tools": tools,
             "plans": plans,
@@ -349,6 +363,20 @@ async def dashboard_control_plane_tool_upsert(
     requires_approval = str(form.get("requires_approval", "")).lower() in {"on", "true", "1", "yes"}
     quota_str = str(form.get("quota_per_minute", "")).strip()
     metadata: dict[str, object] = {"source": "dashboard"}
+    mcp_server_id = str(form.get("mcp_server_id", "")).strip()
+    if mcp_server_id:
+        metadata["mcp_server_id"] = mcp_server_id
+    required_args = [a.strip() for a in str(form.get("required_args", "")).split(",") if a.strip()]
+    sensitive_args = [a.strip() for a in str(form.get("sensitive_args", "")).split(",") if a.strip()]
+    if required_args or sensitive_args:
+        metadata["input_schema"] = {
+            "type": "object",
+            "required": required_args,
+            "properties": {name: {"type": "string", "maxLength": 4096} for name in dict.fromkeys(required_args + sensitive_args)},
+            "additionalProperties": True,
+        }
+    if sensitive_args:
+        metadata["sensitive_fields"] = sensitive_args
     if quota_str:
         try:
             q_val = int(quota_str)
@@ -356,15 +384,103 @@ async def dashboard_control_plane_tool_upsert(
                 metadata["quota_per_minute"] = q_val
         except ValueError:
             pass
-    await create_tool_definition(
+    try:
+        await create_tool_definition(
+            session,
+            tool_name=tool_name,
+            display_name=display_name,
+            status=status,
+            task_types=task_types,
+            requires_approval=requires_approval,
+            risk_level=risk_level,
+            metadata=metadata,
+        )
+    except ValueError as exc:
+        return RedirectResponse(f"/dashboard/control-plane?error={quote(str(exc))}", status_code=303)
+    return RedirectResponse("/dashboard/control-plane", status_code=303)
+
+
+@router.post("/dashboard/control-plane/mcp-servers", response_class=HTMLResponse)
+async def dashboard_control_plane_mcp_server_upsert(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    form = await request.form()
+    raw_quota = str(form.get("quota_per_minute", "60")).strip() or "60"
+    allowed_tenants = [t.strip() for t in str(form.get("allowed_tenants", "")).split(",") if t.strip()]
+    try:
+        payload = McpServerCreateRequest(
+            mcp_server_id=str(form.get("mcp_server_id", "")).strip(),
+            display_name=str(form.get("display_name", "")).strip(),
+            transport=str(form.get("transport", "stdio")).strip() or "stdio",
+            endpoint=str(form.get("endpoint", "local://stdio")).strip() or "local://stdio",
+            trust_tier=str(form.get("trust_tier", "verified")).strip() or "verified",
+            status=str(form.get("status", "active")).strip() or "active",
+            requires_approval=str(form.get("requires_approval", "")).lower() in {"on", "true", "1", "yes"},
+            risk_level=str(form.get("risk_level", "low")).strip() or "low",
+            quota_per_minute=int(raw_quota),
+            allowed_tenants=allowed_tenants,
+            metadata={"source": "dashboard"},
+        )
+    except (ValueError, ValidationError) as exc:
+        message = str(exc).splitlines()[0] if str(exc) else "Invalid MCP server payload."
+        return RedirectResponse(f"/dashboard/control-plane?error={quote(message)}", status_code=303)
+    server = await upsert_mcp_server(session, payload.model_dump(), get_settings())
+    await persist_governance_event(
         session,
-        tool_name=tool_name,
-        display_name=display_name,
-        status=status,
-        task_types=task_types,
-        requires_approval=requires_approval,
-        risk_level=risk_level,
-        metadata=metadata,
+        tenant_id="default",
+        user_id="dashboard-admin",
+        event_type="mcp_server.upserted",
+        decision="recorded",
+        reason=f"MCP server {server['mcp_server_id']} upserted from Control Plane Dashboard.",
+        details={"mcp_server_id": server["mcp_server_id"], "trust_tier": server["trust_tier"], "source": "dashboard"},
+    )
+    return RedirectResponse("/dashboard/control-plane", status_code=303)
+
+
+@router.post("/dashboard/control-plane/mcp-servers/{mcp_server_id}/breaker/open", response_class=HTMLResponse)
+async def dashboard_control_plane_mcp_breaker_open(
+    mcp_server_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+):
+    form = await request.form()
+    reason = str(form.get("reason", "")).strip() or "Manual MCP circuit breaker trip from Control Plane Dashboard"
+    server_map = await get_mcp_server_map(session, get_settings())
+    if mcp_server_id not in server_map:
+        return RedirectResponse(f"/dashboard/control-plane?error={quote('MCP server not found.')}", status_code=303)
+    await state_store.open_mcp_breaker(mcp_server_id, reason=reason, ttl_seconds=get_settings().tool_breaker_ttl_seconds)
+    await persist_governance_event(
+        session,
+        tenant_id="default",
+        user_id="dashboard-admin",
+        event_type="mcp_breaker.opened",
+        decision="tripped",
+        reason=reason,
+        details={"mcp_server_id": mcp_server_id, "source": "dashboard"},
+    )
+    return RedirectResponse("/dashboard/control-plane", status_code=303)
+
+
+@router.post("/dashboard/control-plane/mcp-servers/{mcp_server_id}/breaker/close", response_class=HTMLResponse)
+async def dashboard_control_plane_mcp_breaker_close(
+    mcp_server_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+):
+    form = await request.form()
+    reason = str(form.get("reason", "")).strip() or "Manual MCP circuit breaker reset from Control Plane Dashboard"
+    await state_store.close_mcp_breaker(mcp_server_id)
+    await persist_governance_event(
+        session,
+        tenant_id="default",
+        user_id="dashboard-admin",
+        event_type="mcp_breaker.closed",
+        decision="reset",
+        reason=reason,
+        details={"mcp_server_id": mcp_server_id, "source": "dashboard"},
     )
     return RedirectResponse("/dashboard/control-plane", status_code=303)
 
@@ -521,9 +637,10 @@ async def dashboard_governance_tenant_upsert(
             high_risk_limit_per_hour=hr_limit,
         )
         if status != "active":
+            created_tenant = await get_tenant(session, tenant_id)
             await update_tenant(
                 session,
-                tenant_id,
+                created_tenant,
                 display_name=display_name,
                 status=status,
                 request_limit_per_minute=req_limit,
@@ -544,7 +661,7 @@ async def dashboard_governance_tenant_upsert(
     else:
         await update_tenant(
             session,
-            tenant_id,
+            existing,
             display_name=display_name,
             status=status,
             request_limit_per_minute=req_limit,
@@ -702,6 +819,7 @@ async def dashboard_costs(
     project_id: str | None = None,
     cost_center: str | None = None,
     resolution_status: str | None = None,
+    mcp_server_id: str | None = None,
     session: AsyncSession = Depends(get_session),
     state_store: RunStateStore = Depends(get_state_store),
 ):
@@ -711,6 +829,7 @@ async def dashboard_costs(
         tenant_id=selected_tenant,
         project_id=project_id or None,
         cost_center=cost_center or None,
+        mcp_server_id=mcp_server_id or None,
     )
     leases = await list_tenant_token_leases(session, state_store, tenant_id=selected_tenant)
     pricing = await list_pricing_items(session)
@@ -733,6 +852,7 @@ async def dashboard_costs(
             "tenant_id": selected_tenant,
             "project_id": project_id or "",
             "cost_center": cost_center or "",
+            "mcp_server_id": mcp_server_id or "",
             "resolution_status": resolution_status or "",
             "active": "costs",
         },
@@ -783,6 +903,7 @@ async def dashboard_costs_export(
     start_date: str | None = None,
     end_date: str | None = None,
     settled_only: bool = False,
+    mcp_server_id: str | None = None,
     session: AsyncSession = Depends(get_session),
 ):
     selected_tenant = tenant_id or "default"
@@ -797,6 +918,7 @@ async def dashboard_costs_export(
         end_date=end_date or None,
         settled_only=settled_only,
         export_format=format,
+        mcp_server_id=mcp_server_id or None,
     )
     if format == "csv":
         csv_text = render_cost_ledger_csv(export_data)
@@ -1189,8 +1311,12 @@ async def dashboard_admin_finops_pricing_disable(
 
 
 @router.get("/dashboard/operations", response_class=HTMLResponse)
-async def dashboard_operations(request: Request, session: AsyncSession = Depends(get_session)):
-    readiness = await compute_operations_readiness(session, settings=get_settings())
+async def dashboard_operations(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+):
+    readiness = await compute_operations_readiness(session, settings=get_settings(), state_store=state_store)
     evidence = await list_operations_evidence(session, limit=25)
     gates = await list_release_gates(session, limit=10)
     gate_items = {}
@@ -1234,12 +1360,13 @@ async def dashboard_operations_evidence(
 async def dashboard_operations_release_gate(
     request: Request,
     session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
 ):
     form = await request.form()
-    readiness = await compute_operations_readiness(session, settings=get_settings())
+    readiness = await compute_operations_readiness(session, settings=get_settings(), state_store=state_store)
     await persist_release_gate(
         session,
-        release_version=str(form.get("release_version", "v1.5.6")),
+        release_version=str(form.get("release_version", "v1.5.7")),
         created_by=str(form.get("created_by", "dashboard")),
         trace_id=str(getattr(request.state, "trace_id", "")),
         readiness=readiness,
@@ -1447,7 +1574,17 @@ async def submit_playground(
         if tool.strip()
     ]
     try:
+        raw_tool_args = str(form.get("tool_arguments", "") or "").strip()
+        parsed_tool_args: dict = {}
+        if raw_tool_args:
+            try:
+                parsed_tool_args = json.loads(raw_tool_args)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"tool_arguments must be valid JSON: {exc.msg}") from exc
+            if not isinstance(parsed_tool_args, dict) or not all(isinstance(v, dict) for v in parsed_tool_args.values()):
+                raise ValueError("tool_arguments must be a JSON object mapping tool_name to an argument object.")
         agent_request = AgentRequest(
+            tool_arguments=parsed_tool_args,
             tenant_id=str(form.get("tenant_id", "default")) or "default",
             user_id=str(form.get("user_id", "demo-user")),
             task_type=str(form.get("task_type", "analysis")),
@@ -1602,8 +1739,44 @@ async def submit_playground(
                         "form": form,
                     },
                 )
+        mcp_result = await mcp_preflight(
+            session,
+            state_store,
+            settings=settings,
+            agent_request=agent_request,
+        )
+        if mcp_result.quota_error is not None:
+            mcp_quota = mcp_result.quota_error["quota"]
+            await persist_governance_event(
+                session,
+                tenant_id=agent_request.tenant_id or "default",
+                user_id=agent_request.user_id,
+                event_type="mcp_server_quota_exceeded",
+                decision="blocked",
+                reason=mcp_result.quota_error["message"],
+                limit_value=mcp_quota.limit,
+                used=mcp_quota.used,
+                remaining=mcp_quota.remaining,
+                details={
+                    "bucket": mcp_quota.bucket,
+                    "mcp_server_id": mcp_result.quota_error["mcp_server_id"],
+                    "source": "playground",
+                },
+            )
+            return templates.TemplateResponse(
+                request,
+                "playground.html",
+                {
+                    "active": "playground",
+                    "submitted": False,
+                    "error": f"mcp_server_quota_exceeded: {mcp_result.quota_error['message']}",
+                    "result": None,
+                    "form": form,
+                },
+            )
+        agent_request = mcp_result.sanitized_request
         disabled_tools = list((await state_store.get_open_breakers(agent_request.allowed_tools)).keys())
-        result = orchestrator.submit(agent_request, disabled_tools=disabled_tools)
+        result = orchestrator.submit(agent_request, disabled_tools=disabled_tools, mcp_context=mcp_result.context)
         if settings.quota_enabled:
             hr_res = await check_high_risk_quota(
                 state_store,
@@ -1642,6 +1815,12 @@ async def submit_playground(
             result=result,
         )
         await persist_orchestration_result(session, agent_request, result)
+        await persist_mcp_preflight_audit(
+            session,
+            run_id=result.response.run_id,
+            request=agent_request,
+            context=mcp_result.context,
+        )
         run = await get_run(session, result.response.run_id)
         plan = await get_execution_plan_for_run(session, result.response.run_id)
         if run is not None:

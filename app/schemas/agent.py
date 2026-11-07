@@ -19,6 +19,7 @@ class AgentRequest(BaseModel):
     allowed_tools: list[str] = Field(default_factory=list)
     constraints: AgentConstraints = Field(default_factory=AgentConstraints)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    tool_arguments: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class AgentResponse(BaseModel):

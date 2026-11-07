@@ -477,6 +477,8 @@ class CostEventRecord(FinOpsBaseModel):
     calculation_version: str
     allocation_tags: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    mcp_server_id: str = ""
+    tool_id: str = ""
     created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True, use_enum_values=True)
@@ -501,6 +503,7 @@ class RunCostSummaryResponse(FinOpsBaseModel):
     provider_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
     model_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
     tool_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
+    mcp_server_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
     step_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
     cost_type_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
     resource_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
@@ -614,6 +617,8 @@ class TenantCostSummaryResponse(FinOpsBaseModel):
     top_workflows: list[dict[str, Any]] = Field(default_factory=list)
     top_tools: list[dict[str, Any]] = Field(default_factory=list)
     top_users: list[dict[str, Any]] = Field(default_factory=list)
+    mcp_server_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
+    top_mcp_servers: list[dict[str, Any]] = Field(default_factory=list)
     failed_run_cost: SerializedDecimal = Decimal("0")
     replay_cost: SerializedDecimal = Decimal("0")
     cache_savings: SerializedDecimal = Decimal("0")
@@ -670,6 +675,7 @@ class TenantCostExportResponse(FinOpsBaseModel):
     adjustment_total: SerializedDecimal = Decimal("0")
     currency_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
     cost_center_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
+    mcp_server_breakdown: dict[str, SerializedDecimal] = Field(default_factory=dict)
     items: list[CostEventRecord] = Field(default_factory=list)
 
 

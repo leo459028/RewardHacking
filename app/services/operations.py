@@ -104,6 +104,7 @@ async def compute_operations_readiness(
     session: AsyncSession,
     *,
     settings: Settings,
+    state_store: object | None = None,
 ) -> OperationsReadiness:
     now = datetime.now(timezone.utc)
     queued_cutoff = now - timedelta(minutes=settings.release_gate_max_queued_age_minutes)
@@ -202,6 +203,23 @@ async def compute_operations_readiness(
                 elevated_burn_policies += 1
     burn_health_status = "warn" if (critical_burn_policies or elevated_burn_policies) else "pass"
 
+    from app.services.mcp_gateway import CORE_MCP_SERVER_IDS, list_mcp_servers
+
+    mcp_servers = await list_mcp_servers(session, settings)
+    mcp_index = {item["mcp_server_id"]: item for item in mcp_servers}
+    unhealthy_core = [
+        server_id
+        for server_id in CORE_MCP_SERVER_IDS
+        if server_id not in mcp_index
+        or mcp_index[server_id]["status"] != "active"
+        or mcp_index[server_id]["trust_tier"] == "blocked"
+    ]
+    open_mcp_breakers: dict = {}
+    if state_store is not None and hasattr(state_store, "list_open_mcp_breakers"):
+        open_mcp_breakers = await state_store.list_open_mcp_breakers()
+    open_core_breakers = [server_id for server_id in CORE_MCP_SERVER_IDS if server_id in open_mcp_breakers]
+    mcp_health_status = "warn" if (unhealthy_core or open_core_breakers or open_mcp_breakers) else "pass"
+
     checks = [
         OperationsCheck(
             check_key="audit_retention_config",
@@ -272,6 +290,21 @@ async def compute_operations_readiness(
                 "critical_burn_policies": critical_burn_policies,
                 "elevated_burn_policies": elevated_burn_policies,
                 "evaluated_tenants": len(active_policy_tenants),
+            },
+        ),
+        OperationsCheck(
+            check_key="mcp_gateway_registry_health",
+            status=mcp_health_status,
+            title="Safe MCP Gateway registry health",
+            detail=(
+                f"{len(mcp_servers)} MCP servers registered; unhealthy core servers: {', '.join(unhealthy_core) or 'none'}; "
+                f"open MCP breakers: {', '.join(sorted(open_mcp_breakers)) or 'none'}."
+            ),
+            metadata={
+                "registered_servers": len(mcp_servers),
+                "unhealthy_core_servers": unhealthy_core,
+                "open_core_breakers": open_core_breakers,
+                "open_mcp_breakers": sorted(open_mcp_breakers),
             },
         ),
     ]

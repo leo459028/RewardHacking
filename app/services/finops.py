@@ -56,7 +56,7 @@ from app.schemas.finops import (
 )
 from app.services.run_state import RunStateStore
 
-FINOPS_CALCULATION_VERSION = "v1.5.6"
+FINOPS_CALCULATION_VERSION = "v1.5.7"
 _ATTRIBUTION_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _ALLOCATION_TAG_KEY_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 _VALID_ENVIRONMENTS = {"dev", "staging", "prod"}
@@ -149,6 +149,7 @@ class RunCostSummary:
     provider_breakdown: dict[str, Decimal] = field(default_factory=dict)
     model_breakdown: dict[str, Decimal] = field(default_factory=dict)
     tool_breakdown: dict[str, Decimal] = field(default_factory=dict)
+    mcp_server_breakdown: dict[str, Decimal] = field(default_factory=dict)
     step_breakdown: dict[str, Decimal] = field(default_factory=dict)
     cost_type_breakdown: dict[str, Decimal] = field(default_factory=dict)
     resource_breakdown: dict[str, Decimal] = field(default_factory=dict)
@@ -210,6 +211,8 @@ class TenantCostSummary:
     top_workflows: list[dict] = field(default_factory=list)
     top_tools: list[dict] = field(default_factory=list)
     top_users: list[dict] = field(default_factory=list)
+    mcp_server_breakdown: dict[str, Decimal] = field(default_factory=dict)
+    top_mcp_servers: list[dict] = field(default_factory=list)
     failed_run_cost: Decimal = Decimal("0")
     replay_cost: Decimal = Decimal("0")
     cache_savings: Decimal = Decimal("0")
@@ -455,6 +458,8 @@ def cost_to_dict(item: CostEvent) -> dict:
         "calculation_version": item.calculation_version,
         "allocation_tags": item.allocation_tags,
         "metadata": item.metadata_payload,
+        "mcp_server_id": str((item.allocation_tags or {}).get("mcp_server_id") or (item.metadata_payload or {}).get("mcp_server_id") or ""),
+        "tool_id": str((item.allocation_tags or {}).get("tool_id") or (item.metadata_payload or {}).get("tool_id") or ""),
         "created_at": item.created_at,
     }
 
@@ -926,10 +931,15 @@ async def _lookup_pricing(session: AsyncSession, usage: UsageEvent) -> PricingCa
     candidates = list((await session.scalars(stmt)).all())
     matched: list[PricingCatalog] = []
 
+    mcp_server_for_pricing = usage.mcp_server_id if usage.resource_type == "tool" else ""
     for item in candidates:
         if item.token_type not in {usage_token_type, "not_applicable"}:
             continue
-        if item.model_name not in {usage.model_name, ""}:
+        item_mcp = str((item.metadata_payload or {}).get("mcp_server_id") or "") if mcp_server_for_pricing else ""
+        mcp_match = bool(mcp_server_for_pricing) and (item.model_name == mcp_server_for_pricing or item_mcp == mcp_server_for_pricing)
+        if item_mcp and item_mcp != mcp_server_for_pricing:
+            continue
+        if item.model_name not in {usage.model_name, ""} and not mcp_match:
             continue
         eff_from = _ensure_utc(item.effective_from)
         eff_to = _ensure_utc(item.effective_to)
@@ -966,6 +976,11 @@ async def _lookup_pricing(session: AsyncSession, usage: UsageEvent) -> PricingCa
 
     def _candidate_rank(item: PricingCatalog) -> tuple[int, int, int, int, int, int, int]:
         model_exact = 1 if item.model_name == usage.model_name else 0
+        if mcp_server_for_pricing and (
+            item.model_name == mcp_server_for_pricing
+            or str((item.metadata_payload or {}).get("mcp_server_id") or "") == mcp_server_for_pricing
+        ):
+            model_exact = 2
         if (item.scope_type == "tenant_override" or item.is_tenant_override) and (
             item.scope_id == usage.tenant_id or not item.scope_id
         ):
@@ -1347,6 +1362,13 @@ async def _record_cost_for_usage(session: AsyncSession, usage: UsageEvent) -> Co
     }
     if usage_meta.get("explicit_environment"):
         cost_meta["explicit_environment"] = usage_meta["explicit_environment"]
+    if usage.mcp_server_id or usage.tool_id:
+        cost_meta["mcp_server_id"] = usage.mcp_server_id
+        cost_meta["tool_id"] = usage.tool_id
+        cost_meta["mcp_servers"] = list(usage_meta.get("mcp_servers") or ([usage.mcp_server_id] if usage.mcp_server_id else []))
+        cost_meta["tools"] = list(usage_meta.get("tools") or ([usage.tool_id] if usage.tool_id else []))
+        if isinstance(usage_meta.get("tool_mcp_map"), dict):
+            cost_meta["tool_mcp_map"] = dict(usage_meta["tool_mcp_map"])
     if ignored_untrusted:
         cost_meta["ignored_untrusted_overrides"] = ignored_untrusted
     if alloc_warnings:
@@ -1405,6 +1427,8 @@ async def _record_cost_for_usage(session: AsyncSession, usage: UsageEvent) -> Co
             "org_id": usage.org_id,
             "environment": usage.environment,
             "custom": custom_alloc_tags,
+            **({"mcp_server_id": usage.mcp_server_id} if usage.mcp_server_id else {}),
+            **({"tool_id": usage.tool_id} if usage.tool_id else {}),
         },
         metadata_payload=cost_meta,
     )
@@ -1607,6 +1631,64 @@ def _resolve_run_allocation(route: dict, meta: dict) -> tuple[dict[str, object],
     return extract_allocation(meta)
 
 
+_TOOL_RISK_ORDER = {"": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+
+
+def _mcp_tool_attribution(request: AgentRequest, plan: ExecutionPlan | None) -> dict[str, object]:
+    """Resolve per-tool / per-MCP-server attribution for the step_2_tools usage event (v1.5.7)."""
+    route = dict((plan.model_route if plan is not None else {}) or {})
+    mcp_route = dict(route.get("mcp_route") or {})
+    selected = list((plan.selected_tools if plan is not None else []) or [])
+    tool_names = [str(item.get("name")) for item in selected if item.get("name")]
+    if not tool_names:
+        tool_names = list(request.allowed_tools or ["summarize"])
+    tool_mcp_map = {str(k): str(v) for k, v in dict(mcp_route.get("tool_mcp_map") or {}).items()}
+    if not tool_mcp_map:
+        gateway_map = dict(((request.metadata or {}).get("mcp_gateway") or {}).get("tool_mcp_map") or {})
+        tool_mcp_map = {str(k): str(v) for k, v in gateway_map.items()}
+    for name in tool_names:
+        tool_mcp_map.setdefault(name, "mcp-core-local")
+    tool_mcp_map = {name: tool_mcp_map[name] for name in tool_names}
+    mcp_servers = list(dict.fromkeys(tool_mcp_map.values()))
+    primary = str(mcp_route.get("primary_mcp_server_id") or (mcp_servers[0] if mcp_servers else "mcp-core-local"))
+    risk = ""
+    for item in selected:
+        level = str(item.get("risk_level") or "")
+        if _TOOL_RISK_ORDER.get(level, 0) > _TOOL_RISK_ORDER.get(risk, 0):
+            risk = level
+    primary_tool = tool_names[0] if tool_names else "summarize"
+    return {
+        "mcp_server_id": primary,
+        "mcp_servers": mcp_servers,
+        "tool_mcp_map": tool_mcp_map,
+        "tools": tool_names,
+        "tool_id": primary_tool[:128],
+        "tool_name": primary_tool[:128],
+        "tool_provider": primary[:128],
+        "tool_risk_level": (risk or "low")[:32],
+    }
+
+
+def _mcp_usage_fields(attr: dict[str, object]) -> dict[str, object]:
+    return {
+        "tool_id": attr["tool_id"],
+        "tool_name": attr["tool_name"],
+        "tool_provider": attr["tool_provider"],
+        "mcp_server_id": str(attr["mcp_server_id"])[:128],
+        "tool_risk_level": attr["tool_risk_level"],
+    }
+
+
+def _mcp_usage_metadata(attr: dict[str, object]) -> dict[str, object]:
+    return {
+        "mcp_server_id": attr["mcp_server_id"],
+        "mcp_servers": list(attr["mcp_servers"]),  # type: ignore[arg-type]
+        "tool_mcp_map": dict(attr["tool_mcp_map"]),  # type: ignore[arg-type]
+        "tools": list(attr["tools"]),  # type: ignore[arg-type]
+        "tool_id": attr["tool_id"],
+    }
+
+
 async def record_submit_usage(
     session: AsyncSession,
     *,
@@ -1643,6 +1725,7 @@ async def record_submit_usage(
         alloc_meta_extra["allocation_tags"] = custom_tags
 
     tool_count = max(1, len(request.allowed_tools or ["summarize"]))
+    mcp_attr = _mcp_tool_attribution(request, plan)
     input_tokens = _token_estimate(request.prompt + " " + request.goal)
     events = [
         UsageEventCreateRequest(
@@ -1684,7 +1767,8 @@ async def record_submit_usage(
             quantity=tool_count,
             tool_call_count=tool_count,
             phase="estimated",
-            metadata={"tools": request.allowed_tools, **alloc_meta_extra},
+            **_mcp_usage_fields(mcp_attr),
+            metadata={**_mcp_usage_metadata(mcp_attr), "requested_tools": request.allowed_tools, **alloc_meta_extra},
         ),
         UsageEventCreateRequest(
             tenant_id=run.tenant_id,
@@ -1769,6 +1853,7 @@ async def record_actual_usage(
         cost_meta_base["allocation_tags"] = custom_tags
     transcript = run.evaluation_summary.get("execution_event", {}).get("payload", {}).get("tool_transcript", [])
     output_tokens = _token_estimate(run.execution_output or "worker_attempt")
+    mcp_attr = _mcp_tool_attribution(request, plan)
     events = [
         UsageEventCreateRequest(
             tenant_id=run.tenant_id,
@@ -1787,7 +1872,8 @@ async def record_actual_usage(
             tool_call_count=max(1, len(transcript)),
             phase="actual",
             status=usage_status,
-            metadata={**cost_meta_base, "completed_tools": len(transcript)},
+            **_mcp_usage_fields(mcp_attr),
+            metadata={**cost_meta_base, **_mcp_usage_metadata(mcp_attr), "completed_tools": len(transcript)},
         ),
         UsageEventCreateRequest(
             tenant_id=run.tenant_id,
@@ -2348,6 +2434,15 @@ def _matching_costs_for_policy(
         elif policy.scope == "tool":
             if item.resource_type != "tool":
                 continue
+            target_tool = policy.tool_id or policy.scope_id
+            if target_tool and target_tool not in _cost_tools(item):
+                continue
+        elif policy.scope == "mcp_server":
+            target_server = policy.scope_id
+            if target_server and target_server not in _cost_mcp_servers(item):
+                continue
+            if not target_server and not _cost_mcp_servers(item):
+                continue
         if policy.provider and item.provider != policy.provider:
             continue
         if policy.model_name and item.model_name and item.model_name != policy.model_name:
@@ -2594,6 +2689,17 @@ async def evaluate_budget_policies(
         else (run_costs[0].workflow_id if run_costs else run.task_type)
     )
     allowed_tools = list((run.request_payload or {}).get("allowed_tools") or [])
+    run_mcp_servers = set(
+        str(item)
+        for item in (
+            ((plan.model_route or {}).get("mcp_route") or {}).get("mcp_servers")
+            if plan is not None
+            else (((run.request_payload or {}).get("metadata") or {}).get("mcp_gateway") or {}).get("mcp_servers")
+        )
+        or []
+    )
+    for item in run_costs:
+        run_mcp_servers.update(_cost_mcp_servers(item))
 
     decision_priority = {
         "allow": 0,
@@ -2647,6 +2753,10 @@ async def evaluate_budget_policies(
         if policy.scope == "tool":
             target_tool = policy.tool_id or policy.scope_id
             if target_tool and target_tool not in allowed_tools:
+                continue
+        if policy.scope == "mcp_server":
+            target_server = policy.scope_id
+            if target_server and target_server not in run_mcp_servers:
                 continue
 
         matching_costs = _matching_costs_for_policy(tenant_costs, policy, now, run_id=run.run_id)
@@ -3405,7 +3515,8 @@ async def run_cost_summary(session: AsyncSession, *, run_id: str) -> RunCostSumm
     tenant_id = usage[0].tenant_id if usage else (costs[0].tenant_id if costs else "")
     provider_breakdown = _breakdown(settled_costs, "provider")
     model_breakdown = _breakdown(settled_costs, "model_name")
-    tool_breakdown = _breakdown(settled_costs, "tool_id")
+    tool_breakdown = _tool_cost_distribution(settled_costs)
+    mcp_server_breakdown = _mcp_server_cost_distribution(settled_costs)
     step_breakdown = _breakdown(settled_costs, "step_id")
     cost_type_breakdown = _breakdown(settled_costs, "cost_type")
     resource_breakdown = _breakdown(settled_costs, "resource_type")
@@ -3451,6 +3562,7 @@ async def run_cost_summary(session: AsyncSession, *, run_id: str) -> RunCostSumm
         provider_breakdown=provider_breakdown,
         model_breakdown=model_breakdown,
         tool_breakdown=tool_breakdown,
+        mcp_server_breakdown=mcp_server_breakdown,
         step_breakdown=step_breakdown,
         cost_type_breakdown=cost_type_breakdown,
         resource_breakdown=resource_breakdown,
@@ -3473,6 +3585,7 @@ async def tenant_cost_summary(
     tenant_id: str,
     project_id: str | None = None,
     cost_center: str | None = None,
+    mcp_server_id: str | None = None,
 ) -> TenantCostSummary:
     settings = get_settings()
     base_currency = settings.finops_base_currency
@@ -3485,6 +3598,9 @@ async def tenant_cost_summary(
     operational_costs = [c for c in costs if c.cost_type != "adjustment"]
     adjustment_costs = [c for c in costs if c.cost_type == "adjustment"]
     settled_costs = _settled_cost_events(operational_costs)
+    if mcp_server_id:
+        settled_costs = [c for c in settled_costs if _cost_matches_mcp_server(c, mcp_server_id)]
+        adjustment_costs = []
 
     now = datetime.now(timezone.utc)
     today = now.date()
@@ -3512,8 +3628,6 @@ async def tenant_cost_summary(
             total_by_model[item.model_name] = total_by_model.get(item.model_name, Decimal("0")) + amount
         if item.workflow_id:
             total_by_workflow[item.workflow_id] = total_by_workflow.get(item.workflow_id, Decimal("0")) + amount
-        if item.step_id:
-            total_by_tool[item.step_id] = total_by_tool.get(item.step_id, Decimal("0")) + amount
         if item.user_id:
             total_by_user[item.user_id] = total_by_user.get(item.user_id, Decimal("0")) + amount
         if item.created_at and item.created_at.date() == today:
@@ -3521,6 +3635,8 @@ async def tenant_cost_summary(
         if item.created_at and item.created_at.year == today.year and item.created_at.month == today.month:
             month_cost += amount
 
+    total_by_tool.update(_tool_cost_distribution(settled_costs))
+    mcp_server_breakdown = _mcp_server_cost_distribution(settled_costs)
     total_tax_amount = _money(sum((_tax_base_cost(item) for item in settled_costs), Decimal("0")))
     total_billed_base_cost = _money(sum((_billed_base_cost(item) for item in settled_costs), Decimal("0")))
     adjustment_total = _money(sum((_pre_tax_base_cost(item) for item in adjustment_costs), Decimal("0")))
@@ -3585,6 +3701,8 @@ async def tenant_cost_summary(
         top_workflows=_top_items(total_by_workflow, "workflow_id"),
         top_tools=_top_items(total_by_tool, "tool_id"),
         top_users=_top_items(total_by_user, "user_id"),
+        mcp_server_breakdown=mcp_server_breakdown,
+        top_mcp_servers=_top_items(mcp_server_breakdown, "mcp_server_id"),
         failed_run_cost=_money(sum((_pre_tax_base_cost(item) for item in settled_costs if item.cost_type == "failed_retry"), Decimal("0"))),
         replay_cost=_money(sum((_pre_tax_base_cost(item) for item in settled_costs if item.replay_attempt_id), Decimal("0"))),
         cache_savings=cache_savings,
@@ -3604,6 +3722,74 @@ def _breakdown(costs: list[CostEvent], attr: str) -> dict[str, Decimal]:
             continue
         values[key] = values.get(key, Decimal("0")) + _pre_tax_base_cost(item)
     return {key: _money(value) for key, value in values.items()}
+
+
+def _cost_tools(item: CostEvent) -> list[str]:
+    meta = dict(item.metadata_payload or {})
+    tools = [str(t) for t in (meta.get("tools") or []) if str(t)]
+    if not tools:
+        tool_id = str(meta.get("tool_id") or (item.allocation_tags or {}).get("tool_id") or "")
+        if tool_id:
+            tools = [tool_id]
+    return tools
+
+
+def _cost_mcp_servers(item: CostEvent) -> list[str]:
+    meta = dict(item.metadata_payload or {})
+    servers = [str(t) for t in (meta.get("mcp_servers") or []) if str(t)]
+    if not servers:
+        server = str(meta.get("mcp_server_id") or (item.allocation_tags or {}).get("mcp_server_id") or "")
+        if server:
+            servers = [server]
+    return servers
+
+
+def _split_evenly(amount: Decimal, count: int) -> list[Decimal]:
+    if count <= 0:
+        return []
+    share = _money(amount / count)
+    parts = [share] * (count - 1)
+    parts.append(_money(amount - share * (count - 1)))
+    return parts
+
+
+def _tool_cost_distribution(costs: list[CostEvent]) -> dict[str, Decimal]:
+    """Split each tool CostEvent evenly across its tools; the last tool absorbs rounding."""
+    values: dict[str, Decimal] = {}
+    for item in costs:
+        if item.resource_type != "tool":
+            continue
+        tools = _cost_tools(item)
+        if not tools:
+            continue
+        for name, part in zip(tools, _split_evenly(_pre_tax_base_cost(item), len(tools))):
+            values[name] = values.get(name, Decimal("0")) + part
+    return {key: _money(value) for key, value in values.items()}
+
+
+def _mcp_server_cost_distribution(costs: list[CostEvent]) -> dict[str, Decimal]:
+    values: dict[str, Decimal] = {}
+    for item in costs:
+        if item.resource_type != "tool":
+            continue
+        meta = dict(item.metadata_payload or {})
+        tools = _cost_tools(item)
+        tool_map = dict(meta.get("tool_mcp_map") or {})
+        if tools and tool_map:
+            owners = [str(tool_map.get(name) or meta.get("mcp_server_id") or "mcp-core-local") for name in tools]
+        else:
+            owners = _cost_mcp_servers(item)
+        if not owners:
+            continue
+        for owner, part in zip(owners, _split_evenly(_pre_tax_base_cost(item), len(owners))):
+            values[owner] = values.get(owner, Decimal("0")) + part
+    return {key: _money(value) for key, value in values.items()}
+
+
+def _cost_matches_mcp_server(item: CostEvent, mcp_server_id: str | None) -> bool:
+    if not mcp_server_id:
+        return True
+    return mcp_server_id in _cost_mcp_servers(item)
 
 
 def _top_items(values: dict[str, Decimal], key: str) -> list[dict]:
@@ -3815,6 +4001,8 @@ CSV_EXPORT_COLUMNS: tuple[str, ...] = (
     "billing_period_start",
     "billing_period_end",
     "calculation_version",
+    "mcp_server_id",
+    "tool_id",
 )
 
 _CSV_NUMERIC_COLUMNS = {
@@ -3879,6 +4067,7 @@ async def export_tenant_cost_ledger(
     settled_only: bool = False,
     limit: int | None = None,
     export_format: str = "json",
+    mcp_server_id: str | None = None,
 ) -> TenantCostExportResponse:
     settings = get_settings()
     base_currency = settings.finops_base_currency
@@ -3900,6 +4089,8 @@ async def export_tenant_cost_ledger(
         if cost_type and item.cost_type != cost_type:
             continue
         if provider and item.provider != provider:
+            continue
+        if mcp_server_id and not _cost_matches_mcp_server(item, mcp_server_id):
             continue
         created = _ensure_utc(item.created_at)
         if start_dt is not None and created is not None and created < start_dt:
@@ -3947,6 +4138,7 @@ async def export_tenant_cost_ledger(
         adjustment_total=adjustment_total,
         currency_breakdown=currency_breakdown,
         cost_center_breakdown=cost_center_breakdown,
+        mcp_server_breakdown=_mcp_server_cost_distribution(exp_settled_op),
         items=[CostEventRecord(**cost_to_dict(r)) for r in export_rows],
     )
 

@@ -3,8 +3,8 @@ from __future__ import annotations
 from app.schemas.agent import AgentRequest
 
 
-def compute_risk_score(request: AgentRequest, prompt_flags: list[str]) -> float:
-    score = 0.10
+def compute_risk_score(request: AgentRequest, prompt_flags: list[str], mcp_risk_delta: float = 0.0) -> float:
+    score = 0.10 + max(0.0, float(mcp_risk_delta or 0.0))
 
     if prompt_flags:
         score += min(0.30, 0.10 * len(prompt_flags))

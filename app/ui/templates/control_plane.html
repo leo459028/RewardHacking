@@ -14,14 +14,20 @@
   <div class="stat"><div class="stat-label">Tools</div><div class="stat-value">{{ tools|length }}</div></div>
   <div class="stat"><div class="stat-label">Plans</div><div class="stat-value">{{ plans|length }}</div></div>
   <div class="stat"><div class="stat-label">Open Breakers</div><div class="stat-value">{{ open_breakers|length }}</div></div>
+  <div class="stat"><div class="stat-label">MCP Servers</div><div class="stat-value">{{ mcp_servers|length }}</div></div>
+  <div class="stat"><div class="stat-label">Open MCP Breakers</div><div class="stat-value">{{ open_mcp_breakers|length }}</div></div>
 </section>
+
+{% if control_plane_error %}
+<div class="error" role="alert">{{ control_plane_error }}</div>
+{% endif %}
 
 <section class="detail-grid">
   <div class="panel">
     <h2>Register / Update Workflow <span class="heading-note">工作流動態註冊</span></h2>
     <form method="post" action="/dashboard/control-plane/workflows" class="form-grid">
       <label>Workflow ID
-        <input name="workflow_id" value="analysis-v156" required>
+        <input name="workflow_id" value="analysis-v157" required>
       </label>
       <label>Version
         <input name="version" value="v1" required>
@@ -36,7 +42,7 @@
         </select>
       </label>
       <label>Display Name
-        <input name="display_name" value="Analysis V1.5.6 Workflow" required>
+        <input name="display_name" value="Analysis V1.5.7 Workflow" required>
       </label>
       <label>Status
         <select name="status">
@@ -81,11 +87,123 @@
           <option value="true">true</option>
         </select>
       </label>
+      <label>MCP Server ID
+        <input name="mcp_server_id" list="mcp-server-options" placeholder="mcp-core-local">
+        <datalist id="mcp-server-options">
+          {% for server in mcp_servers %}<option value="{{ server.mcp_server_id }}">{% endfor %}
+        </datalist>
+      </label>
+      <label>Required Args (CSV)
+        <input name="required_args" placeholder="query">
+      </label>
+      <label>Sensitive Args (CSV)
+        <input name="sensitive_args" placeholder="api_token">
+      </label>
       <label>&nbsp;
         <button class="button" type="submit">Save Tool</button>
       </label>
     </form>
   </div>
+</section>
+
+<section class="detail-grid">
+  <div class="panel">
+    <h2>Register / Update MCP Server <span class="heading-note">MCP 伺服器註冊與信任分級</span></h2>
+    <form method="post" action="/dashboard/control-plane/mcp-servers" class="form-grid">
+      <label>MCP Server ID
+        <input name="mcp_server_id" value="mcp-qa-v157" required pattern="[a-zA-Z0-9._\-]{2,113}">
+      </label>
+      <label>Display Name
+        <input name="display_name" value="QA Verified MCP Server">
+      </label>
+      <label>Transport
+        <select name="transport">
+          <option value="stdio">stdio</option>
+          <option value="sse">sse</option>
+          <option value="streamable_http">streamable_http</option>
+        </select>
+      </label>
+      <label>Endpoint
+        <input name="endpoint" value="local://stdio">
+      </label>
+      <label>Trust Tier
+        <select name="trust_tier">
+          <option value="verified">verified</option>
+          <option value="trusted">trusted</option>
+          <option value="untrusted">untrusted</option>
+          <option value="blocked">blocked</option>
+        </select>
+      </label>
+      <label>Quota / Min
+        <input name="quota_per_minute" type="number" value="60" min="1">
+      </label>
+      <label>Allowed Tenants (CSV)
+        <input name="allowed_tenants" placeholder="(empty = all tenants)">
+      </label>
+      <label>Requires Approval
+        <select name="requires_approval">
+          <option value="">false</option>
+          <option value="true">true</option>
+        </select>
+      </label>
+      <label>&nbsp;
+        <button class="button" type="submit">Save MCP Server</button>
+      </label>
+    </form>
+  </div>
+  <div class="panel">
+    <h2>Safe MCP Gateway Rules <span class="heading-note">閘道器規則摘要</span></h2>
+    <ul>
+      <li><strong>blocked / disabled</strong> server or tenant not allowed &rarr; <code>denied</code> (zero cost, no lease)</li>
+      <li><strong>untrusted</strong> server &rarr; <code>awaiting_approval</code> (+0.20 risk, <code>mcp_trust_gate</code>)</li>
+      <li><strong>external network</strong> with <code>no_external_network=True</code> &rarr; <code>awaiting_approval</code> (+0.15 risk, <code>mcp_network_gate</code>)</li>
+      <li><strong>open MCP breaker</strong> &rarr; <code>awaiting_approval</code> (<code>mcp_breaker_gate</code>)</li>
+      <li><strong>argument injection</strong> &rarr; <code>denied</code> + high incident; <strong>schema violation</strong> &rarr; <code>denied</code> (or approval when <code>schema_enforcement=escalate</code>)</li>
+      <li>Sensitive arguments are redacted to <code>[REDACTED]</code> before persistence.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>MCP Server Registry <span class="heading-note">MCP 伺服器註冊表與熔斷器</span></h2>
+  <table id="mcp-server-registry">
+    <thead><tr><th>Server ID</th><th>Transport</th><th>Endpoint</th><th>Trust Tier</th><th>External Net</th><th>Quota / Min</th><th>Status</th><th>Source</th><th>Breaker</th><th>Actions</th></tr></thead>
+    <tbody>
+    {% for server in mcp_servers %}
+      {% set mcp_open = server.mcp_server_id in open_mcp_breakers %}
+      <tr data-mcp-server="{{ server.mcp_server_id }}">
+        <td>{{ server.mcp_server_id }}</td>
+        <td>{{ server.transport }}</td>
+        <td>{{ server.endpoint }}</td>
+        <td><span class="status {{ 'failed' if server.trust_tier in ['blocked', 'untrusted'] else 'completed' }}">{{ server.trust_tier }}</span></td>
+        <td>{{ server.is_external_network }}</td>
+        <td>{{ server.quota_per_minute }}</td>
+        <td>{{ server.status }}</td>
+        <td>{{ server.source }}</td>
+        <td class="mcp-breaker-state">
+          {% if mcp_open %}<span class="status failed">OPEN</span>{% else %}<span class="status completed">CLOSED</span>{% endif %}
+        </td>
+        <td>
+          <div class="inline-form">
+            {% if mcp_open %}
+            <form method="post" action="/dashboard/control-plane/mcp-servers/{{ server.mcp_server_id }}/breaker/close">
+              <input type="hidden" name="reason" value="Manual MCP reset from Control Plane portal">
+              <button class="button secondary" type="submit">Reset MCP Breaker</button>
+            </form>
+            {% else %}
+            <form method="post" action="/dashboard/control-plane/mcp-servers/{{ server.mcp_server_id }}/breaker/open">
+              <input type="hidden" name="reason" value="Manual MCP trip from Control Plane portal">
+              <button class="button danger" type="submit">Trip MCP Breaker</button>
+            </form>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="10" class="muted">No MCP servers.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
 </section>
 
 <section class="panel">
@@ -111,7 +229,7 @@
 <section class="panel">
   <h2>Tool Registry <span class="heading-note">工具註冊表與熔斷器控制</span></h2>
   <table>
-    <thead><tr><th>Tool</th><th>Tasks</th><th>Risk</th><th>Approval</th><th>Quota / Min</th><th>Circuit Breaker</th><th>Status</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Tool</th><th>Tasks</th><th>Risk</th><th>Approval</th><th>Quota / Min</th><th>MCP Server</th><th>Schema / Redaction</th><th>Circuit Breaker</th><th>Status</th><th>Actions</th></tr></thead>
     <tbody>
     {% for tool in tools %}
       {% set t_name = tool.tool_name if tool.tool_name is defined else tool.get("tool_name") %}
@@ -123,6 +241,12 @@
         <td>{{ tool.risk_level if tool.risk_level is defined else tool.get("risk_level") }}</td>
         <td>{{ tool.requires_approval if tool.requires_approval is defined else tool.get("requires_approval") }}</td>
         <td>{{ t_meta.get("quota_per_minute", "default") }}</td>
+        <td>{{ t_meta.get("mcp_server_id", "mcp-core-local") }}</td>
+        <td>
+          {% set t_schema = t_meta.get("input_schema") or {} %}
+          {% if t_schema %}required: {{ (t_schema.get("required") or [])|join(", ") or "-" }}{% else %}<span class="muted">no schema</span>{% endif %}
+          {% if t_meta.get("sensitive_fields") %}<br>redact: {{ t_meta.get("sensitive_fields")|join(", ") }}{% endif %}
+        </td>
         <td>
           {% if is_open %}
           <span class="status failed">OPEN</span><br><span class="muted">{{ open_breakers.get(t_name) }}</span>
@@ -147,7 +271,7 @@
         </td>
       </tr>
     {% else %}
-      <tr><td colspan="8" class="muted">No tools.</td></tr>
+      <tr><td colspan="10" class="muted">No tools.</td></tr>
     {% endfor %}
     </tbody>
   </table>

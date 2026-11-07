@@ -20,7 +20,7 @@
 </section>
 
 <section class="panel">
-  <h2>Cost Summary <span class="heading-note">V1.5.6 FinOps ledger</span></h2>
+  <h2>Cost Summary <span class="heading-note">V1.5.7 FinOps ledger</span></h2>
   <section class="grid stats">
     <div class="stat"><div class="stat-label">Estimated</div><div class="stat-value">{{ cost_summary.estimated_cost|decimal_plain }} {{ cost_summary.currency }}</div></div>
     <div class="stat"><div class="stat-label">Actual</div><div class="stat-value">{{ cost_summary.actual_cost|decimal_plain }} {{ cost_summary.currency }}</div></div>
@@ -50,6 +50,28 @@
       <tr><td>{{ key }}</td><td>{{ value|decimal_plain }} {{ cost_summary.base_currency }}</td></tr>
     {% else %}
       <tr><td colspan="2" class="muted">No cost events recorded.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <h3>MCP Server Breakdown <span class="heading-note">MCP 伺服器成本歸屬</span></h3>
+  <table id="run-mcp-server-breakdown">
+    <thead><tr><th>MCP Server</th><th>Settled Pre-Tax Cost ({{ cost_summary.base_currency }})</th></tr></thead>
+    <tbody>
+    {% for key, value in cost_summary.mcp_server_breakdown.items() %}
+      <tr><td>{{ key }}</td><td>{{ value|decimal_plain }} {{ cost_summary.base_currency }}</td></tr>
+    {% else %}
+      <tr><td colspan="2" class="muted">No MCP-attributed tool cost.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <h3>Tool Breakdown <span class="heading-note">工具成本歸屬</span></h3>
+  <table>
+    <thead><tr><th>Tool</th><th>Settled Pre-Tax Cost ({{ cost_summary.base_currency }})</th></tr></thead>
+    <tbody>
+    {% for key, value in cost_summary.tool_breakdown.items() %}
+      <tr><td>{{ key }}</td><td>{{ value|decimal_plain }} {{ cost_summary.base_currency }}</td></tr>
+    {% else %}
+      <tr><td colspan="2" class="muted">No tool cost.</td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -253,12 +275,12 @@
   <div class="panel">
     <h2>Tool Executions <span class="heading-note">工具呼叫明細</span></h2>
     <table>
-      <thead><tr><th>Tool</th><th>Status</th><th>Sandbox</th></tr></thead>
+      <thead><tr><th>Tool</th><th>Status</th><th>MCP Server</th><th>Sandbox (sanitized_arguments)</th></tr></thead>
       <tbody>
       {% for item in tool_executions %}
-        <tr><td>{{ item.tool_name }}</td><td>{{ item.status }}</td><td><pre>{{ item.sandbox_policy|json_pretty }}</pre></td></tr>
+        <tr><td>{{ item.tool_name }}</td><td>{{ item.status }}</td><td>{{ (item.sandbox_policy or {}).get("mcp_server_id", "-") }}</td><td><pre>{{ item.sandbox_policy|json_pretty }}</pre></td></tr>
       {% else %}
-        <tr><td colspan="3" class="muted">No tool executions.</td></tr>
+        <tr><td colspan="4" class="muted">No tool executions.</td></tr>
       {% endfor %}
       </tbody>
     </table>

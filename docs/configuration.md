@@ -1,6 +1,6 @@
 # Configuration & Environment Variables
 
-> **Configuration Version**: `v1.5.6`
+> **Configuration Version**: `v1.5.7`
 > **Source Model**: `app/core/config.py` (`Settings`) via `pydantic-settings`  
 > **Template**: `.env.example`
 
@@ -59,6 +59,11 @@ Application configuration is loaded from environment variables and local `.env` 
 | `FINOPS_TOKEN_LEASE_TTL_SECONDS` | `900` | Default expiration TTL in seconds (`60`–`86400`) for active pre-execution token budget leases |
 | `USER_REQUEST_LIMIT_PER_MINUTE` | `30` | Default sliding-window request limit per user per minute (`1`–`10000`) |
 | `TOOL_CALL_LIMIT_PER_MINUTE` | `60` | Default sliding-window invocation limit per tool per minute (`1`–`10000`) |
+| `MCP_SERVER_CALL_LIMIT_PER_MINUTE` | `90` | `v1.5.7` default per-MCP-server call limit per minute when a server has no `quota_per_minute` (`>= 1`) |
+| `MCP_SCHEMA_ENFORCEMENT_MODE` | `deny` | Default tool schema violation handling: `deny` (hard deny) or `escalate` (`awaiting_approval`); overridable per tool via `metadata.schema_enforcement` |
+| `MCP_INTERNAL_HOST_SUFFIXES` | `.internal.local,.mcp.internal` | Comma-separated hostname suffixes (each must start with `.`) treated as internal network for `sse` / `streamable_http` endpoints; matching uses the parsed hostname, never string prefixes |
+| `MCP_TOOL_ARGUMENTS_MAX_DEPTH` | `8` | Maximum nesting depth of a tool argument object (`>= 1`) |
+| `MCP_TOOL_ARGUMENTS_MAX_BYTES` | `65536` | Maximum serialized size of a tool argument object in bytes (`>= 1`) |
 | `TOOL_BREAKER_FAILURE_THRESHOLD` | `3` | Consecutive worker execution failures (`1`–`100`) before a tool's circuit breaker automatically trips to `open` |
 | `TOOL_BREAKER_TTL_SECONDS` | `300` | Default TTL in seconds (`30`–`86400`) for an open tool circuit breaker in Redis |
 

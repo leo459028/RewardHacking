@@ -1,7 +1,7 @@
 # System Architecture
 
-> **Architecture Version**: `v1.5.2`  
-> **Previous Versions**: `v1.5.1`, `v1.5.0`, `v1.4.0`
+> **Architecture Version**: `v1.5.7`  
+> **Previous Versions**: `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.4.0`
 
 This document details the system topology, component responsibilities, and request dataflow of the **RewardHacking Guardrail** platform.
 
@@ -21,6 +21,24 @@ This document details the system topology, component responsibilities, and reque
 - **`v0.1.0` - `v0.5.0` (Historical)**: Core guarded asynchronous execution, Kafka worker queues, retry/DLQ, Redis run states, human approval TTL gates, and evaluator transcripts.
 
 ---
+
+## Safe MCP Gateway Layer (`v1.5.7`)
+
+```
+submit (/v1/agent/submit, /submit-with-details, /dashboard/playground)
+  -> tenant / user / tool quotas
+  -> mcp_gateway.preflight()   # per-MCP-server quota, registry & trust tier, transport,
+                               # MCP breakers, input schema + scan profiles, redaction
+  -> PolicyEngine.evaluate(mcp_context=...)  # hard-deny flags before risk threshold
+  -> ControlPlanePlanner.plan()  # mcp_route, sanitized_arguments, mcp_* approval gates
+  -> record_submit_usage()     # UsageEvent.mcp_server_id / tool_* attribution
+worker process_run_by_id()
+  -> mcp_gateway.worker_context()  # re-check blocked/tenant; skip escalations once approved
+  -> BoundedToolExecutor(allowed_tool_map=registry)  # dynamic tools + output schema
+  -> record_actual_usage()
+```
+
+All three submit entry points call the single shared `preflight()` so MCP behavior cannot drift between the REST API and the Dashboard.
 
 ## Component Topology
 

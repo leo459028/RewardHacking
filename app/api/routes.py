@@ -52,9 +52,14 @@ from app.schemas.audit import (
 from app.schemas.control_plane import (
     ExecutionPlanRecord,
     ExecutionPlanStepRecord,
+    McpBreakerRecord,
+    McpServerCreateRequest,
+    McpServerRecord,
     ReplayBundleResponse,
     RunTraceResponse,
     ToolBreakerActionRequest,
+    ToolArgumentValidationRequest,
+    ToolArgumentValidationResponse,
     ToolBreakerRecord,
     ToolDefinitionCreateRequest,
     ToolDefinitionRecord,
@@ -130,6 +135,16 @@ from app.services.audit_log import (
     resolve_dlq_run,
     revoke_tenant_api_key,
     update_tenant,
+)
+from app.services.mcp_gateway import (
+    get_mcp_server_map,
+    list_mcp_servers,
+    persist_preflight_audit as persist_mcp_preflight_audit,
+    preflight as mcp_preflight,
+    resolve_tool_mcp_server,
+    sanitize_tool_arguments,
+    upsert_mcp_server,
+    validate_tool_arguments,
 )
 from app.services.orchestrator import AgentOrchestrator
 from app.services.quota import (
@@ -470,6 +485,7 @@ def _run_cost_response(summary) -> RunCostSummaryResponse:
         provider_breakdown=summary.provider_breakdown,
         model_breakdown=summary.model_breakdown,
         tool_breakdown=summary.tool_breakdown,
+        mcp_server_breakdown=summary.mcp_server_breakdown,
         step_breakdown=summary.step_breakdown,
         cost_type_breakdown=summary.cost_type_breakdown,
         resource_breakdown=summary.resource_breakdown,
@@ -520,6 +536,8 @@ def _tenant_cost_response(summary) -> TenantCostSummaryResponse:
         top_workflows=summary.top_workflows,
         top_tools=summary.top_tools,
         top_users=summary.top_users,
+        mcp_server_breakdown=summary.mcp_server_breakdown,
+        top_mcp_servers=summary.top_mcp_servers,
         failed_run_cost=summary.failed_run_cost,
         replay_cost=summary.replay_cost,
         cache_savings=summary.cache_savings,
@@ -640,6 +658,170 @@ async def post_control_plane_tool(
     return _tool_record(tool_to_dict(tool))
 
 
+def _mcp_server_record(server: dict, open_breakers: dict) -> McpServerRecord:
+    return McpServerRecord(**server, breaker_open=server["mcp_server_id"] in open_breakers)
+
+
+@router.get("/control-plane/mcp-servers", response_model=list[McpServerRecord])
+async def get_control_plane_mcp_servers(
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    open_breakers = await state_store.list_open_mcp_breakers()
+    return [_mcp_server_record(item, open_breakers) for item in await list_mcp_servers(session, get_settings())]
+
+
+@router.post("/control-plane/mcp-servers", response_model=McpServerRecord)
+async def post_control_plane_mcp_server(
+    payload: McpServerCreateRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+):
+    require_role(auth_context, "admin")
+    server = await upsert_mcp_server(session, payload.model_dump(), get_settings())
+    await persist_governance_event(
+        session,
+        tenant_id=auth_context.tenant_id or "default",
+        user_id=_actor(auth_context),
+        event_type="mcp_server.upserted",
+        decision="recorded",
+        reason=f"MCP server {server['mcp_server_id']} upserted.",
+        details={
+            "mcp_server_id": server["mcp_server_id"],
+            "transport": server["transport"],
+            "trust_tier": server["trust_tier"],
+            "is_external_network": server["is_external_network"],
+            "source": "api",
+        },
+    )
+    open_breakers = await state_store.list_open_mcp_breakers()
+    return _mcp_server_record(server, open_breakers)
+
+
+async def _set_mcp_breaker(
+    *,
+    mcp_server_id: str,
+    open_breaker: bool,
+    reason: str,
+    ttl_seconds: int,
+    actor: str,
+    tenant_id: str,
+    source: str,
+    session: AsyncSession,
+    state_store: RunStateStore,
+) -> McpBreakerRecord:
+    server_map = await get_mcp_server_map(session, get_settings())
+    if mcp_server_id not in server_map:
+        raise HTTPException(status_code=404, detail="MCP server not found.")
+    if open_breaker:
+        await state_store.open_mcp_breaker(mcp_server_id, reason=reason, ttl_seconds=ttl_seconds)
+    else:
+        await state_store.close_mcp_breaker(mcp_server_id)
+    await persist_governance_event(
+        session,
+        tenant_id=tenant_id,
+        user_id=actor,
+        event_type="mcp_breaker.opened" if open_breaker else "mcp_breaker.closed",
+        decision="tripped" if open_breaker else "reset",
+        reason=reason,
+        details={"mcp_server_id": mcp_server_id, "ttl_seconds": ttl_seconds, "source": source},
+    )
+    info = (await state_store.get_open_mcp_breakers([mcp_server_id])).get(mcp_server_id, {})
+    return McpBreakerRecord(
+        mcp_server_id=mcp_server_id,
+        status="open" if open_breaker else "closed",
+        is_open=open_breaker,
+        reason=reason,
+        opened_at=str(info.get("opened_at", "")),
+        ttl_seconds=ttl_seconds,
+    )
+
+
+@router.post("/control-plane/mcp-servers/{mcp_server_id}/breaker/open", response_model=McpBreakerRecord)
+async def post_open_mcp_breaker(
+    mcp_server_id: str,
+    payload: ToolBreakerActionRequest | None = None,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+):
+    require_role(auth_context, "admin")
+    settings = get_settings()
+    return await _set_mcp_breaker(
+        mcp_server_id=mcp_server_id,
+        open_breaker=True,
+        reason=payload.reason if payload is not None else "Manual MCP circuit breaker trip by admin",
+        ttl_seconds=payload.ttl_seconds if payload is not None else settings.tool_breaker_ttl_seconds,
+        actor=_actor(auth_context),
+        tenant_id=auth_context.tenant_id or "default",
+        source="api",
+        session=session,
+        state_store=state_store,
+    )
+
+
+@router.post("/control-plane/mcp-servers/{mcp_server_id}/breaker/close", response_model=McpBreakerRecord)
+async def post_close_mcp_breaker(
+    mcp_server_id: str,
+    payload: ToolBreakerActionRequest | None = None,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
+):
+    require_role(auth_context, "admin")
+    return await _set_mcp_breaker(
+        mcp_server_id=mcp_server_id,
+        open_breaker=False,
+        reason=payload.reason if payload is not None else "Manual MCP circuit breaker reset by admin",
+        ttl_seconds=0,
+        actor=_actor(auth_context),
+        tenant_id=auth_context.tenant_id or "default",
+        source="api",
+        session=session,
+        state_store=state_store,
+    )
+
+
+@router.post("/control-plane/tools/{tool_name}/validate-arguments", response_model=ToolArgumentValidationResponse)
+async def post_validate_tool_arguments(
+    tool_name: str,
+    payload: ToolArgumentValidationRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "viewer", "operator", "admin")
+    settings = get_settings()
+    tool = next((item for item in await list_tool_definitions(session) if item["tool_name"] == tool_name), None)
+    if tool is None:
+        raise HTTPException(status_code=404, detail="Tool not found.")
+    result = validate_tool_arguments(
+        tool_name,
+        payload.arguments,
+        tool,
+        max_depth=settings.mcp_tool_arguments_max_depth,
+        max_bytes=settings.mcp_tool_arguments_max_bytes,
+    )
+    sanitized, redacted = sanitize_tool_arguments(
+        payload.arguments,
+        sensitive_fields=list((tool.get("metadata") or {}).get("sensitive_fields") or []),
+        allow_pii=payload.allow_pii,
+        max_depth=settings.mcp_tool_arguments_max_depth,
+        tool_name=tool_name,
+    )
+    return ToolArgumentValidationResponse(
+        tool_name=tool_name,
+        mcp_server_id=resolve_tool_mcp_server(tool),
+        valid=result.valid,
+        errors=result.errors,
+        injection_flags=result.injection_flags,
+        sanitized_arguments=sanitized,
+        redacted_fields=redacted,
+    )
+
+
 @router.get("/control-plane/breakers", response_model=list[ToolBreakerRecord])
 async def get_control_plane_breakers(
     auth_context: AuthContext = Depends(get_auth_context),
@@ -731,9 +913,10 @@ async def post_close_tool_breaker(
 async def get_operations_readiness(
     auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
 ):
     require_role(auth_context, "viewer", "operator", "admin")
-    readiness = await compute_operations_readiness(session, settings=get_settings())
+    readiness = await compute_operations_readiness(session, settings=get_settings(), state_store=state_store)
     return OperationsReadinessResponse(
         status=readiness.status,
         summary=readiness.summary,
@@ -779,9 +962,10 @@ async def post_release_gate(
     request: Request,
     auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
+    state_store: RunStateStore = Depends(get_state_store),
 ):
     require_role(auth_context, "admin")
-    readiness = await compute_operations_readiness(session, settings=get_settings())
+    readiness = await compute_operations_readiness(session, settings=get_settings(), state_store=state_store)
     gate = await persist_release_gate(
         session,
         release_version=payload.release_version,
@@ -1228,6 +1412,7 @@ async def get_tenant_cost(
     tenant_id: str,
     project_id: str | None = None,
     cost_center: str | None = None,
+    mcp_server_id: str | None = None,
     auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
@@ -1239,6 +1424,7 @@ async def get_tenant_cost(
             tenant_id=tenant_id,
             project_id=project_id,
             cost_center=cost_center,
+            mcp_server_id=mcp_server_id or None,
         )
     )
 
@@ -1326,6 +1512,7 @@ async def export_tenant_cost(
     end_date: str | None = None,
     settled_only: bool = False,
     limit: int | None = Query(default=None, ge=1, le=10000),
+    mcp_server_id: str | None = None,
     auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
@@ -1343,6 +1530,7 @@ async def export_tenant_cost(
         settled_only=settled_only,
         limit=limit,
         export_format=format,
+        mcp_server_id=mcp_server_id or None,
     )
     if format == "csv":
         csv_text = render_cost_ledger_csv(export_data)
@@ -1637,8 +1825,30 @@ async def submit_agent_request(
                 "tool_quota_exceeded",
                 f"Tool call quota exceeded for {blocked_tool}.",
             )
+    mcp_result = await mcp_preflight(
+        session,
+        state_store,
+        settings=settings,
+        agent_request=agent_request,
+    )
+    if mcp_result.quota_error is not None:
+        mcp_quota = mcp_result.quota_error["quota"]
+        await persist_governance_event(
+            session,
+            tenant_id=agent_request.tenant_id or "default",
+            user_id=agent_request.user_id,
+            event_type="mcp_server_quota_exceeded",
+            decision="blocked",
+            reason=mcp_result.quota_error["message"],
+            limit_value=mcp_quota.limit,
+            used=mcp_quota.used,
+            remaining=mcp_quota.remaining,
+            details={"bucket": mcp_quota.bucket, "mcp_server_id": mcp_result.quota_error["mcp_server_id"]},
+        )
+        return _quota_response("mcp_server_quota_exceeded", mcp_result.quota_error["message"])
+    agent_request = mcp_result.sanitized_request
     disabled_tools = list((await state_store.get_open_breakers(agent_request.allowed_tools)).keys())
-    result = orchestrator.submit(agent_request, disabled_tools=disabled_tools)
+    result = orchestrator.submit(agent_request, disabled_tools=disabled_tools, mcp_context=mcp_result.context)
     if settings.quota_enabled:
         high_risk_quota = await check_high_risk_quota(
             state_store,
@@ -1679,6 +1889,12 @@ async def submit_agent_request(
         result=result,
     )
     await persist_orchestration_result(session, agent_request, result)
+    await persist_mcp_preflight_audit(
+        session,
+        run_id=result.response.run_id,
+        request=agent_request,
+        context=mcp_result.context,
+    )
     run = await get_run(session, result.response.run_id)
     plan = await get_execution_plan_for_run(session, result.response.run_id)
     if run is not None:
@@ -1812,8 +2028,30 @@ async def submit_agent_request_with_details(
                 "tool_quota_exceeded",
                 f"Tool call quota exceeded for {blocked_tool}.",
             )
+    mcp_result = await mcp_preflight(
+        session,
+        state_store,
+        settings=settings,
+        agent_request=agent_request,
+    )
+    if mcp_result.quota_error is not None:
+        mcp_quota = mcp_result.quota_error["quota"]
+        await persist_governance_event(
+            session,
+            tenant_id=agent_request.tenant_id or "default",
+            user_id=agent_request.user_id,
+            event_type="mcp_server_quota_exceeded",
+            decision="blocked",
+            reason=mcp_result.quota_error["message"],
+            limit_value=mcp_quota.limit,
+            used=mcp_quota.used,
+            remaining=mcp_quota.remaining,
+            details={"bucket": mcp_quota.bucket, "mcp_server_id": mcp_result.quota_error["mcp_server_id"]},
+        )
+        return _quota_response("mcp_server_quota_exceeded", mcp_result.quota_error["message"])
+    agent_request = mcp_result.sanitized_request
     disabled_tools = list((await state_store.get_open_breakers(agent_request.allowed_tools)).keys())
-    result = orchestrator.submit(agent_request, disabled_tools=disabled_tools)
+    result = orchestrator.submit(agent_request, disabled_tools=disabled_tools, mcp_context=mcp_result.context)
     if settings.quota_enabled:
         high_risk_quota = await check_high_risk_quota(
             state_store,
@@ -1854,6 +2092,12 @@ async def submit_agent_request_with_details(
         result=result,
     )
     await persist_orchestration_result(session, agent_request, result)
+    await persist_mcp_preflight_audit(
+        session,
+        run_id=result.response.run_id,
+        request=agent_request,
+        context=mcp_result.context,
+    )
     run = await get_run(session, result.response.run_id)
     plan = await get_execution_plan_for_run(session, result.response.run_id)
     if run is not None:

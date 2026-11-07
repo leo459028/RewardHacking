@@ -1,6 +1,6 @@
 # Redis Keyspace & Rate Limiting
 
-> **Specification Version**: `v1.5.6`
+> **Specification Version**: `v1.5.7`
 > **Redis Client**: `redis-py` (asyncio)
 > **Default URI**: `redis://localhost:6379/0`
 
@@ -30,6 +30,8 @@ Redis serves as the high-throughput, low-latency ephemeral datastore in **Reward
 | `tenant:{tenant_id}:lease:{run_id}` | String (JSON) | 900s (default) | Dynamic Token Broker pre-execution budget lease (`FINOPS_TOKEN_LEASE_TTL_SECONDS`) |
 | `circuit:tool:{tool_name}` | String (`open`/`closed`) | 300s (default) | Tool circuit breaker state (`TOOL_BREAKER_TTL_SECONDS`) |
 | `breaker:{tool_name}:failures` | String (Int) | 300s | Consecutive worker failure counter for automatic circuit breaker tripping (`TOOL_BREAKER_FAILURE_THRESHOLD`) |
+| `tenant:{tenant_id}:quota:mcp:{mcp_server_id}:calls:{YYYYMMDDHHMM}` | String (Int) | 120s | `v1.5.7` per-MCP-server fixed-window (minute bucket) call counter; one increment per requested tool bound to the server (`quota_per_minute` or `MCP_SERVER_CALL_LIMIT_PER_MINUTE`) |
+| `circuit:mcp:{mcp_server_id}` | String (JSON) | `TOOL_BREAKER_TTL_SECONDS` | `v1.5.7` MCP server circuit breaker; kept in a separate namespace so tool breaker listings (`breaker:*`) never include MCP servers |
 | `idempotency:run:{run_id}:worker:{attempt}` | String | 86,400s (24h) | Worker execution attempt deduplication lock |
 
 ---

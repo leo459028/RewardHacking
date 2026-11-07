@@ -1,12 +1,21 @@
 # Agent FinOps Core & Cost Accounting Reference
 
-> **Module**: Agent FinOps Core (`v1.5.6`)
+> **Module**: Agent FinOps Core (`v1.5.7`)
 > **Schema Revision**: `202606010004` (Alembic Head)  
 > **Reference Seed**: `app/seeds/model_pricing_seed.yaml`
 
 This document details the architectural design, database schemas, burn-rate forecasting, Dynamic Token Broker pre-execution leasing, settled ledger deduplication, multi-currency FX & tax accounting, cost-center attribution, manual reconciliation adjustments, ledger exports, model-aware routing, active budget enforcement, context-aware pricing resolution, administration APIs, and YAML seed ingestion mechanics of the **Agent FinOps Core** engine.
 
 ---
+
+## Per-MCP-Server & Per-Tool Attribution (`v1.5.7`)
+
+- **Usage columns**: `record_submit_usage()` and `record_actual_usage()` keep writing exactly 3 events per phase (settlement key unchanged). The `step_2_tools` (`resource_type="tool"`, `usage_unit="tool_call"`) event now fills `mcp_server_id` (primary server), `tool_id` / `tool_name` (primary tool only, `String(128)` safe), `tool_provider` (primary server) and `tool_risk_level` (highest selected tool risk). The full tool list, `mcp_servers` and `tool_mcp_map` live in `metadata`.
+- **Cost tags**: `CostEvent.allocation_tags["mcp_server_id"|"tool_id"]` and `metadata_payload["mcp_server_id"|"mcp_servers"|"tool_id"|"tools"|"tool_mcp_map"]`.
+- **Breakdowns**: `run_cost_summary.tool_breakdown` and `mcp_server_breakdown`, `tenant_cost_summary.top_tools` (no `step_id` leakage), `mcp_server_breakdown` and `top_mcp_servers`. Each settled tool cost row is split evenly across its tools (the last tool absorbs rounding so totals stay exact); MCP server totals follow each tool's owning server.
+- **Budgets**: `scope="mcp_server"` (`scope_id` = server id) matches tool cost rows attributed to that server; `scope="tool"` with `tool_id`/`scope_id` now matches the specific tool when accumulating `spent_before`.
+- **Pricing**: a `PricingCatalog` row with `resource_type="tool"` and `model_name=<mcp_server_id>` (or `metadata.mcp_server_id`) is preferred for that server; otherwise the generic `internal/tool/per_call` price applies.
+- **Filters & export**: `mcp_server_id` query parameter on `GET /v1/cost/tenants/{tenant_id}`, `/export` and `/dashboard/costs`; `TenantCostExportResponse.mcp_server_breakdown`; CSV ledger appends `mcp_server_id,tool_id` (37 columns, existing 35-column prefix unchanged).
 
 ## Core Mission & Functional Goals
 

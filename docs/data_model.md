@@ -1,6 +1,6 @@
 # Database Schema & Audit Models
 
-> **Data Model Version**: `v1.5.5`
+> **Data Model Version**: `v1.5.7`
 > **ORM**: SQLAlchemy (asyncio)  
 > **Migration Baseline**: Alembic revision `202606010004` (head)
 
@@ -75,6 +75,16 @@ Provides multi-tenant governance with hashed credential storage.
 - **`tenant_api_keys`**: Records `key_id`, `tenant_id`, `key_prefix`, `key_hash` (SHA-256), `role` (`viewer`, `operator`, `admin`, `finops_admin`), and `revoked_at`.
 
 ---
+
+## Safe MCP Gateway Storage (`v1.5.7`, zero migrations)
+
+- **MCP Server Registry**: custom servers are stored in `tool_definitions` with the reserved `tool_name = "__mcp_server__:{mcp_server_id}"` (hence the 113-character id limit) and `metadata_payload = {"entity_type": "mcp_server", "server": {...}}`. `list_tool_definitions()` excludes the prefix, so `GET /v1/control-plane/tools` is unchanged; builtin servers live in code (`BUILTIN_MCP_SERVERS`).
+- **Tool binding & schemas**: `ToolDefinition.metadata_payload` keys `mcp_server_id`, `input_schema` (with optional per-field `x-scan-profile`), `output_schema`, `sensitive_fields`, `schema_enforcement` (`deny | escalate`), `strict_arguments_required`.
+- **Request**: `AgentRun.request_payload.tool_arguments` (redacted) and `metadata.mcp_gateway` (server map, schema status, redacted field paths, flags) — any client-supplied `metadata.mcp_gateway` is overwritten.
+- **Plan**: `ExecutionPlan.selected_tools[*]` adds `mcp_server_id`, `mcp_trust_tier`, `mcp_transport`, `schema_validation`, `sanitized_arguments`, `redacted_fields`; `model_route.mcp_route = {primary_mcp_server_id, mcp_servers, tool_mcp_map}`; approval gates `mcp_trust_gate`, `mcp_network_gate`, `mcp_breaker_gate`.
+- **Execution**: `ToolExecution.sandbox_policy` adds `mcp_server_id`, `sanitized_arguments`, `redacted_fields`, `schema_validation` (output schema).
+- **FinOps**: `UsageEvent.mcp_server_id`, `tool_id`, `tool_name`, `tool_provider`, `tool_risk_level` are now populated on `step_2_tools`; `CostEvent.allocation_tags.mcp_server_id|tool_id` and `metadata_payload.mcp_server_id|mcp_servers|tool_id|tools|tool_mcp_map`.
+- **Audit**: `GovernanceEvent` types `mcp_server.upserted`, `mcp_breaker.opened|closed`, `mcp_schema_violation`, `mcp_argument_injection`, `mcp_server_quota_exceeded`; `Incident(code="mcp_argument_injection", severity="high")`.
 
 ## Agent FinOps Core Models
 

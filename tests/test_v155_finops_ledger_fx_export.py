@@ -701,7 +701,7 @@ def test_reconciliation_export_json_and_csv_formula_injection_and_rbac(
 
     reader = list(csv.reader(io.StringIO(csv_res.text)))
     header = reader[0]
-    assert len(header) == 35
+    assert len(header) == 37
     inv_idx = header.index("provider_invoice_id")
     invoice_cells = [row[inv_idx] for row in reader[1:] if row[inv_idx]]
     assert "'=SUM(A1:A10)" in invoice_cells

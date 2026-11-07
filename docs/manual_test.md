@@ -1,6 +1,6 @@
 # Manual QA & Interactive Browser Testing Guide
 
-> **Testing Baseline**: `v1.5.6`
+> **Testing Baseline**: `v1.5.7`
 > **Target Environment**: Local Docker Compose Stack (`http://localhost:8000`)
 > **Primary Interface**: Web Browser (`/dashboard`) & REST API (`/v1`)
 > **Automated Browser Runner**: `python scripts/browser_manual_test.py` (supports `--qa-currency TWD|USD|CNY`, default `TWD`)
@@ -193,6 +193,20 @@ This scenario tests the complete `v1.5.5` FinOps governance and financial reconc
 4. Optionally submit operational drill evidence (`backup_restore`, `secret_rotation`, `safety_regression`) and click **Create Release Gate** to record an auditable release snapshot.
 
 ---
+
+## 5.5 Scenario 5: Safe MCP Gateway, Schema Guardrails & Per-MCP-Server Costs (`v1.5.7`)
+
+> Uses the dedicated `finops-qa-tenant`, MCP server `mcp-qa-v157` and tool `qa_mcp_tool` (the `v1.5.6` `qa_custom_tool` is left untouched). Reset every MCP breaker to `CLOSED` before finishing.
+
+1. **Register MCP server** — `/dashboard/control-plane` → *Register / Update MCP Server*: `mcp_server_id=mcp-qa-v157`, `display_name=QA Verified MCP Server`, `transport=sse`, `endpoint=https://mcp.internal.local/qa`, `trust_tier=verified`, `quota_per_minute=45` → **Save MCP Server**. Expect the *MCP Server Registry* row `mcp-qa-v157 / sse / verified / 45`, `External Net = False`.
+2. **MCP breaker** — click **Trip MCP Breaker** (state `OPEN`), then **Reset MCP Breaker** (state `CLOSED`).
+3. **Bind a tool** — *Register / Update Tool*: `tool_name=qa_mcp_tool`, `task_types=analysis`, `MCP Server ID=mcp-qa-v157`, `Required Args=query`, `Sensitive Args=api_token` → **Save Tool**. Tool Registry shows `MCP Server = mcp-qa-v157` and `required: query / redact: api_token`.
+4. **Redaction (builtin tool)** — `/dashboard/playground`: `tenant_id=finops-qa-tenant`, `task_type=code_fix`, `allowed_tools=read_repo`, `Tool Arguments={"read_repo": {"repo_path": "app/services", "api_key": "sk-live-secret999999"}}` → **Submit Run** → **Open run detail**. Request, Execution Plan and Tool Executions show `"api_key": "[REDACTED]"`; the literal secret never appears.
+5. **Redaction (custom MCP tool)** — Playground with `task_type=analysis`, `allowed_tools=qa_mcp_tool`, `Tool Arguments={"qa_mcp_tool": {"query": "test", "api_token": "secret-xyz"}}`. The result shows MCP route `mcp-qa-v157`; Run Detail shows `api_token: "[REDACTED]"` and `MCP Server Breakdown`.
+6. **Costs** — `/dashboard/costs?tenant_id=finops-qa-tenant`: header `V1.5.7 Agent FinOps Core`, *MCP Server Cost Breakdown* lists `mcp-core-local` (and other servers used), the `mcp_server_id` filter works, and CSV export headers end with `mcp_server_id,tool_id`. No `0E-8` anywhere.
+7. **Operations** — `/dashboard/operations`: `mcp_gateway_registry_health = pass` and default `release_version = v1.5.7`.
+
+Optional API checks: `GET /v1/control-plane/mcp-servers`; `POST /v1/control-plane/tools/query_data/validate-arguments` with `{"arguments": {"query": "SELECT 1", "undeclared_field": "x"}}` returns `valid=false`.
 
 ## 6. Browser QA Sign-Off Checklist
 

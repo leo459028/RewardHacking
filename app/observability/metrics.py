@@ -148,3 +148,21 @@ TOOL_BREAKER_EVENTS_TOTAL = Counter(
     "Total tool circuit breaker events by tool name and action",
     ["tool_name", "action"],
 )
+
+MCP_GATEWAY_REQUESTS_TOTAL = Counter(
+    "agent_mcp_gateway_requests_total",
+    "Total Safe MCP Gateway preflight decisions by MCP server, transport, trust tier, and decision",
+    ["mcp_server_id", "transport", "trust_tier", "decision"],
+)
+
+MCP_SCHEMA_VIOLATIONS_TOTAL = Counter(
+    "agent_mcp_schema_violations_total",
+    "Total MCP tool argument schema and injection violations",
+    ["tool_name", "mcp_server_id", "violation_type"],
+)
+
+MCP_ARGUMENT_REDACTIONS_TOTAL = Counter(
+    "agent_mcp_argument_redactions_total",
+    "Total sensitive MCP tool argument redactions",
+    ["tool_name", "redaction_type"],
+)

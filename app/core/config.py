@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     tool_call_limit_per_minute: int = 60
     tool_breaker_failure_threshold: int = 3
     tool_breaker_ttl_seconds: int = 1800
+    mcp_server_call_limit_per_minute: int = 90
+    mcp_schema_enforcement_mode: str = "deny"
+    mcp_internal_host_suffixes: str = ".internal.local,.mcp.internal"
+    mcp_tool_arguments_max_depth: int = 8
+    mcp_tool_arguments_max_bytes: int = 65536
     audit_retention_days: int = 90
     operations_evidence_max_age_days: int = 30
     secret_rotation_max_age_days: int = 90
@@ -113,7 +118,22 @@ class Settings(BaseSettings):
             raise ValueError("TOOL_BREAKER_FAILURE_THRESHOLD must be >= 1.")
         if self.tool_breaker_ttl_seconds < 1:
             raise ValueError("TOOL_BREAKER_TTL_SECONDS must be >= 1.")
+        if self.mcp_server_call_limit_per_minute < 1:
+            raise ValueError("MCP_SERVER_CALL_LIMIT_PER_MINUTE must be >= 1.")
+        if self.mcp_schema_enforcement_mode not in {"deny", "escalate"}:
+            raise ValueError("MCP_SCHEMA_ENFORCEMENT_MODE must be 'deny' or 'escalate'.")
+        if self.mcp_tool_arguments_max_depth < 1:
+            raise ValueError("MCP_TOOL_ARGUMENTS_MAX_DEPTH must be >= 1.")
+        if self.mcp_tool_arguments_max_bytes < 1:
+            raise ValueError("MCP_TOOL_ARGUMENTS_MAX_BYTES must be >= 1.")
+        for suffix in self.mcp_internal_host_suffix_list:
+            if not suffix.startswith("."):
+                raise ValueError("MCP_INTERNAL_HOST_SUFFIXES entries must start with '.'.")
         return self
+
+    @property
+    def mcp_internal_host_suffix_list(self) -> list[str]:
+        return [item.strip().lower() for item in self.mcp_internal_host_suffixes.split(",") if item.strip()]
 
 
 @lru_cache(maxsize=1)

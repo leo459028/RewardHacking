@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import time
 from datetime import datetime, timedelta, timezone
@@ -27,11 +28,13 @@ from app.services.audit_log import (
 )
 from app.services.control_plane import (
     get_execution_plan_for_run,
+    list_tool_definitions,
     sync_execution_plan_on_worker_completion,
 )
 from app.services.events import EventPublisher, KafkaEventPublisher
 from app.services.evaluator import Evaluator
 from app.services.finops import record_actual_usage
+from app.services.mcp_gateway import HARD_DENY_FLAG_PREFIXES, worker_context as mcp_worker_context
 from app.services.orchestrator import AgentOrchestrator, OrchestrationResult
 from app.services.policy_engine import PolicyEngine
 from app.services.run_state import RedisRunStateStore, RunStateStore
@@ -162,7 +165,32 @@ async def process_run_by_id(
     failure_reason = ""
     try:
         disabled_tools = list((await state_store.get_open_breakers(request.allowed_tools)).keys())
-        result = orchestrator.execute(request, run_id=run_id, disabled_tools=disabled_tools)
+        registry_tools = await list_tool_definitions(session)
+        allowed_tool_map = {str(item["tool_name"]): item for item in registry_tools}
+        mcp_context = await mcp_worker_context(
+            session,
+            state_store,
+            settings=get_settings(),
+            request=request,
+            tools=registry_tools,
+        )
+        execute_kwargs: dict = {"run_id": run_id, "disabled_tools": disabled_tools}
+        execute_params = inspect.signature(orchestrator.execute).parameters
+        if "mcp_context" in execute_params:
+            execute_kwargs["mcp_context"] = mcp_context
+        if "allowed_tool_map" in execute_params:
+            execute_kwargs["allowed_tool_map"] = allowed_tool_map
+        result = orchestrator.execute(request, **execute_kwargs)
+        if result.response.status == "denied":
+            from app.services.finops import release_run_budget_lease
+
+            await release_run_budget_lease(
+                session,
+                state_store,
+                run_id=run_id,
+                tenant_id=run.tenant_id,
+                reason=result.response.decision_reason or "mcp_worker_hard_deny",
+            )
     except Exception as exc:
         failure_reason = str(exc)
         max_attempts = max_attempts or get_settings().worker_max_attempts
@@ -179,13 +207,19 @@ async def process_run_by_id(
         duration_ms=elapsed_ms,
         failure_reason=failure_reason,
     )
-    await record_actual_usage(
-        session,
-        run=updated,
-        plan=plan,
-        is_failed_retry=bool(failure_reason),
-        state_store=state_store,
+    mcp_hard_denied = updated.status == "denied" and any(
+        str(flag).startswith(HARD_DENY_FLAG_PREFIXES) for flag in (result.response.policy_flags or [])
     )
+    if not mcp_hard_denied:
+        await record_actual_usage(
+            session,
+            run=updated,
+            plan=plan,
+            is_failed_retry=bool(failure_reason),
+            state_store=state_store,
+        )
+    else:
+        await session.commit()
     if failure_reason:
         settings = get_settings()
         for tool_name in dict.fromkeys(request.allowed_tools or []):

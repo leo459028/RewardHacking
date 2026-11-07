@@ -42,6 +42,24 @@ class RunStateStore(Protocol):
     async def list_open_breakers(self) -> dict[str, dict[str, Any]]:
         ...
 
+    async def open_mcp_breaker(
+        self,
+        mcp_server_id: str,
+        *,
+        reason: str,
+        ttl_seconds: int = 1800,
+    ) -> None:
+        ...
+
+    async def close_mcp_breaker(self, mcp_server_id: str) -> bool:
+        ...
+
+    async def get_open_mcp_breakers(self, mcp_server_ids: list[str]) -> dict[str, dict[str, Any]]:
+        ...
+
+    async def list_open_mcp_breakers(self) -> dict[str, dict[str, Any]]:
+        ...
+
     async def record_tool_failure(
         self,
         tool_name: str,
@@ -125,6 +143,13 @@ def _five_minute_bucket(now: datetime | None = None) -> str:
     return f"{dt.strftime('%Y%m%d%H')}{(dt.minute // 5) * 5:02d}"
 
 
+MCP_BREAKER_PREFIX = "circuit:mcp:"
+
+
+def mcp_breaker_key(mcp_server_id: str) -> str:
+    return f"{MCP_BREAKER_PREFIX}{mcp_server_id}"
+
+
 def _is_breaker_active(breaker: dict[str, Any] | None) -> bool:
     if not breaker or breaker.get("status") != "open":
         return False
@@ -149,6 +174,7 @@ class InMemoryRunStateStore:
         self.breaker_failures: dict[str, int] = {}
         self.token_leases: dict[str, dict[str, Any]] = {}
         self.quota_counters: dict[str, int] = {}
+        self.mcp_breakers: dict[str, dict[str, Any]] = {}
 
     async def set_run_state(
         self,
@@ -216,6 +242,52 @@ class InMemoryRunStateStore:
                 self.breakers.pop(tool_name, None)
                 continue
             result[tool_name] = breaker
+        return result
+
+    async def open_mcp_breaker(
+        self,
+        mcp_server_id: str,
+        *,
+        reason: str,
+        ttl_seconds: int = 1800,
+    ) -> None:
+        now = _now_utc()
+        record = {
+            "mcp_server_id": mcp_server_id,
+            "status": "open",
+            "reason": reason,
+            "opened_at": now.isoformat(),
+            "expires_at": (now + timedelta(seconds=ttl_seconds)).isoformat(),
+            "ttl_seconds": ttl_seconds,
+        }
+        self.mcp_breakers[mcp_breaker_key(mcp_server_id)] = record
+        TOOL_BREAKER_EVENTS_TOTAL.labels(tool_name=f"mcp:{mcp_server_id}", action="opened").inc()
+
+    async def close_mcp_breaker(self, mcp_server_id: str) -> bool:
+        record = self.mcp_breakers.pop(mcp_breaker_key(mcp_server_id), None)
+        TOOL_BREAKER_EVENTS_TOTAL.labels(tool_name=f"mcp:{mcp_server_id}", action="closed").inc()
+        return bool(record and record.get("status") == "open")
+
+    async def get_open_mcp_breakers(self, mcp_server_ids: list[str]) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for server_id in mcp_server_ids:
+            key = mcp_breaker_key(server_id)
+            record = self.mcp_breakers.get(key)
+            if record is None:
+                continue
+            if not _is_breaker_active(record):
+                self.mcp_breakers.pop(key, None)
+                continue
+            result[server_id] = record
+        return result
+
+    async def list_open_mcp_breakers(self) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for key, record in list(self.mcp_breakers.items()):
+            if not _is_breaker_active(record):
+                self.mcp_breakers.pop(key, None)
+                continue
+            result[str(record.get("mcp_server_id") or key.split(MCP_BREAKER_PREFIX, 1)[-1])] = record
         return result
 
     async def record_tool_failure(
@@ -409,6 +481,48 @@ class RedisRunStateStore:
             if _is_breaker_active(breaker):
                 open_breakers[tool_name] = {"tool_name": tool_name, **breaker}
         return open_breakers
+
+    async def open_mcp_breaker(
+        self,
+        mcp_server_id: str,
+        *,
+        reason: str,
+        ttl_seconds: int = 1800,
+    ) -> None:
+        now = _now_utc()
+        record = {
+            "mcp_server_id": mcp_server_id,
+            "status": "open",
+            "reason": reason,
+            "opened_at": now.isoformat(),
+            "expires_at": (now + timedelta(seconds=ttl_seconds)).isoformat(),
+            "ttl_seconds": ttl_seconds,
+        }
+        await set_json(self.redis, mcp_breaker_key(mcp_server_id), record, ttl_seconds=ttl_seconds)
+        TOOL_BREAKER_EVENTS_TOTAL.labels(tool_name=f"mcp:{mcp_server_id}", action="opened").inc()
+
+    async def close_mcp_breaker(self, mcp_server_id: str) -> bool:
+        deleted = int(await self.redis.delete(mcp_breaker_key(mcp_server_id)))
+        TOOL_BREAKER_EVENTS_TOTAL.labels(tool_name=f"mcp:{mcp_server_id}", action="closed").inc()
+        return deleted > 0
+
+    async def get_open_mcp_breakers(self, mcp_server_ids: list[str]) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for server_id in mcp_server_ids:
+            record = await get_json(self.redis, mcp_breaker_key(server_id))
+            if _is_breaker_active(record):
+                result[server_id] = record
+        return result
+
+    async def list_open_mcp_breakers(self) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        async for raw_key in self.redis.scan_iter(match=f"{MCP_BREAKER_PREFIX}*"):
+            key_str = raw_key.decode("utf-8") if isinstance(raw_key, bytes) else str(raw_key)
+            server_id = key_str.split(MCP_BREAKER_PREFIX, 1)[-1]
+            record = await get_json(self.redis, key_str)
+            if _is_breaker_active(record):
+                result[server_id] = {"mcp_server_id": server_id, **record}
+        return result
 
     async def record_tool_failure(
         self,

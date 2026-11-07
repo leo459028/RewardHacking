@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
+
 from app.schemas.agent import AgentRequest
 from app.schemas.policy import Decision, PolicyDecision
 from app.services.risk_scoring import compute_risk_score
+
+HARD_DENY_FLAG_PREFIXES: tuple[str, ...] = (
+    "mcp_server_blocked:",
+    "mcp_tenant_not_allowed:",
+    "mcp_argument_injection_detected:",
+)
 
 
 @dataclass(frozen=True)
@@ -22,8 +30,13 @@ class PolicyEngine:
         request: AgentRequest,
         prompt_flags: list[str],
         disabled_tools: list[str] | None = None,
+        *,
+        mcp_context: Any | None = None,
     ) -> PolicyDecision:
-        risk_score = compute_risk_score(request, prompt_flags)
+        mcp_flags: list[str] = list(getattr(mcp_context, "flags", []) or []) if mcp_context is not None else []
+        mcp_hard: set[str] = set(getattr(mcp_context, "hard_deny_flags", []) or []) if mcp_context is not None else set()
+        mcp_risk_delta = float(getattr(mcp_context, "risk_delta", 0.0) or 0.0) if mcp_context is not None else 0.0
+        risk_score = compute_risk_score(request, prompt_flags, mcp_risk_delta=mcp_risk_delta)
         context = RuleContext(request=request, prompt_flags=prompt_flags, risk_score=risk_score)
         flags: list[str] = []
         disabled_tools = disabled_tools or []
@@ -52,6 +65,20 @@ class PolicyEngine:
 
         for tool_name in sorted(set(request.allowed_tools).intersection(disabled_tools)):
             flags.append(f"tool_circuit_breaker_open:{tool_name}")
+
+        for mcp_flag in mcp_flags:
+            if mcp_flag not in flags:
+                flags.append(mcp_flag)
+
+        hard_deny = [flag for flag in mcp_flags if flag in mcp_hard or flag.startswith(HARD_DENY_FLAG_PREFIXES)]
+        if hard_deny:
+            return PolicyDecision(
+                decision=Decision.deny,
+                reason=f"Safe MCP Gateway hard-deny: {', '.join(hard_deny)}.",
+                risk_score=risk_score,
+                flags=flags,
+                requires_human_review=False,
+            )
 
         if risk_score >= self.risk_threshold:
             return PolicyDecision(

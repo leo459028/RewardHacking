@@ -1,6 +1,6 @@
 # Testing Guide & Red-Team Corpus
 
-> **Testing Baseline**: `v1.5.6`
+> **Testing Baseline**: `v1.5.7`
 > **Test Suite**: `pytest`  
 > **Linter**: `ruff`
 
@@ -58,6 +58,7 @@ python scripts/browser_manual_test.py --qa-currency USD
 | `tests/test_v153_finops_governance.py` | Active multi-scope/period budget enforcement (`block`, `require_approval`, `degrade_model`), context-tier pricing, free quota/minimum quantity, cache/batch savings, violation triage lifecycle, manual pricing change logs, stale source guardrails, and zero-warning Pydantic V2 serialization. |
 | `tests/test_v154_control_plane_finops_closure.py` | Model-aware FinOps routing (`provider`/`model_name`/`project_id`), `user`/`project`/`model` budget scope isolation, `dry_run_only` enforcement, `failed_retry` cost accounting, `ExecutionPlanStep` lifecycle synchronization (`healthy` plan health), DLQ requeue/resolve, stale approval TTL sweep, and Run Detail Replay/Resume UI routes. |
 | `tests/test_v155_finops_ledger_fx_export.py` | Settled ledger deduplication (zero estimated/actual double-counting), multi-currency FX conversion (`TWD`/`CNY`/`USD`) and inclusive/exclusive tax calculation, pre-tax vs. `base_currency` post-tax budget evaluation, unsupported budget currency `422` validation, `missing_fx_rate` violation tracking, `cost_center`/`org_id` attribution & `finops_missing_cost_center` warning, manual reconciliation adjustments (`POST /v1/cost/adjustments`) & RBAC check, RFC 4180 CSV/JSON ledger export with formula-injection protection, and Dashboard UI routes. |
+| `tests/test_v157_mcp_gateway_schema_guardrails.py` | Safe MCP Gateway: MCP server registry CRUD & RBAC, MCP breakers, trust tiers / external-network / tenant allow-list guardrails, JSON schema validation & injection blocking (incl. scan-profile false-positive checks), sensitive argument redaction across `AgentRun` / `ExecutionPlan` / `ToolExecution` / replay bundle, dynamic tool execution in the worker, approved-untrusted completion & queue-time TOCTOU denial, per-MCP-server quota (`429 mcp_server_quota_exceeded`), `UsageEvent.mcp_server_id` / `tool_breakdown` / `mcp_server_breakdown` / `top_tools` attribution, `scope="mcp_server"` and exact `scope="tool"` budgets, Dashboard MCP portals, readiness check, metrics, version anchors, and the Governance tenant-update regression. |
 | `tests/test_v156_burn_rate_broker_quotas_portals.py` | Real-time tenant/project burn-rate and exhaustion forecasting (`GET /v1/cost/tenants/{id}/forecast`, `finops_burn_rate_warning`), Dynamic Token Broker pre-execution budget leasing (`lease_...`), concurrent sibling-lease budget enforcement (`fail_closed` on second concurrent request), worker settlement & manual lease release (`POST /v1/cost/leases/{run_id}/release`), per-user and per-tool Redis sliding-window quotas (`HTTP 429`), automatic worker-failure tool circuit breaker tripping & manual trip/reset (`POST /v1/control-plane/tools/{name}/breaker/open|close`), and interactive Governance/Control-Plane/Costs UI portal actions. |
 
 ---
