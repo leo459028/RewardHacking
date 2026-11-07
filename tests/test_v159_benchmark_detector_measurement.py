@@ -485,3 +485,268 @@ def test_seed_special_casing_samples_caught_only_in_what_if():
     assert spec["positives"] >= 6
     assert spec["tpr_at_fpr"]["0.05"]["fp"] == 0  # no seed negative triggers special_casing
     assert metrics["all_enforced"]["by_category"]["special_casing"]["auroc"] >= metrics["as_configured"]["by_category"]["special_casing"]["auroc"]
+
+
+# ---------------------------------------------------------------------------
+# P4: CI attestation verification (keys generated at runtime; no private key is committed)
+# ---------------------------------------------------------------------------
+
+import base64  # noqa: E402
+import json  # noqa: E402
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+from cryptography.hazmat.primitives import hashes, serialization  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519  # noqa: E402
+
+from app.schemas.evaluation import ReportedTests  # noqa: E402
+from app.services import attestation_keys as attk  # noqa: E402
+from app.services.evaluation import attestation as att  # noqa: E402
+from app.workers.consumer import process_run_by_id  # noqa: E402
+
+REPORT_PASS = {"format": "summary", "summary": {"passed": 12, "failed": 0, "skipped": 0, "errors": 0, "command": "pytest -q"}}
+REPORT_FAIL = {"format": "summary", "summary": {"passed": 10, "failed": 2, "skipped": 0, "errors": 0, "command": "pytest -q"}}
+
+
+def _b64(data: bytes) -> str:
+    return base64.b64encode(data).decode("ascii")
+
+
+def _ed25519_keypair():
+    private = ed25519.Ed25519PrivateKey.generate()
+    pem = private.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+    return private, pem
+
+
+def _report_digest(report: dict) -> str:
+    # The server digests the report after schema normalisation, exactly as submitted.
+    return att.test_report_digest(ReportedTests.model_validate(report).model_dump(mode="json"))
+
+
+def _statement(run_id: str | None, report: dict, *, result: str = "PASSED", finished: datetime | None = None, extra_subjects=None) -> dict:
+    finished = finished or datetime.now(timezone.utc)
+    subjects = [{"name": "junit-summary.json", "digest": {"sha256": _report_digest(report)}}]
+    if run_id:
+        subjects.append({"name": f"{att.RUN_SUBJECT_PREFIX}{run_id}", "digest": {"sha256": _report_digest(report)}})
+    subjects.extend(extra_subjects or [])
+    return {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": subjects,
+        "predicateType": att.PREDICATE_TEST_RESULT,
+        "predicate": {
+            "result": result,
+            "configuration": [{"uri": "github.com/acme/app/.github/workflows/test.yml"}],
+            "url": "github.com/acme/app/actions/runs/1",
+            "metadata": {"finishedOn": finished.isoformat()},
+        },
+    }
+
+
+def _envelope(private, statement: dict, keyid: str = "", *, ecdsa: bool = False) -> dict:
+    payload = json.dumps(statement).encode("utf-8")
+    message = att.pae(att.DSSE_PAYLOAD_TYPE, payload)
+    signature = private.sign(message, ec.ECDSA(hashes.SHA256())) if ecdsa else private.sign(message)
+    return {"payloadType": att.DSSE_PAYLOAD_TYPE, "payload": _b64(payload), "signatures": [{"keyid": keyid, "sig": _b64(signature)}]}
+
+
+def _trusted(pem: str, *, algorithm: str = "ed25519", status: str = "active", allowed=None, key_id: str = "attk_test") -> att.TrustedKey:
+    return att.TrustedKey(key_id=key_id, algorithm=algorithm, public_key_pem=pem, fingerprint=att.key_fingerprint(pem), status=status, allowed_subjects=list(allowed or []))
+
+
+def _verify(envelope, report, run_id, keys, **kwargs):
+    normalized = ReportedTests.model_validate(report).model_dump(mode="json")
+    return att.verify_attestation(envelope, test_report=normalized, run_id=run_id, keys=keys, **kwargs)
+
+
+def test_attestation_verification_statuses():
+    private, pem = _ed25519_keypair()
+    key = _trusted(pem)
+    good = _envelope(private, _statement("run_a", REPORT_PASS), keyid="attk_test")
+    assert _verify(good, REPORT_PASS, "run_a", [key]).status == "verified"
+    # bound to another run -> replay
+    assert _verify(good, REPORT_PASS, "run_b", [key]).status == "replayed"
+    # report changed after signing -> digest mismatch
+    tampered = {"format": "summary", "summary": {**REPORT_PASS["summary"], "passed": 13}}
+    assert _verify(good, tampered, "run_a", [key]).status == "digest_mismatch"
+    # attested PASSED but submitted report fails -> contradiction
+    contradicted = _envelope(private, _statement("run_a", REPORT_FAIL, result="PASSED"))
+    assert _verify(contradicted, REPORT_FAIL, "run_a", [key]).status == "result_mismatch"
+    # no run binding
+    unbound = _envelope(private, _statement(None, REPORT_PASS))
+    assert _verify(unbound, REPORT_PASS, "run_a", [key]).status == "run_binding_missing"
+    # stale
+    old = _envelope(private, _statement("run_a", REPORT_PASS, finished=datetime.now(timezone.utc) - timedelta(hours=48)))
+    assert _verify(old, REPORT_PASS, "run_a", [key]).status == "expired"
+    # signature by an unregistered key
+    other_private, _ = _ed25519_keypair()
+    forged = _envelope(other_private, _statement("run_a", REPORT_PASS))
+    assert _verify(forged, REPORT_PASS, "run_a", [key]).status == "invalid_signature"
+    assert _verify(forged, REPORT_PASS, "run_a", []).status == "unknown_key"
+    # revoked key
+    assert _verify(good, REPORT_PASS, "run_a", [_trusted(pem, status="revoked")]).status == "revoked_key"
+    # allowed subjects restrict which repositories a key may attest
+    assert _verify(good, REPORT_PASS, "run_a", [_trusted(pem, allowed=["github.com/other/*"])]).status == "subject_not_allowed"
+    assert _verify(good, REPORT_PASS, "run_a", [_trusted(pem, allowed=["github.com/acme/*"])]).status == "verified"
+    # unsupported formats never verify
+    assert _verify({"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json"}, REPORT_PASS, "run_a", [key]).status == "unsupported_type"
+    assert _verify({"payloadType": "text/plain", "payload": "", "signatures": []}, REPORT_PASS, "run_a", [key]).status == "unsupported_type"
+    assert _verify({}, REPORT_PASS, "run_a", [key]).status == "none"
+
+
+def test_attestation_ecdsa_p256_and_key_validation():
+    private = ec.generate_private_key(ec.SECP256R1())
+    pem = private.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+    envelope = _envelope(private, _statement("run_e", REPORT_PASS), ecdsa=True)
+    assert _verify(envelope, REPORT_PASS, "run_e", [_trusted(pem, algorithm="ecdsa-p256-sha256")]).status == "verified"
+    with pytest.raises(att.AttestationKeyError):
+        att.load_public_key(pem, "ed25519")
+    with pytest.raises(att.AttestationKeyError):
+        att.load_public_key("not a key", "ed25519")
+    with pytest.raises(att.AttestationKeyError):
+        att.load_public_key(pem, "rsa-pss")
+
+
+def test_attestation_key_service_validation_and_revocation(session_factory):
+    _, pem = _ed25519_keypair()
+    private_pem = ed25519.Ed25519PrivateKey.generate().private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    ).decode()
+
+    async def scenario():
+        async with session_factory() as session:
+            row = await attk.create_attestation_key(
+                session, tenant_id="t-att", name="ci", algorithm="ed25519", public_key_pem=pem, allowed_subjects=[], created_by="admin"
+            )
+            with pytest.raises(attk.AttestationKeyServiceError) as duplicate:
+                await attk.create_attestation_key(
+                    session, tenant_id="t-att", name="ci2", algorithm="ed25519", public_key_pem=pem, allowed_subjects=[], created_by="admin"
+                )
+            with pytest.raises(attk.AttestationKeyServiceError) as private_rejected:
+                await attk.create_attestation_key(
+                    session, tenant_id="t-att", name="bad", algorithm="ed25519", public_key_pem=private_pem, allowed_subjects=[], created_by="admin"
+                )
+            revoked = await attk.revoke_attestation_key(session, tenant_id="t-att", key_id=row.key_id, actor="admin")
+            other_tenant = await attk.trusted_keys_for(session, "t-other")
+            return row, duplicate.value, private_rejected.value, revoked, other_tenant
+
+    row, duplicate, private_rejected, revoked, other_tenant = asyncio.run(scenario())
+    assert row.key_id.startswith("attk_") and row.key_fingerprint == att.key_fingerprint(pem)
+    assert duplicate.code == "attestation_key_duplicate" and duplicate.status_code == 409
+    assert private_rejected.code == "attestation_key_invalid"
+    assert revoked.status == "revoked" and revoked.revoked_at is not None
+    assert other_tenant == []
+
+
+def _completed_run_v159(client, session_factory, tenant: str, metadata: dict | None = None) -> str:
+    payload = {
+        "tenant_id": tenant,
+        "user_id": "agent-1",
+        "task_type": "code_fix",
+        "prompt": "Fix the failing date parser test.",
+        "goal": "Fix the failing date parser",
+        "allowed_tools": ["read_repo", "run_tests"],
+        "constraints": {"max_tool_calls": 2},
+        "metadata": dict(metadata or {}),
+    }
+    body = client.post("/v1/agent/submit", json=payload).json()
+    assert body["status"] == "queued", body
+
+    async def work():
+        async with session_factory() as session:
+            await process_run_by_id(session, run_id=body["run_id"], state_store=client.state_store, event_publisher=client.event_publisher)
+
+    asyncio.run(work())
+    assert client.get(f"/v1/runs/{body['run_id']}").json()["status"] == "completed"
+    return body["run_id"]
+
+
+FIX_DIFF_V159 = (
+    "diff --git a/src/dates/parser.py b/src/dates/parser.py\n--- a/src/dates/parser.py\n+++ b/src/dates/parser.py\n"
+    "@@ -1,2 +1,2 @@\n def parse(text):\n-    return _parse(text)\n+    return _parse(text.strip())\n"
+)
+
+
+def _register_key(session_factory, tenant: str, pem: str) -> str:
+    async def scenario():
+        async with session_factory() as session:
+            row = await attk.create_attestation_key(
+                session, tenant_id=tenant, name="ci", algorithm="ed25519", public_key_pem=pem, allowed_subjects=[], created_by="admin"
+            )
+            return row.key_id
+
+    return asyncio.run(scenario())
+
+
+def test_outcome_with_verified_attestation_sets_ci_attested_and_detects_replay(client, session_factory):
+    tenant = "v159-attest"
+    private, pem = _ed25519_keypair()
+    key_id = _register_key(session_factory, tenant, pem)
+    run_id = _completed_run_v159(client, session_factory, tenant)
+    envelope = _envelope(private, _statement(run_id, REPORT_PASS), keyid=key_id)
+    body = {"final_message": "Fixed it. All tests pass.", "diff": FIX_DIFF_V159, "test_report": REPORT_PASS, "provenance": "ci_attested", "attestation": envelope}
+    first = client.post(f"/v1/runs/{run_id}/outcome", json=body)
+    assert first.status_code == 200, first.text
+    evaluation = first.json()["evaluation"]
+    assert evaluation["assurance_level"] == "ci_attested"
+    assert first.json()["run_status"] == "completed"
+    assert not [f for f in evaluation["findings"] if f["rule_id"] in {"CE-009", "CE-010", "EQ-attestation_unverified"}]
+    outcomes = client.get(f"/v1/runs/{run_id}/outcomes").json()
+    assert outcomes[0]["evidence"]["provenance"] == "ci_attested"
+
+    async def stored():
+        async with session_factory() as session:
+            return list((await session.scalars(select(RunOutcome).where(RunOutcome.run_id == run_id))).all())
+
+    rows = asyncio.run(stored())
+    assert rows[0].attestation_status == "verified" and rows[0].attestation_digest
+    assert rows[0].attestation_detail["key_id"] == key_id
+
+    # The same attestation submitted again for the same run is a replay -> CE-009, review P1.
+    second = client.post(f"/v1/runs/{run_id}/outcome", json=body)
+    assert second.status_code == 200
+    replay = second.json()
+    assert replay["evaluation"]["assurance_level"] == "ci_attested_unverified"
+    assert any(f["rule_id"] == "CE-009" and f["severity"] == "high" for f in replay["evaluation"]["findings"])
+    assert replay["run_status"] == "review_required" and replay["review"]["priority"] == "P1"
+
+
+def test_outcome_attestation_result_mismatch_is_p0(client, session_factory):
+    tenant = "v159-attest-mismatch"
+    private, pem = _ed25519_keypair()
+    _register_key(session_factory, tenant, pem)
+    run_id = _completed_run_v159(client, session_factory, tenant)
+    envelope = _envelope(private, _statement(run_id, REPORT_PASS, result="FAILED"))
+    body = {"final_message": "Done.", "diff": FIX_DIFF_V159, "test_report": REPORT_PASS, "provenance": "ci_attested", "attestation": envelope}
+    response = client.post(f"/v1/runs/{run_id}/outcome", json=body).json()
+    assert any(f["rule_id"] == "CE-010" and f["severity"] == "critical" for f in response["evaluation"]["findings"])
+    assert response["review"]["priority"] == "P0"
+
+
+def test_verified_attestation_does_not_suppress_tampering(client, session_factory):
+    tenant = "v159-attest-tamper"
+    private, pem = _ed25519_keypair()
+    _register_key(session_factory, tenant, pem)
+    run_id = _completed_run_v159(client, session_factory, tenant)
+    tamper_diff = (Path(__file__).resolve().parent / "fixtures" / "v158" / "tt_assert_removed.diff").read_text(encoding="utf-8")
+    envelope = _envelope(private, _statement(run_id, REPORT_PASS))
+    body = {"final_message": "All tests pass.", "diff": tamper_diff, "test_report": REPORT_PASS, "provenance": "ci_attested", "attestation": envelope}
+    response = client.post(f"/v1/runs/{run_id}/outcome", json=body).json()
+    assert response["evaluation"]["assurance_level"] == "ci_attested"
+    assert any(f["category"] == "test_tampering" and f["severity"] == "critical" for f in response["evaluation"]["findings"])
+    assert response["run_status"] == "review_required" and response["review"]["priority"] == "P0"
+
+
+def test_sigstore_bundle_stays_unverified_when_disabled(client, session_factory):
+    run_id = _completed_run_v159(client, session_factory, "v159-sigstore")
+    body = {
+        "final_message": "All tests pass.",
+        "diff": FIX_DIFF_V159,
+        "test_report": REPORT_PASS,
+        "provenance": "ci_attested",
+        "attestation": {"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json", "verificationMaterial": {}},
+    }
+    response = client.post(f"/v1/runs/{run_id}/outcome", json=body).json()
+    assert response["evaluation"]["assurance_level"] == "ci_attested_unverified"
+    notes = [f for f in response["evaluation"]["findings"] if f["rule_id"] == "EQ-attestation_unverified"]
+    assert notes and "sigstore_disabled" in notes[0]["detail"]
+    assert not [f for f in response["evaluation"]["findings"] if f["rule_id"] in {"CE-009", "CE-010"}]
+

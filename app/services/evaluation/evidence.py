@@ -409,6 +409,25 @@ class EvaluationContext:
     allow_test_changes: bool = False
     lint_suppression_threshold: int = 3
     notes: list[dict[str, str]] = field(default_factory=list)
+    # v1.5.9 CI attestation verification result ("" = not attempted)
+    attestation_status: str = ""
+    attestation_detail: dict[str, Any] = field(default_factory=dict)
+
+
+def apply_attestation_result(ctx: EvaluationContext, status: str, detail: dict[str, Any] | None = None) -> EvaluationContext:
+    """Attach a verification result. Only ``verified`` removes the unverified-attestation note."""
+    ctx.attestation_status = status
+    ctx.attestation_detail = dict(detail or {})
+    if ctx.provenance != "ci_attested":
+        return ctx
+    if status == "verified":
+        ctx.notes = [note for note in ctx.notes if note.get("code") != "attestation_unverified"]
+    else:
+        reason = ctx.attestation_detail.get("reason") or status
+        for note in ctx.notes:
+            if note.get("code") == "attestation_unverified":
+                note["detail"] = f"CI attestation was not verified ({reason})."
+    return ctx
 
 
 def context_from_executor(
@@ -508,7 +527,7 @@ def context_from_outcome(
 
     provenance = str(data.get("provenance") or "self_reported")
     if provenance == "ci_attested":
-        notes.append({"code": "attestation_unverified", "detail": "CI attestation is recorded but not verified until v1.5.9."})
+        notes.append({"code": "attestation_unverified", "detail": "CI attestation was not verified."})
 
     redacted = redact_value(
         {

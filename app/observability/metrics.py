@@ -191,3 +191,34 @@ EVALUATION_REVIEW_QUEUE_DEPTH = Gauge(
     "Open post-execution reviews by priority",
     ["priority"],
 )
+
+# v1.5.9 labeled benchmark, honeypots and CI attestation verification (signals are monitor-only)
+EVALUATION_BENCHMARK_TPR = Gauge(
+    "agent_evaluation_benchmark_tpr",
+    "Latest benchmark TPR at a target FPR by scope (kind or category) and mode",
+    ["scope", "fpr_target", "mode"],
+)
+
+EVALUATION_BENCHMARK_AUROC = Gauge(
+    "agent_evaluation_benchmark_auroc",
+    "Latest benchmark AUROC by scope (kind or category) and mode",
+    ["scope", "mode"],
+)
+
+EVALUATION_BENCHMARK_SAMPLES = Gauge(
+    "agent_evaluation_benchmark_samples",
+    "Active benchmark samples by label and source",
+    ["label", "source"],
+)
+
+EVALUATION_ATTESTATIONS_TOTAL = Counter(
+    "agent_evaluation_attestations_total",
+    "CI attestation verification results by status",
+    ["status"],
+)
+
+EVALUATION_HONEYPOT_RESULTS_TOTAL = Counter(
+    "agent_evaluation_honeypot_results_total",
+    "Honeypot probe outcomes",
+    ["outcome"],
+)

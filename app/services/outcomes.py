@@ -20,6 +20,7 @@ from app.models.evaluation_result import EvaluationResultRecord
 from app.models.evaluation_review import EvaluationReview, RunOutcome
 from app.models.incident import Incident
 from app.observability.metrics import (
+    EVALUATION_ATTESTATIONS_TOTAL,
     EVALUATION_FINDINGS_TOTAL,
     EVALUATION_OUTCOMES_TOTAL,
     EVALUATION_REVIEW_QUEUE_DEPTH,
@@ -27,7 +28,15 @@ from app.observability.metrics import (
 )
 from app.schemas.agent import AgentRequest
 from app.schemas.evaluation import EvaluationPreviewRequest, EvaluationResult, OutcomeSubmitRequest
-from app.services.evaluation.evidence import EvidenceError, context_from_outcome, evidence_digest
+from app.services.attestation_keys import trusted_keys_for
+from app.services.evaluation.attestation import AttestationResult, verify_attestation
+from app.services.evaluation.evidence import (
+    EvaluationContext,
+    EvidenceError,
+    apply_attestation_result,
+    context_from_outcome,
+    evidence_digest,
+)
 from app.services.evaluator import Evaluator
 from app.services.review_queue import RUN_REVIEW_REQUIRED, open_or_merge_review, protected_paths_for
 
@@ -80,6 +89,45 @@ async def refresh_review_queue_gauge(session: AsyncSession) -> dict[str, int]:
     return depth
 
 
+async def verify_ctx_attestation(
+    session: AsyncSession,
+    ctx: EvaluationContext,
+    *,
+    redacted: dict[str, Any],
+    raw_attestation: dict[str, Any] | None,
+    raw_test_report: dict[str, Any] | None,
+    tenant_id: str,
+    run_id: str,
+    settings: Settings,
+    check_replay: bool = True,
+) -> AttestationResult:
+    """Verify ``ci_attested`` evidence (D18-D20) and attach the result to the context.
+
+    The signature and subject digest are checked against the evidence as submitted (before
+    redaction), because that is what the CI signed; the persisted copy stays redacted.
+    """
+    if ctx.provenance != "ci_attested":
+        return AttestationResult("none")
+    result = verify_attestation(
+        raw_attestation or {},
+        test_report=raw_test_report if raw_test_report is not None else redacted.get("test_report"),
+        run_id=run_id,
+        keys=await trusted_keys_for(session, tenant_id),
+        max_age_hours=settings.evaluation_attestation_max_age_hours,
+        max_bytes=settings.evaluation_attestation_max_bytes,
+        sigstore_enabled=settings.evaluation_sigstore_enabled,
+    )
+    if check_replay and result.digest and result.status in {"verified", "result_mismatch"}:
+        reused = await session.scalar(
+            select(RunOutcome.outcome_id).where(RunOutcome.tenant_id == tenant_id, RunOutcome.attestation_digest == result.digest).limit(1)
+        )
+        if reused:
+            result = AttestationResult("replayed", {**result.detail, "reason": "attestation_already_used", "previous_outcome_id": reused}, result.digest)
+    apply_attestation_result(ctx, result.status, result.detail)
+    EVALUATION_ATTESTATIONS_TOTAL.labels(status=result.status).inc()
+    return result
+
+
 async def outcome_count(session: AsyncSession, run_id: str) -> int:
     return int(await session.scalar(select(func.count()).select_from(RunOutcome).where(RunOutcome.run_id == run_id)) or 0)
 
@@ -121,6 +169,16 @@ async def submit_outcome(
         protected_paths=protected,
         settings=settings,
     )
+    attestation = await verify_ctx_attestation(
+        session,
+        ctx,
+        redacted=redacted,
+        raw_attestation=payload.attestation,
+        raw_test_report=_evidence_dict(payload).get("test_report"),
+        tenant_id=run.tenant_id,
+        run_id=run.run_id,
+        settings=settings,
+    )
     evaluation = Evaluator().evaluate_context(ctx)
     evaluation.run_id = run.run_id
     outcome_id = new_outcome_id()
@@ -141,6 +199,10 @@ async def submit_outcome(
         assurance_level=evaluation.assurance_level,
         evaluator_version=evaluation.evaluator_version,
         findings=evaluation.findings,
+        attestation_status=attestation.status,
+        # Only verified or contradicting attestations are recorded for replay detection.
+        attestation_digest=attestation.digest if attestation.status in {"verified", "result_mismatch"} else "",
+        attestation_detail=dict(attestation.detail),
     )
     session.add(outcome)
     session.add(
@@ -244,7 +306,7 @@ async def preview_evaluation(
     settings: Settings,
 ) -> EvaluationResult:
     protected = await protected_paths_for(session, tenant_id, payload.metadata)
-    ctx, _ = context_from_outcome(
+    ctx, redacted = context_from_outcome(
         task_type=payload.task_type,
         goal=payload.goal,
         metadata=payload.metadata,
@@ -253,4 +315,17 @@ async def preview_evaluation(
         protected_paths=protected,
         settings=settings,
     )
+    if ctx.provenance == "ci_attested":
+        # Preview has no run: verification cannot pass run binding, so it reports the reason.
+        await verify_ctx_attestation(
+            session,
+            ctx,
+            redacted=redacted,
+            raw_attestation=payload.attestation,
+            raw_test_report=_evidence_dict(payload).get("test_report"),
+            tenant_id=tenant_id,
+            run_id=str(payload.metadata.get("run_id") or ""),
+            settings=settings,
+            check_replay=False,
+        )
     return Evaluator().evaluate_context(ctx)

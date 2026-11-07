@@ -58,7 +58,8 @@ def assurance_level(ctx: EvaluationContext) -> str:
     if not ctx.tests.present:
         return "none"
     if ctx.provenance == "ci_attested":
-        return "ci_attested_unverified"
+        # Only a fully verified attestation raises provenance (Evidence over Claims).
+        return "ci_attested" if ctx.attestation_status == "verified" else "ci_attested_unverified"
     return "self_reported"
 
 
