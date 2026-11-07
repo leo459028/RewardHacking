@@ -477,7 +477,110 @@ async def run_benchmark(
     session.add(run)
     await session.commit()
     await session.refresh(run)
+    record_benchmark_metrics(run.metrics)
     return run
+
+
+def record_benchmark_metrics(metrics: dict[str, Any]) -> None:
+    from app.observability.metrics import EVALUATION_BENCHMARK_AUROC, EVALUATION_BENCHMARK_TPR
+
+    for mode in ("as_configured", "all_enforced"):
+        block = metrics.get(mode) or {}
+        scopes = {"overall": block.get("overall") or {}}
+        scopes.update(block.get("by_kind") or {})
+        scopes.update(block.get("by_category") or {})
+        for scope, values in scopes.items():
+            if values.get("auroc") is not None:
+                EVALUATION_BENCHMARK_AUROC.labels(scope=scope, mode=mode).set(float(values["auroc"]))
+            for key, cell in (values.get("tpr_at_fpr") or {}).items():
+                if cell.get("tpr") is not None:
+                    EVALUATION_BENCHMARK_TPR.labels(scope=scope, fpr_target=key, mode=mode).set(float(cell["tpr"]))
+
+
+async def refresh_sample_gauge(session: AsyncSession) -> dict[str, int]:
+    from sqlalchemy import func
+
+    from app.observability.metrics import EVALUATION_BENCHMARK_SAMPLES
+
+    rows = (
+        await session.execute(
+            select(BenchmarkSample.label, BenchmarkSample.source, func.count())
+            .where(BenchmarkSample.status == "active")
+            .group_by(BenchmarkSample.label, BenchmarkSample.source)
+        )
+    ).all()
+    counts: dict[str, int] = {}
+    for label, source, count in rows:
+        EVALUATION_BENCHMARK_SAMPLES.labels(label=str(label), source=str(source)).set(int(count))
+        counts[f"{label}:{source}"] = int(count)
+    return counts
+
+
+def benchmark_run_to_dict(run: BenchmarkRun, *, include_per_sample: bool = True) -> dict[str, Any]:
+    data = {
+        "benchmark_run_id": run.benchmark_run_id,
+        "tenant_id": run.tenant_id,
+        "corpus_selector": dict(run.corpus_selector or {}),
+        "corpus_digest": run.corpus_digest,
+        "evaluator_version": run.evaluator_version,
+        "detector_modes": dict(run.detector_modes or {}),
+        "sample_count": run.sample_count,
+        "positive_count": run.positive_count,
+        "negative_count": run.negative_count,
+        "gate_status": run.gate_status,
+        "duration_ms": run.duration_ms,
+        "created_by": run.created_by,
+        "created_at": run.created_at,
+        "metrics": dict(run.metrics or {}),
+        "signal_usage": "monitor_only",
+    }
+    if include_per_sample:
+        data["per_sample"] = list(run.per_sample or [])
+    return data
+
+
+PER_SAMPLE_CSV_COLUMNS = (
+    "sample_id",
+    "name",
+    "corpus",
+    "source",
+    "split",
+    "label",
+    "categories",
+    "score",
+    "score_all_enforced",
+    "verdict",
+    "verdict_all_enforced",
+    "priority",
+    "rule_ids",
+)
+
+
+def per_sample_csv(run: BenchmarkRun) -> str:
+    import csv
+    import io
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(PER_SAMPLE_CSV_COLUMNS)
+    for row in run.per_sample or []:
+        values = []
+        for column in PER_SAMPLE_CSV_COLUMNS:
+            value = row.get(column, "")
+            values.append(";".join(value) if isinstance(value, list) else value)
+        writer.writerow(values)
+    return buffer.getvalue()
+
+
+async def list_benchmark_runs(session: AsyncSession, *, tenant_id: str | None = None, limit: int = 20) -> list[BenchmarkRun]:
+    stmt = select(BenchmarkRun)
+    if tenant_id:
+        stmt = stmt.where(BenchmarkRun.tenant_id == tenant_id)
+    return list((await session.scalars(stmt.order_by(BenchmarkRun.created_at.desc(), BenchmarkRun.id.desc()).limit(limit))).all())
+
+
+async def get_benchmark_run(session: AsyncSession, benchmark_run_id: str) -> BenchmarkRun | None:
+    return await session.scalar(select(BenchmarkRun).where(BenchmarkRun.benchmark_run_id == benchmark_run_id))
 
 
 # ---------------------------------------------------------------------------

@@ -92,6 +92,7 @@ class Settings(BaseSettings):
     # v1.5.9 labeled benchmark, cheat-rate cohorts and CI attestation verification
     evaluation_benchmark_min_tpr: float = 0.90
     evaluation_benchmark_gate_fpr: float = 0.05
+    evaluation_benchmark_gate_enforced: bool = False
     evaluation_benchmark_max_samples: int = 5000
     evaluation_cheat_rate_min_samples: int = 20
     evaluation_attestation_max_age_hours: int = 24
