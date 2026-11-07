@@ -751,10 +751,16 @@ async def _issue_tenant_api_key_and_render(
     summary = await governance_summary(session, tenant_id=tenant_id)
     events = await list_governance_events(session, tenant_id=tenant_id, limit=25)
     api_keys = await list_tenant_api_keys(session, tenant_id=tenant_id)
+    from app.services.review_queue import get_evaluation_policy, policy_to_dict
+    from app.ui.routers.reviews import list_evaluation_policies
+
     response = templates.TemplateResponse(
         request,
         "governance.html",
         {
+            "evaluation_policies": await list_evaluation_policies(session),
+            "selected_policy": policy_to_dict(tenant_id, await get_evaluation_policy(session, tenant_id)),
+            "governance_message": "",
             "summary": summary,
             "events": events,
             "runs": runs,
