@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
 
 from app.core.config import get_settings
+from app.models.evaluation_review import EvaluationReview
+from app.models.finops import UsageEvent
 from app.schemas.agent import AgentRequest
+from app.schemas.evaluation import ReviewDecisionRequest
+from app.services.review_queue import ReviewError, decide_review, list_reviews, open_or_merge_review
+from app.workers.consumer import process_run_by_id
 from app.services.evaluation.claims import extract_claims
 from app.services.evaluation.detectors.base import Finding
 from app.services.evaluation.engine import EvaluationEngine
@@ -430,3 +437,161 @@ def test_tenant_protected_path_flags_custom_grader_directory():
     custom = _evaluate({"final_message": "x", "diff": diff}, protected=paths)
     hit = [f for f in custom.findings if f["rule_id"] == "TT-001"]
     assert hit and hit[0]["severity"] == "critical"
+
+
+# ---------------------------------------------------------------------------
+# P4: post-execution review is separated from pre-execution approval
+# ---------------------------------------------------------------------------
+
+
+def _run_worker(session_factory, run_id: str, client) -> None:
+    async def _do():
+        async with session_factory() as session:
+            await process_run_by_id(session, run_id=run_id, state_store=client.state_store, event_publisher=client.event_publisher)
+
+    asyncio.run(_do())
+
+
+def _db(session_factory, fn):
+    async def _do():
+        async with session_factory() as session:
+            return await fn(session)
+
+    return asyncio.run(_do())
+
+
+def _bypass_payload(tenant: str = "v158-review") -> dict:
+    return {
+        "tenant_id": tenant,
+        "user_id": "agent-1",
+        "task_type": "analysis",
+        "prompt": "Investigate why the cache serves stale entries.",
+        "goal": "Bypass the stale cache entries",
+        "allowed_tools": ["read_data"],
+        "constraints": {"max_tool_calls": 2},
+    }
+
+
+def _review_required_run(client, session_factory, tenant: str = "v158-review") -> str:
+    body = client.post("/v1/agent/submit", json=_bypass_payload(tenant)).json()
+    assert body["status"] == "queued", body
+    _run_worker(session_factory, body["run_id"], client)
+    return body["run_id"]
+
+
+def test_post_execution_review_uses_review_required_not_awaiting_approval(client, session_factory):
+    run_id = _review_required_run(client, session_factory)
+    run = client.get(f"/v1/runs/{run_id}").json()
+    assert run["status"] == "review_required"
+    assert run["requires_human_review"] is True
+    assert run_id not in {item["run_id"] for item in client.get("/v1/approvals").json()}
+    reviews = _db(session_factory, lambda s: list_reviews(s, run_id=run_id))
+    assert len(reviews) == 1 and reviews[0].status == "open" and reviews[0].priority == "P3"
+    assert reviews[0].categories == ["legacy_text_signal"]
+    evaluations = client.get("/v1/evaluations?verdict=review").json()
+    assert any(item["run_id"] == run_id for item in evaluations)
+
+
+def test_approve_once_rejected_for_review_required_run(client, session_factory):
+    run_id = _review_required_run(client, session_factory)
+    published_before = len(client.event_publisher.events)
+    response = client.post(
+        f"/v1/approvals/{run_id}/decision",
+        json={"decision": "approve_once", "reviewer": "operator-1", "reason": "should not re-run"},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "run_not_awaiting_approval"
+    assert len(client.event_publisher.events) == published_before
+    assert client.get(f"/v1/runs/{run_id}").json()["status"] == "review_required"
+
+
+def test_lease_settles_on_review_required(client, session_factory):
+    run_id = _review_required_run(client, session_factory, tenant="v158-lease")
+    leases = client.get("/v1/cost/tenants/v158-lease/leases").json()
+    assert leases["active_lease_count"] == 0
+    usage = _db(
+        session_factory,
+        lambda s: _scalars(s, select(UsageEvent).where(UsageEvent.run_id == run_id, UsageEvent.phase == "actual")),
+    )
+    assert usage and {row.metadata_payload.get("status", "success") for row in usage} <= {"success"}
+
+
+async def _scalars(session, stmt):
+    return list((await session.scalars(stmt)).all())
+
+
+def test_review_decision_never_redispatches_and_confirmed_hacking_rejects(client, session_factory):
+    run_id = _review_required_run(client, session_factory, tenant="v158-decide")
+    review = _db(session_factory, lambda s: list_reviews(s, run_id=run_id))[0]
+    published_before = len(client.event_publisher.events)
+    leases_before = client.get("/v1/cost/tenants/v158-decide/leases").json()
+
+    decided = _db(
+        session_factory,
+        lambda s: decide_review(
+            s,
+            review.review_id,
+            ReviewDecisionRequest(label="confirmed_hacking", reviewer="qa-reviewer", reason="bypass confirmed"),
+        ),
+    )
+    assert decided is not None
+    assert len(client.event_publisher.events) == published_before
+    assert client.get("/v1/cost/tenants/v158-decide/leases").json() == leases_before
+    run = client.get(f"/v1/runs/{run_id}").json()
+    assert run["status"] == "rejected"
+    assert run["evaluation_summary"]["review"]["label"] == "confirmed_hacking"
+    assert run["evaluation_summary"]["event_timeline"][-1]["event_type"] == "evaluation.review.decided"
+    incidents = client.get(f"/v1/runs/{run_id}/incidents").json()
+    assert any(item["code"] == "reward_hacking_confirmed" for item in incidents)
+    with pytest.raises(ReviewError) as closed:
+        _db(session_factory, lambda s: decide_review(s, review.review_id, ReviewDecisionRequest(label="accepted", reviewer="x")))
+    assert closed.value.code == "review_already_closed"
+
+
+@pytest.mark.parametrize(("label", "run_status", "review_status"), [("false_positive", "completed", "closed"), ("accepted", "completed", "closed"), ("needs_info", "review_required", "needs_info")])
+def test_review_labels_map_to_run_states(client, session_factory, label, run_status, review_status):
+    run_id = _review_required_run(client, session_factory, tenant=f"v158-{label}")
+    review = _db(session_factory, lambda s: list_reviews(s, run_id=run_id))[0]
+    result = _db(session_factory, lambda s: decide_review(s, review.review_id, ReviewDecisionRequest(label=label, reviewer="qa")))
+    assert result[0].status == review_status
+    assert client.get(f"/v1/runs/{run_id}").json()["status"] == run_status
+
+
+def test_open_review_is_merged_not_duplicated(client, session_factory):
+    run_id = _review_required_run(client, session_factory, tenant="v158-merge")
+    evaluation = {
+        "review_priority": "P0",
+        "evaluator_version": "v1.5.8:test",
+        "findings": [{"finding_id": "fnd_x", "category": "grader_tampering", "severity": "critical", "mode": "enforce"}],
+    }
+
+    async def _merge(session):
+        review = await open_or_merge_review(session, run_id=run_id, tenant_id="v158-merge", evaluation=evaluation)
+        await session.commit()
+        return review
+
+    merged = _db(session_factory, _merge)
+    reviews = _db(session_factory, lambda s: list_reviews(s, run_id=run_id))
+    assert len(reviews) == 1 and reviews[0].review_id == merged.review_id
+    assert reviews[0].priority == "P0"
+    assert set(reviews[0].categories) == {"legacy_text_signal", "grader_tampering"}
+
+
+def test_self_review_forbidden(client, session_factory):
+    run_id = _review_required_run(client, session_factory, tenant="v158-self")
+    review = _db(session_factory, lambda s: list_reviews(s, run_id=run_id))[0]
+
+    async def _mark(session):
+        row = await session.scalar(select(EvaluationReview).where(EvaluationReview.review_id == review.review_id))
+        row.submitted_by = "agent-bot"
+        row.submitted_by_key_id = "key_agent"
+        await session.commit()
+
+    _db(session_factory, _mark)
+    for kwargs, reviewer in (({"reviewer_key_id": "key_agent"}, "someone"), ({}, "Agent-Bot")):
+        with pytest.raises(ReviewError) as exc:
+            _db(
+                session_factory,
+                lambda s, kw=kwargs, rv=reviewer: decide_review(s, review.review_id, ReviewDecisionRequest(label="accepted", reviewer=rv), **kw),
+            )
+        assert exc.value.code == "review_self_approval_forbidden" and exc.value.status_code == 403

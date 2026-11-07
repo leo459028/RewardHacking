@@ -1920,7 +1920,7 @@ async def record_actual_usage(
         ),
     ]
     outcome = await _record_events_and_budget(session, run=run, plan=plan, events=events)
-    if run.status in {"completed", "failed"}:
+    if run.status in {"completed", "failed", "review_required", "rejected"}:
         await settle_run_budget_lease(session, state_store, run=run, plan=plan)
     if outcome.decision == "fail_closed":
         flags = list(run.policy_flags or [])

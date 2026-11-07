@@ -109,6 +109,7 @@ from app.services.auth import (
     require_role,
 )
 from app.services.audit_log import (
+    ApprovalStateError,
     apply_approval_decision,
     create_tenant,
     create_tenant_api_key,
@@ -2177,7 +2178,10 @@ async def decide_approval(
     event_publisher: EventPublisher = Depends(get_event_publisher),
 ):
     require_role(auth_context, "operator", "admin")
-    run = await apply_approval_decision(session, run_id, decision)
+    try:
+        run = await apply_approval_decision(session, run_id, decision)
+    except ApprovalStateError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc), "status": exc.status}) from exc
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
     _query_tenant(run.tenant_id, auth_context)

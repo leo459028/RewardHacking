@@ -23,6 +23,7 @@ from app.schemas.agent import AgentRequest
 from app.schemas.audit import ApprovalDecisionRequest
 from app.services.control_plane import get_execution_plan_for_run, sync_execution_plan_on_approval
 from app.services.orchestrator import OrchestrationResult
+from app.services.review_queue import open_or_merge_review
 
 
 @dataclass(frozen=True)
@@ -61,7 +62,7 @@ class GovernanceSummary:
 
 
 def _requires_review(status: str, summary: dict[str, Any]) -> bool:
-    if status in {"denied", "escalated", "awaiting_approval", "failed"}:
+    if status in {"denied", "escalated", "awaiting_approval", "failed", "review_required"}:
         return True
     event_payload = (
         summary.get("evaluation_event", {})
@@ -279,8 +280,22 @@ async def persist_evaluation_result(
             rubric=dict(payload.get("rubric", {"task_type": request.task_type})),
             judge_signal=dict(payload.get("judge_signal", {"enabled": False})),
             explanation=str(payload.get("explanation", "")),
+            tenant_id=request.tenant_id or "default",
+            evaluator_version=str(payload.get("evaluator_version", "")),
+            evaluation_source=str(payload.get("evaluation_source", "executor") or "executor"),
+            assurance_level=str(payload.get("assurance_level", "simulated") or "simulated"),
+            findings=list(payload.get("findings", []) or []),
+            review_priority=str(payload.get("review_priority", "") or ""),
+            outcome_id=str(payload.get("outcome_id", "") or ""),
         )
     )
+    if payload.get("verdict") == "review" and result.response.status == "review_required":
+        await open_or_merge_review(
+            session,
+            run_id=result.response.run_id,
+            tenant_id=request.tenant_id or "default",
+            evaluation=payload,
+        )
 
 
 async def list_evaluation_results(
@@ -690,6 +705,19 @@ async def list_approvals(
     return list((await session.scalars(stmt)).unique().all())
 
 
+class ApprovalStateError(Exception):
+    """Raised when an approval decision targets a run that is not awaiting pre-execution approval."""
+
+    code = "run_not_awaiting_approval"
+
+    def __init__(self, status: str):
+        super().__init__(
+            f"Run status is '{status}'; approval decisions apply only to runs awaiting pre-execution approval. "
+            "Post-execution reviews are decided via /v1/reviews/{review_id}/decision."
+        )
+        self.status = status
+
+
 async def apply_approval_decision(
     session: AsyncSession,
     run_id: str,
@@ -698,6 +726,8 @@ async def apply_approval_decision(
     run = await get_run(session, run_id)
     if run is None:
         return None
+    if run.status != "awaiting_approval":
+        raise ApprovalStateError(run.status)
 
     summary = dict(run.evaluation_summary or {})
     approval = dict(summary.get("approval", {}))

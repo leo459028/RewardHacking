@@ -27,6 +27,7 @@ from app.services.events import EventPublisher
 from app.schemas.agent import AgentConstraints, AgentRequest
 from app.services.auth import generate_api_key, hash_api_key
 from app.services.audit_log import (
+    ApprovalStateError,
     apply_approval_decision,
     create_tenant,
     create_tenant_api_key,
@@ -1516,7 +1517,10 @@ async def dashboard_approval_decision(
         reviewer=str(form.get("reviewer", "dashboard-operator")),
         reason=str(form.get("reason", "Dashboard decision")),
     )
-    run = await apply_approval_decision(session, run_id, decision)
+    try:
+        run = await apply_approval_decision(session, run_id, decision)
+    except ApprovalStateError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc), "status": exc.status}) from exc
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
     if decision.decision == "deny":
