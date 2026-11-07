@@ -42,6 +42,8 @@ If a change is purely documentation, tests, code formatting, or internal refacto
   4. Verification test suite and exact executable shell commands.
   5. List of documentation files to be updated after implementation.
   6. Required test data and metrics to be recorded into `docs/test_report.md`.
+  7. **Implementation Progress Log** (appended at the end of the plan and kept current during implementation): implementation phases, the files each phase changed, its Stage 1 test result, and the next step. This lets work resume safely after a session ends or a quota reset (see Section 3, Phased Implementation & Resumption).
+- **Version Numbering**: Patch numbers may exceed 9 (e.g., `v1.5.10` follows `v1.5.9`); a minor bump (`v1.6.0`) marks a new release series as defined in `docs/roadmap.md`, not a rollover. Plan files and test files follow the same digits (`docs/plan/v1_5_10plan.md`, `tests/test_v1510_<feature>.py`).
 
 Do not write vague conceptual sketches; ensure the plan provides actionable step-by-step instructions that subsequent engineers can execute directly.
 
@@ -53,6 +55,7 @@ Do not write vague conceptual sketches; ensure the plan provides actionable step
 - **Maintain Architectural Continuity**: Follow established service boundaries and dataflows unless an architectural change is explicitly requested.
 - **Read Before Modifying**: Inspect target line ranges before editing, and **batch multiple `read_file` or `edit_file` tool calls in parallel within a single turn** to save model quota and wall-clock time.
 - **Preserve Unrelated Changes**: Never revert or discard existing user modifications in the working tree.
+- **Router Split Rule (since `v1.5.8`)**: `app/api/routes.py` and `app/ui/routes.py` are frozen for growth. Add new endpoints to per-domain routers (`app/api/routers/<domain>.py`, `app/ui/routers/<domain>.py`) registered in `app/main.py`. When a release touches an existing domain, move that domain's endpoints into its router without changing paths or response shapes.
 
 ### 2.2 Domain Conventions & Anti-Footguns (Prevent Avoidable Retries)
 - **Zero-Warning Pydantic V2 Serialization**: Never use deprecated `json_encoders` in `ConfigDict`. Always use `Annotated[Decimal, PlainSerializer(format_decimal_plain, return_type=str, when_used="json")]`. All pytest runs must pass with `-W error::DeprecationWarning`.
@@ -63,6 +66,16 @@ Do not write vague conceptual sketches; ensure the plan provides actionable step
   - **Approval Decision API**: `POST /v1/approvals/{run_id}/decision` (`decision` in `approve_once`, `deny`, `request_changes`).
   - **Triggering `awaiting_approval` in Tests**: In `PolicyEngine`, `constraints.requires_human_approval=True` indicates approval is already satisfied for non-destructive tasks unless a tool in `allowed_tools` has `requires_approval=True` (e.g., `deploy_service`) or `allow_destructive_actions=True` is set.
   - **Entity ID Prefixes**: `plan_` (`ExecutionPlan`), `ckpt_` (`RunCheckpoint`), `replay_` (`ReplayAttempt`), `usage_` (`UsageEvent`), `cost_` / `cost_adj_` (`CostEvent` / adjustment `CostEvent`), `budget_` (`BudgetPolicy`), `bv_` (`BudgetViolation`), `pib_` (`PricingImportBatch`).
+
+### 2.3 Evaluation & Review Invariants (Apply From `v1.5.8` Onward)
+These rules protect the project's core purpose (reward-hacking detection). A change that would break one of them needs explicit user approval and a plan section explaining why.
+- **Monotonic Safety**: Automated components (rules, detectors, LLM judges, sampling) may only make a verdict stricter or reorder review work. Only a human review decision may accept a run under review. An LLM judge never turns `review` into `pass` and never participates in hard-deny decisions.
+- **Approval ≠ Review**: Pre-execution approval (`awaiting_approval`, `POST /v1/approvals/{run_id}/decision`) decides whether a run may execute. Post-execution review (`review_required`, `POST /v1/reviews/{review_id}/decision`) judges what already happened and must never re-dispatch a run, publish to Kafka, or acquire/release token leases.
+- **Evidence over Claims**: Agent-reported evidence is `self_reported`. Never raise an evidence provenance level (`simulated` → `self_reported` → `ci_attested` → `platform_verified`) without actually verifying it.
+- **Tampering Outranks Gaming**: Findings of kind `reward_tampering` (tests, graders, CI) map to the highest priority and are never averaged down by other signals.
+- **Deterministic, Versioned Detectors**: Detectors must be deterministic and carry a version; any detector change must change `evaluator_version`. New or higher-false-positive-risk detectors ship in `shadow` mode first and are promoted to `enforce` only with benchmark evidence (from `v1.5.9`).
+- **Every Detector Rule Has Negative Fixtures**: Each rule needs at least two positive and two negative fixtures (legitimate code that must not trigger), and the rule plus known false positives are documented in `docs/evaluation.md`.
+- **Monitor-Only Signals**: Evaluation and review API responses carry `signal_usage: "monitor_only"`; never document or design detection signals as training rewards.
 
 ---
 
@@ -76,6 +89,11 @@ While implementing and debugging new features, run only the targeted test file(s
 ruff check app tests scripts
 pytest tests/test_v15x_<new_feature>.py -q -W error::DeprecationWarning
 ```
+
+### Phased Implementation & Resumption (Large Releases)
+- Split a release into phases (for example: migration & models → services → state/flow changes → API → Dashboard → docs & version anchors). Each phase must end in a consistent state with its Stage 1 tests passing; never stop a phase with a cross-module change half applied when it can be avoided.
+- After each phase, update the plan's **Implementation Progress Log** (Section 1, item 7).
+- When resuming (new session, context summary, or after a quota reset): read the progress log, run `git status` and `git diff`, and re-run the Stage 1 tests **before** editing anything. If a phase is incomplete, finish it before starting the next one.
 
 ### Stage 2: Full Release Gate Verification (Run Once After Stage 1 Passes)
 1. **Automated Suite & Secret Scan**:
@@ -118,14 +136,18 @@ pytest tests/test_v15x_<new_feature>.py -q -W error::DeprecationWarning
   - **Public Repository Documentation (`README.md`, `docs/*.md` reference guides)**: Keep in **English** (aligned since `v1.5.2` for international open-source and OpenAI Codex for OSS standards). Dashboard HTML templates retain bilingual headings (`English | 繁體中文`).
 - **Core Files to Synchronize on Release**:
   - Always update: `README.md`, `docs/OVERVIEW.md`, `docs/roadmap.md`, `docs/manual_test.md`, `docs/testing_guide.md`, `docs/test_report.md`.
-  - Update when affected: `docs/api.md`, `docs/dashboard.md`, `docs/runbook.md`, `docs/finops_core.md`, `docs/data_model.md`.
+  - Update when affected: `docs/api.md`, `docs/dashboard.md`, `docs/runbook.md`, `docs/finops_core.md`, `docs/data_model.md`, `docs/evaluation.md` (from `v1.5.8`), `docs/security.md`, `docs/configuration.md`, `docs/observability.md`, `docs/migrations.md`.
 - **Preserve Historical Context**: Do not delete historical release notes or alter core project positioning in `README.md` unless explicitly instructed. Prepend new release sections and move the previous release to the historical list.
 
 ---
 
 ## 5. Git Operations Policy
 
-- **No Unauthorized Git Mutations**: Do not execute `git commit`, `git push`, or `git reset` unless explicitly commanded by the user.
+- **No Unauthorized Git Mutations**: Do not execute `git commit`, `git push`, or `git reset` unless explicitly commanded by the user, except for the phase and release commits described below.
+- **Release Branch & Commit Authorization**: Implement each release on a local branch named after the version (e.g., `v1.5.8`), never directly on `main`. The user has authorized these commits on that branch:
+  - **Phase commits**: one local commit per implementation phase, made only after that phase's Stage 1 checks (`ruff check app tests scripts` and the targeted pytest files with `-W error::DeprecationWarning`) pass and the plan's progress log is updated. Message format: `wip(vX.Y.Z): P<n> <phase summary>`.
+  - **Release commit**: a final commit once the full Stage 2 gate (secret scan, ruff, `git diff --check`, full pytest, Docker migration check, browser E2E) passes with zero failures and the results are recorded in `docs/test_report.md`. Message format: `feat(vX.Y.Z): <release title>`.
+  - Never commit while a required check fails or was skipped, and never stage `docs/plan/*.md`. `git push`, opening pull requests, merging, rebasing/squashing, and `git reset` still require an explicit user command.
 - **Never Upload `docs/plan/*.md`**: Ensure `docs/plan/` and `docs/plan/*.md` remain in `.gitignore` and are never staged (`git add`) or committed to GitHub.
 - **Pre-Commit Disclosure**: State clearly which files will be staged and verify that unrelated changes are not commingled.
 - **Protect Working Tree**: If the working tree contains pre-existing user changes, preserve them untouched.
