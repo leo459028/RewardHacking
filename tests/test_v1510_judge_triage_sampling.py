@@ -1132,3 +1132,23 @@ def test_dashboard_reviews_triage_sampling_and_benchmark_render(client, session_
     assert 'id="triage-precision-table"' in bench_page.text and "rule_only" in bench_page.text and "combined" in bench_page.text
     assert "Manual switch only | 僅能手動切換" in bench_page.text and "seed_corpus_only" in bench_page.text
     assert "Random audit (unbiased)" in bench_page.text and 'id="judge-provider"' in bench_page.text
+
+
+# ---------------------------------------------------------------------------
+# P8: version anchors (exact strings: "v1.5.10" shares a prefix with "v1.5.1")
+# ---------------------------------------------------------------------------
+
+
+def test_v1510_version_anchors():
+    from app.main import app as fastapi_app
+    from app.services.finops import FINOPS_CALCULATION_VERSION
+
+    assert fastapi_app.version == "1.5.10"
+    assert FINOPS_CALCULATION_VERSION == "v1.5.10"
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'version = "1.5.10"' in pyproject and '"httpx>=0.27.0"' in pyproject.split("[project.optional-dependencies]")[0]
+    assert "(v1.5.10)" in (ROOT / "scripts" / "security_check.py").read_text(encoding="utf-8")
+    assert 'value="v1.5.10"' in (ROOT / "app" / "ui" / "templates" / "operations.html").read_text(encoding="utf-8")
+    assert 'release_version", "v1.5.10"' in (ROOT / "app" / "ui" / "routes.py").read_text(encoding="utf-8")
+    browser = (ROOT / "scripts" / "browser_manual_test.py").read_text(encoding="utf-8")
+    assert 'assert release_ver == "v1.5.10"' in browser and "Scenario 8 (v1.5.10)" in browser

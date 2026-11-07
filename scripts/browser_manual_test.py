@@ -816,6 +816,69 @@ def run_manual_test_suite(
         assert "Dry run inspect:" in page.content() and "2 hacking / 1 benign" in page.content()
         print("[Scenario 7.7] Inspect JSON log dry-run import previewed 2 hacking / 1 benign samples")
 
+        # Scenario 8 (v1.5.10): advisory judge triage (shadow) and quota-capped review sampling
+        page.goto(f"{base_url}/dashboard/operations")
+        ops_judge_html = page.content()
+        assert "evaluation_judge_health" in ops_judge_html and "evaluation_sampling_health" in ops_judge_html
+        print("[Scenario 8.1] Operations shows advisory evaluation_judge_health and evaluation_sampling_health checks")
+
+        page.goto(f"{base_url}/dashboard/runs/{outcome_run_id}")
+        run_triage_html = page.content()
+        assert "Judge Triage | 審查排序建議" in run_triage_html and "Advisory only" in run_triage_html
+        print(f"[Scenario 8.2] Run {outcome_run_id} shows the advisory Judge Triage block (deterministic provider)")
+
+        page.goto(f"{base_url}/dashboard/reviews?status=&tenant_id=reviews-qa-tenant")
+        assert "Rule priority | 規則優先級" in page.content() and "Triage | 建議" in page.content()
+        page.click("#order-by-triage")
+        page.wait_for_load_state("networkidle")
+        assert "Triage (advisory) | 依建議排序" in page.content() and "order=triage" in page.url
+        print("[Scenario 8.3] Review queue shows the Triage column and switches to the advisory triage order")
+
+        page.goto(review_url)
+        assert "deterministic:1.0.0" in page.inner_html("#judge-assessment-table")
+        assert "Advisory only — cannot pass a run" in page.content()
+        page.click("#reassess-judge")
+        page.wait_for_load_state("networkidle")
+        assert "Already assessed" in page.content()
+        print(f"[Scenario 8.4] Review {review_url.rsplit('/', 1)[-1]} lists its judge assessment; Re-assess is deduplicated")
+
+        sampled_run = _submit_playground(
+            "sampling-qa-tenant",
+            "code_fix",
+            "read_repo, run_tests",
+            "Add the slug helper",
+            "Add a slug helper and report the test results.",
+        )
+        shadow_diff = open("tests/fixtures/v1510/special_casing_shadow_only.diff", encoding="utf-8").read()
+        _wait_for_status(sampled_run, "completed")
+        page.fill('#submit-outcome input[name="submitted_by"]', "qa-agent-bot")
+        page.fill('#submit-outcome input[name="tests_passed"]', "5")
+        page.fill('#submit-outcome input[name="tests_failed"]', "0")
+        page.fill('#submit-outcome textarea[name="final_message"]', "Implemented the slug helper.")
+        page.fill('#submit-outcome textarea[name="diff"]', shadow_diff)
+        page.click('#submit-outcome button:has-text("Submit Outcome")')
+        page.wait_for_load_state("networkidle")
+        sampled_html = page.content()
+        assert 'class="status review_required"' in sampled_html, "shadow-only special_casing hit was not sampled for review"
+        assert "threshold_sample" in sampled_html or "random_audit" in sampled_html
+        assert "SP-001" in sampled_html and "0E-8" not in sampled_html
+        print(f"[Scenario 8.5] Rule-passed run {sampled_run} with a shadow SP-001 hit was sampled into review (verdict stays pass)")
+
+        page.goto(f"{base_url}/dashboard/reviews?tenant_id=sampling-qa-tenant#sampling")
+        sampling_html = page.inner_html("#sampling")
+        assert int(page.inner_text("#sampling-candidates")) >= 1 and "Counts conserved: <strong>yes</strong>" in sampling_html
+        print("[Scenario 8.6] Sampling panel shows candidates / sampled / skipped / not selected with conserved counts")
+
+        page.goto(f"{base_url}/dashboard/benchmark")
+        page.select_option("#judge-provider", "deterministic")
+        page.click("#run-benchmark")
+        page.wait_for_load_state("networkidle")
+        triage_html = page.content()
+        assert "Judge triage measured" in triage_html and 'id="triage-precision-table"' in triage_html
+        assert "Manual switch only | 僅能手動切換" in triage_html and "seed_corpus_only" in triage_html and "0E-8" not in triage_html
+        triage_bmr = page.url.split("run=")[1].split("&")[0].split("#")[0]
+        print(f"[Scenario 8.7] Benchmark {triage_bmr} measured triage precision@K (rule_only / judge_only / combined); promotion stays manual")
+
         page.goto(f"{base_url}/dashboard/observability")
         obs_html = page.content()
         assert "FinOps" in obs_html
@@ -845,7 +908,10 @@ def run_manual_test_suite(
         assert "agent_evaluation_benchmark_samples" in metrics_text
         assert "agent_evaluation_attestations_total" in metrics_text
         assert "agent_evaluation_honeypot_results_total" in metrics_text
-        print("[Scenario 4.2] /v1/metrics verified in browser (including v1.5.7 MCP, v1.5.8 review and v1.5.9 benchmark/attestation/honeypot metrics)")
+        assert "agent_evaluation_judge_assessments_total" in metrics_text
+        assert "agent_evaluation_review_sampling_total" in metrics_text
+        assert "agent_evaluation_triage_precision_at_k" in metrics_text
+        print("[Scenario 4.2] /v1/metrics verified in browser (including v1.5.7 MCP, v1.5.8 review, v1.5.9 benchmark and v1.5.10 judge/sampling metrics)")
 
         page.goto(f"{base_url}/dashboard/operations")
         ops_html = page.content()
@@ -855,21 +921,22 @@ def run_manual_test_suite(
         assert "mcp_gateway_registry_health" in ops_html
         assert "evaluation_review_queue_health" in ops_html
         assert "evaluation_benchmark_gate" in ops_html
+        assert "evaluation_judge_health" in ops_html and "evaluation_sampling_health" in ops_html
         release_ver = page.input_value('input[name="release_version"]')
-        assert release_ver == "v1.5.9"
+        assert release_ver == "v1.5.10"
 
         page.select_option('select[name="evidence_type"]', "safety_regression")
         page.select_option('select[name="status"]', "pass")
         page.fill('input[name="reference_url"]', "docs/manual_test.md")
-        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.5.9")
+        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.5.10")
         page.click('button:has-text("Save Evidence")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
         page.click('button:has-text("Create Release Gate Snapshot")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
-        assert "v1.5.9" in page.content()
-        print("[Scenario 4.3] Operations evidence saved & v1.5.9 Release Gate snapshot created via browser")
+        assert "v1.5.10" in page.content()
+        print("[Scenario 4.3] Operations evidence saved & v1.5.10 Release Gate snapshot created via browser")
 
         # 6. Check all primary navigation tabs for 0E-8 and HTTP 200
         nav_routes = [

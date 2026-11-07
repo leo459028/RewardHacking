@@ -1,12 +1,16 @@
 # Agent FinOps Core & Cost Accounting Reference
 
-> **Module**: Agent FinOps Core (`v1.5.8`, `FINOPS_CALCULATION_VERSION = "v1.5.8"`)
-> **Schema Revision**: `202611070001` (Alembic Head; FinOps tables unchanged since `202606010004`)
+> **Module**: Agent FinOps Core (`v1.5.10`, `FINOPS_CALCULATION_VERSION = "v1.5.10"`; no calculation changes since `v1.5.8`)
+> **Schema Revision**: `202611090001` (Alembic Head; FinOps tables unchanged since `202606010004`)
 > **Reference Seed**: `app/seeds/model_pricing_seed.yaml`
 
 This document details the architectural design, database schemas, burn-rate forecasting, Dynamic Token Broker pre-execution leasing, settled ledger deduplication, multi-currency FX & tax accounting, cost-center attribution, manual reconciliation adjustments, ledger exports, model-aware routing, active budget enforcement, context-aware pricing resolution, administration APIs, and YAML seed ingestion mechanics of the **Agent FinOps Core** engine.
 
 ---
+
+## Evaluation Judge Cost Attribution (`v1.5.10`)
+
+LLM judge calls (review triage and LLM-judged benchmark runs) record actual usage through `record_usage_event()`: one event each for `input_tokens` and `output_tokens`, `resource_type="model"`, `resource_subtype="chat_completion"`, `provider="custom"`, `step_id="evaluation_judge"`, `phase="actual"`, `status` `success` / `timeout` / `failed`, and `metadata.cost_kind="evaluation_judge"` with `judge_version` and `review_id` or `benchmark_run_id` / `sample_id`. Review triage events carry the reviewed `run_id`; benchmark events have an empty `run_id`. Judge usage never acquires, settles or releases a run token lease and never re-evaluates run budgets. A judge model without a pricing row records a `missing_pricing_rule` violation (add a catalog row for the judge model). The per-tenant daily judge token cap (`EVALUATION_JUDGE_DAILY_TOKEN_CAP_PER_TENANT`) is enforced from `judge_assessments` before each call.
 
 ## Lease Settlement for Post-Execution Reviews (`v1.5.8`)
 

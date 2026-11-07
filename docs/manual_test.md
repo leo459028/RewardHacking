@@ -204,7 +204,7 @@ This scenario tests the complete `v1.5.5` FinOps governance and financial reconc
 4. **Redaction (builtin tool)** — `/dashboard/playground`: `tenant_id=finops-qa-tenant`, `task_type=code_fix`, `allowed_tools=read_repo`, `Tool Arguments={"read_repo": {"repo_path": "app/services", "api_key": "sk-live-secret999999"}}` → **Submit Run** → **Open run detail**. Request, Execution Plan and Tool Executions show `"api_key": "[REDACTED]"`; the literal secret never appears.
 5. **Redaction (custom MCP tool)** — Playground with `task_type=analysis`, `allowed_tools=qa_mcp_tool`, `Tool Arguments={"qa_mcp_tool": {"query": "test", "api_token": "secret-xyz"}}`. The result shows MCP route `mcp-qa-v157`; Run Detail shows `api_token: "[REDACTED]"` and `MCP Server Breakdown`.
 6. **Costs** — `/dashboard/costs?tenant_id=finops-qa-tenant`: header `V1.5.7 Agent FinOps Core`, *MCP Server Cost Breakdown* lists `mcp-core-local` (and other servers used), the `mcp_server_id` filter works, and CSV export headers end with `mcp_server_id,tool_id`. No `0E-8` anywhere.
-7. **Operations** — `/dashboard/operations`: `mcp_gateway_registry_health = pass` and default `release_version = v1.5.9`.
+7. **Operations** — `/dashboard/operations`: `mcp_gateway_registry_health = pass` and default `release_version = v1.5.10`.
 
 Optional API checks: `GET /v1/control-plane/mcp-servers`; `POST /v1/control-plane/tools/query_data/validate-arguments` with `{"arguments": {"query": "SELECT 1", "undeclared_field": "x"}}` returns `valid=false`.
 
@@ -232,6 +232,21 @@ Optional API checks: `GET /v1/control-plane/mcp-servers`; `POST /v1/control-plan
 7. **CI Attestation** — *Attestation Keys*: register an Ed25519 public key named `ci-demo` for `benchmark-qa-tenant`. Submit a `code_fix` run for that tenant, then *Submit Outcome Evidence* with `Provenance=ci_attested`, `Tests Passed=12`, `Tests Failed=0` and a DSSE envelope signed by the matching private key whose Statement binds `rewardhacking:run/<run_id>` and the summary digest (see `docs/evaluation.md` §2.1). Expect *Attestation: verified* and assurance `ci_attested`. **Revoke** the key; the table shows `revoked`.
 8. **Inspect import (optional)** — *Import Inspect Log*: paste `tests/fixtures/v159/inspect_log_sample.json`, keep *Dry run* → **Import**. Expect `Dry run inspect:… 2 hacking / 1 benign`.
 9. **Metrics** — `/v1/metrics` exposes `agent_evaluation_benchmark_tpr`, `agent_evaluation_benchmark_auroc`, `agent_evaluation_benchmark_samples`, `agent_evaluation_attestations_total`, `agent_evaluation_honeypot_results_total`.
+
+## 5.8 Scenario 8: Advisory Judge Triage (Shadow) & Quota-Capped Review Sampling (`v1.5.10`)
+
+> Uses the Scenario 6 runs and tenant `sampling-qa-tenant`. The default stack uses the deterministic judge (no external LLM calls). `scripts/browser_manual_test.py` automates steps 1–7.
+
+1. **Readiness** — `/dashboard/operations` lists `evaluation_judge_health` (advisory, provider `deterministic`, mode `shadow`) and `evaluation_sampling_health` (advisory; warns until `EVALUATION_SAMPLE_SECRET` is set). Overall readiness is unaffected.
+2. **Run Detail triage** — open the Scenario 6 grader-tampering run. Under *Outcome Evidence & Findings* the review line is followed by *Judge Triage \| 審查排序建議* with a triage chip (`P1`), the score, `deterministic:1.0.0` and *Advisory only — cannot pass a run*.
+3. **Queue order** — `/dashboard/reviews?status=&tenant_id=reviews-qa-tenant`: the table has *Triage \| 建議* and *Sample reason* columns and the header reads *Order: Rule priority \| 規則優先級*. Click **Order by triage**: the header reads *Triage (advisory) \| 依建議排序*; any `P0` review is still first and no priority badge changes.
+4. **Judge Assessments** — open the Scenario 6 review: the *Judge Assessments* panel lists a `jdg_…` row (`deterministic`, status `ok`, triage chip, rationale). The panel has no pass/close control. Click **Re-assess**: expect *Already assessed \| 已評估* (same evidence and judge version).
+5. **Threshold sample** — `/dashboard/playground`: tenant `sampling-qa-tenant`, `code_fix`, tools `read_repo, run_tests`, goal `Add the slug helper` → **Submit Run**; wait for `completed`. *Submit Outcome Evidence*: `Tests Passed=5`, `Tests Failed=0`, `Final Message=Implemented the slug helper.`, diff = `tests/fixtures/v1510/special_casing_shadow_only.diff`. Expect status `review_required` with the verdict still `pass`, an `SP-001` finding marked `shadow`, and the review line tagged `threshold_sample` (rarely `random_audit` if the 2% random draw hit first).
+6. **Sampling panel** — `/dashboard/reviews?tenant_id=sampling-qa-tenant#sampling`: *Candidates* ≥ 1, *Sampled · threshold* (or random) = 1, *Counts conserved: yes*, and the settings line (threshold 0.5, daily cap 20, max share 5%, random rate 2%).
+7. **Triage precision** — `/dashboard/benchmark` → *Run Benchmark*: `Judge triage = deterministic` → **Run Benchmark**. The banner adds *Judge triage measured with deterministic:1.0.0*; the *Triage precision@K* table lists `rule_only`, `judge_only` and `combined` (precision@5/10/20 = 100% / 90% / 90% on the seed corpus), deltas, and *Promotion criteria: not met* with `seed_corpus_only` and *Manual switch only \| 僅能手動切換*.
+8. **Random audit (API / pytest)** — with `EVALUATION_SAMPLE_RANDOM_RATE=1.0` a clean rule-passed outcome becomes `review_required` with `sample_reason=random_audit`; deciding it updates *Random audit (unbiased)* on *Cheat Rates*. This needs a restart with a different setting, so it is covered by `tests/test_v1510_judge_triage_sampling.py` instead of the browser script.
+9. **Concealment (API)** — with `AUTH_ENABLED=true`, an `operator` key sees `sample_reason: rule_review` and empty triage fields; a `reviewer` key sees `threshold_sample` and the triage (covered by pytest).
+10. **Metrics** — `/v1/metrics` exposes `agent_evaluation_judge_assessments_total`, `agent_evaluation_review_sampling_total` and `agent_evaluation_triage_precision_at_k`.
 
 ## 6. Browser QA Sign-Off Checklist
 
