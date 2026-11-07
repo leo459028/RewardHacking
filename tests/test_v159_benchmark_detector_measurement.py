@@ -1186,3 +1186,110 @@ def test_v159_prometheus_metrics_exposed(client):
     ):
         assert name in text, name
 
+
+# ---------------------------------------------------------------------------
+# P7: Dashboard
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_benchmark_page_run_and_what_if(client):
+    page = client.get("/dashboard/benchmark")
+    assert page.status_code == 200
+    for text in ("Labeled Benchmark", "Corpus", "Run Benchmark", "Honeypot Probes", "Cheat Rates", "Attestation Keys", 'href="/dashboard/benchmark"'):
+        assert text in page.text, text
+    assert "0E-8" not in page.text and "No benchmark runs yet." in page.text
+    submitted = client.post("/dashboard/benchmark/runs", data={"tenant_id": "default", "corpora": "seed-v1.5.9", "split": "all"}, follow_redirects=False)
+    assert submitted.status_code == 303 and "run=bmr_" in submitted.headers["location"]
+    result = client.get(submitted.headers["location"])
+    assert result.status_code == 200
+    assert "Benchmark bmr_" in result.text and 'id="metrics-table"' in result.text and 'id="audit-curve"' in result.text
+    assert "Insufficient samples" in result.text  # FPR 1% cannot be resolved with < 100 negatives
+    assert "reward_tampering" in result.text and "0E-8" not in result.text
+    run_id = submitted.headers["location"].split("run=")[1].split("&")[0].split("#")[0]
+    what_if = client.get(f"/dashboard/benchmark?run={run_id}&mode=all_enforced")
+    assert what_if.status_code == 200 and "special_casing" in what_if.text
+    filtered = client.get("/dashboard/benchmark?corpus=seed-v1.5.9&label=benign&split=holdout")
+    assert filtered.status_code == 200 and "sample(s) shown" in filtered.text
+
+
+def test_dashboard_honeypot_launch_package_and_attestation_keys(client):
+    launched = client.post(
+        "/dashboard/honeypots/launch",
+        data={"probe_id": "hp_conflicting_assertions", "tenant_id": "v159-ui", "user_id": "agent-demo", "agent_id": "agent-demo", "model_name": "demo-model"},
+        follow_redirects=False,
+    )
+    assert launched.status_code == 303 and "Launched+probe" in launched.headers["location"].replace("%20", "+")
+    page = client.get(launched.headers["location"])
+    assert page.status_code == 200 and "hp_conflicting_assertions" in page.text and "pending" in page.text
+    package = client.get("/dashboard/honeypots/hp_conflicting_assertions/package")
+    assert package.status_code == 200 and "tests/test_add.py" in package.text
+    missing = client.post("/dashboard/honeypots/launch", data={"probe_id": "hp_missing", "tenant_id": "v159-ui"}, follow_redirects=False)
+    assert missing.status_code == 303 and "error=" in missing.headers["location"]
+
+    _, pem = _ed25519_keypair()
+    created = client.post(
+        "/dashboard/benchmark/attestation-keys",
+        data={"tenant_id": "v159-ui", "name": "ci-demo", "algorithm": "ed25519", "public_key_pem": pem},
+        follow_redirects=False,
+    )
+    assert created.status_code == 303 and "message=" in created.headers["location"]
+    keys_page = client.get(created.headers["location"])
+    assert "ci-demo" in keys_page.text and "attk_" in keys_page.text and ">active<" in keys_page.text
+    key_id = client.get("/v1/tenants/v159-ui/attestation-keys").json()["keys"][0]["key_id"]
+    revoked = client.post(f"/dashboard/benchmark/attestation-keys/{key_id}/revoke", data={"tenant_id": "v159-ui"}, follow_redirects=False)
+    assert revoked.status_code == 303
+    assert ">revoked<" in client.get(revoked.headers["location"]).text
+    bad = client.post("/dashboard/benchmark/attestation-keys", data={"tenant_id": "v159-ui", "public_key_pem": "nope"}, follow_redirects=False)
+    assert "error=" in bad.headers["location"]
+    governance = client.get("/dashboard/governance")
+    assert governance.status_code == 200 and "Manage Attestation Keys" in governance.text
+
+
+def test_dashboard_review_finding_labels_export_and_attestation_form(client, session_factory):
+    tenant = "v159-ui-review"
+    run_id, flagged = _flagged_run(client, session_factory, tenant)
+    review_id = flagged["review"]["review_id"]
+    finding_id = flagged["review"]["finding_ids"][0]
+    detail = client.get(f"/dashboard/reviews/{review_id}")
+    assert detail.status_code == 200 and f"finding_label__{finding_id}" in detail.text and "agent-alpha" in detail.text
+    decided = client.post(
+        f"/dashboard/reviews/{review_id}/decision",
+        data={"label": "confirmed_hacking", "reviewer": "qa-reviewer", f"finding_label__{finding_id}": "true_positive"},
+        follow_redirects=False,
+    )
+    assert decided.status_code == 303 and "message=" in decided.headers["location"]
+    closed = client.get(decided.headers["location"])
+    assert "Export to Benchmark" in closed.text and "true_positive" in closed.text
+    exported = client.post(f"/dashboard/reviews/{review_id}/export-benchmark", data={"scope": "tenant"}, follow_redirects=False)
+    assert exported.status_code == 303 and "Exported+to+benchmark" in exported.headers["location"].replace("%20", "+")
+    after = client.get(exported.headers["location"])
+    assert "Exported as" in after.text and "bms_" in after.text
+
+    # attestation submitted from the run page form
+    private, pem = _ed25519_keypair()
+    _register_key(session_factory, tenant, pem)
+    run2 = _completed_run_v159(client, session_factory, tenant)
+    form_report = {"format": "summary", "summary": {"passed": 12, "failed": 0, "skipped": 0, "errors": 0}}
+    envelope = _envelope(private, _statement(run2, form_report))
+    submitted = client.post(
+        f"/dashboard/runs/{run2}/outcome",
+        data={
+            "submitted_by": "dashboard-agent",
+            "provenance": "ci_attested",
+            "tests_passed": "12",
+            "tests_failed": "0",
+            "tests_skipped": "0",
+            "test_format": "summary",
+            "final_message": "Fixed. All tests pass.",
+            "diff": FIX_DIFF_V159,
+            "attestation_json": json.dumps(envelope),
+        },
+        follow_redirects=False,
+    )
+    assert submitted.status_code == 303 and "message=" in submitted.headers["location"]
+    run_page = client.get(submitted.headers["location"])
+    assert 'id="attestation-status">verified<' in run_page.text and "ci_attested" in run_page.text
+    bad_json = client.post(f"/dashboard/runs/{run2}/outcome", data={"provenance": "ci_attested", "attestation_json": "{not json"}, follow_redirects=False)
+    assert "error=" in bad_json.headers["location"]
+    assert run_id
+

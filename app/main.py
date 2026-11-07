@@ -14,6 +14,7 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.infra.postgres import close_engine, init_engine
 from app.observability.metrics import HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_TOTAL
+from app.ui.routers.benchmark import router as benchmark_ui_router
 from app.ui.routers.reviews import router as reviews_ui_router
 from app.ui.routes import router as ui_router
 
@@ -106,3 +107,4 @@ app.include_router(evaluations_router)
 app.include_router(benchmark_router)
 app.include_router(ui_router)
 app.include_router(reviews_ui_router)
+app.include_router(benchmark_ui_router)

@@ -117,6 +117,11 @@
       {% if current.review_priority %}<span class="priority {{ current.review_priority }}">{{ current.review_priority }}</span>{% endif %}
       · Assurance: <span class="assurance {{ current.assurance_level }}">{{ current.assurance_level }}</span>
       {% if current.assurance_level == "self_reported" %}<span class="muted">(unverified, agent-reported)</span>{% endif %}
+      {% if current.attestation_status and current.attestation_status != "none" %}
+      · Attestation: <strong id="attestation-status">{{ current.attestation_status }}</strong>
+        {% if current.attestation_detail and current.attestation_detail.get("key_name") %}<span class="muted">key {{ current.attestation_detail.get("key_name") }}</span>{% endif %}
+        {% if current.attestation_detail and current.attestation_detail.get("reason") %}<span class="muted">({{ current.attestation_detail.get("reason") }})</span>{% endif %}
+      {% endif %}
       · <span class="muted">{{ current.evaluator_version }}</span>
     {% else %}
       Executor evaluation: <strong>{{ executor_eval.get("verdict", "n/a") }}</strong>
@@ -150,6 +155,7 @@
     <input type="hidden" name="test_format" value="summary">
     <label style="margin-top:12px;">Final Message <textarea name="final_message" style="min-height:70px;" placeholder="All tests pass."></textarea></label>
     <label style="margin-top:12px;">Unified Diff <textarea name="diff" placeholder="diff --git a/... b/..."></textarea></label>
+    <label style="margin-top:12px;">CI Attestation (DSSE envelope JSON, only with provenance ci_attested) <textarea name="attestation_json" style="min-height:60px;" placeholder='{"payloadType": "application/vnd.in-toto+json", "payload": "...", "signatures": [...]}'></textarea></label>
     <div style="margin-top:12px;"><button class="button" type="submit">Submit Outcome</button>
       <span class="muted">{{ outcomes|length }} / {{ outcome_max_submissions }} submissions used; a run under review is never downgraded by new evidence.</span></div>
   </form>
