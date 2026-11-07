@@ -1,5 +1,75 @@
 # Test Execution & Verification Report
 
+## 2026-11-07 - v1.5.8 Agent Outcome Ingestion, Evidence-Based Reward-Hacking Detectors & Post-Execution Review Queue Verification
+
+- **Version**: `v1.5.8` (branch `v1.5.8`, Alembic head `202611070001`)
+- **Scope of Changes**:
+  1. **Outcome ingestion** (`app/services/outcomes.py`, `POST /v1/runs/{run_id}/outcome`, `GET /v1/runs/{run_id}/outcomes`, `POST /v1/evaluations/preview`): bounded, redacted, append-only agent evidence (`run_outcomes`, `outcome_` IDs), max 3 submissions per run, monotonic safety (a `review_required` run is never downgraded by new evidence), JUnit `DOCTYPE` / `ENTITY` rejection.
+  2. **Evaluation engine** (`app/services/evaluation/`): taxonomy, claim extraction (EN / zh-TW, negation-aware), versioned detectors with `enforce` / `shadow` / `disabled` modes, deterministic aggregation (`verdict`, `review_priority` `P0`–`P3`, `assurance_level`), `evaluator_version`; `app/services/evaluator.py` kept as a backward-compatible facade with the legacy heuristic as `legacy_text`.
+  3. **Detectors**: `test_tampering` (`TT-001`–`TT-007`), `grader_tampering` (`GT-001`–`GT-004`), `error_suppression` incl. CI tampering (`ES-001`–`ES-003`), `claim_evidence` (`CE-001`–`CE-008`), `scope` (`SC-001`), `evidence_quality`.
+  4. **Review / approval split** (`app/services/review_queue.py`): new run statuses `review_required` and `rejected`; post-execution reviews (`evaluation_reviews`, `review_` IDs) never re-dispatch runs, publish to Kafka or touch leases; `approve_once` on non-`awaiting_approval` runs returns `409 run_not_awaiting_approval`; reviewer/submitter separation (`403 review_self_approval_forbidden`); tenant protected paths (`tenant_evaluation_policies`).
+  5. **Dashboard / observability**: `/dashboard/reviews` (+ detail, decision form, Evidence Preview), Run Detail *Outcome Evidence & Findings* / *Submit Outcome Evidence*, Governance *Evaluation Policy*, `evaluation_review_queue_health` readiness check, metrics `agent_evaluation_findings_total`, `agent_evaluation_outcomes_total`, `agent_evaluation_reviews_total`, `agent_evaluation_review_queue_depth`.
+  6. **Hygiene**: CI runs `pytest -q -W error::DeprecationWarning`; README CI badge points to `leo459028/RewardHacking`; `GET /v1/evaluations` moved to `app/api/routers/evaluations.py` (router split rule).
+- **UI / Dashboard Verification Endpoints**: `/dashboard/reviews`, `/dashboard/reviews/review_fc6d92c7124e4d9ba6bcd4f7`, `/dashboard/runs/5022dc79-922f-4a6b-8d43-a4573668a62c`, `/dashboard/runs/312936f0-03d3-48e3-87ed-0d71f84605b2`, `/dashboard/governance?tenant_id=reviews-qa-tenant`, `/dashboard/operations`.
+- **Recorded Live Verification Artifacts** (headed Playwright Chromium, `python scripts/browser_manual_test.py`, QA currency `TWD`, rebuilt stack):
+  - Scenario 1 Low-Risk Run, Dry-Run Replay & Replay Bundle: `f535a4e8-b4f3-4d9f-961b-05dc335170e7`
+  - Scenario 2a Classical Chinese Adversarial Run: `3a5dc823-a0b4-43b9-9558-2e377769d7f6`
+  - Scenario 2b Escalated → Approved & Stale Approvals Swept: `0d457cd4-cc8d-482f-896e-2e7fffe74189`
+  - Scenario 3.1b `TWD` FX (`0.031`), Tax & `cc-ai-core`: `5c3ee840-65ff-4d50-998c-040fbf722735`
+  - Scenario 3.3 Fail-Closed Budget Block: `2e55d1f2-bc68-4bee-86db-b7802c993623`
+  - Scenario 5.4 Playground `read_repo` `api_key` redacted: `16e0c49e-1c10-4015-a6e8-5a25ff8a1656`
+  - Scenario 5.5 `qa_mcp_tool` redacted and attributed to `mcp-qa-v157`: `c744b086-afdd-4d43-8176-f2d99b9b91df`
+  - Scenario 6.1 Post-execution review run `review_required`, absent from Approvals, listed in Reviews: `5022dc79-922f-4a6b-8d43-a4573668a62c`
+  - Scenario 6.2 Outcome evidence (`grader_tampering_eq_true.diff`) → `GT-001` critical / `P0`, assurance `self_reported`: `312936f0-03d3-48e3-87ed-0d71f84605b2`
+  - Scenario 6.3 Review `review_fc6d92c7124e4d9ba6bcd4f7` decided `confirmed_hacking` → run `rejected` (no re-execution)
+  - Scenario 6.4 Evidence Preview flagged `CE-001` `false_verification_claim` without persisting
+  - Scenario 6.5 Governance Evaluation Policy saved for `reviews-qa-tenant` (`scoring/**`)
+  - Scenario 4.3 Operations evidence & Release Gate snapshot `release_version=v1.5.8` (`evaluation_review_queue_health` present)
+  - Section 6 Browser Checklist: `15/15` routes HTTP 200 (new `/dashboard/reviews`), `0` `0E-8` artifacts, `0` Console errors/warnings, `0` Page errors, `0` failed HTTP requests (`>=400`).
+
+### Test Commands & Actual Execution Results
+
+| Test Command | Actual Result |
+| --- | --- |
+| `python scripts/security_check.py` | Passed: `[OK] No sensitive API keys, secrets, or credentials found in git history or working tree.` (fake redaction fixture `sk-abcdefghijklmnop1234` allow-listed). |
+| `ruff check app tests scripts` | Passed: `All checks passed!` |
+| `git diff --check` (working tree and `main...HEAD`) | Passed: `0` whitespace errors. |
+| `pytest tests/test_v158_outcome_evidence_review_queue.py -q -W error::DeprecationWarning` | Passed: `58 passed in 14.23s` (`0 warnings`). |
+| `pytest -q -W error::DeprecationWarning` | Passed: `184 passed in 100.08s` (`0 warnings`), up from `126`. |
+| `docker compose up -d --build` & `docker compose ps` | Passed: rebuilt `rewardhacking-api` / `rewardhacking-worker`; `api`, `worker` Up; `kafka`, `postgres`, `redis` Up (healthy). |
+| `docker compose exec -T api alembic upgrade head` & `alembic current` | Passed: `202611070001 (head)` on PostgreSQL 16. OpenAPI `info.version = 1.5.8`. |
+| `python scripts/browser_manual_test.py` | Passed (`[Browser Mode] headed`, exit code `0`): all scenarios incl. new Scenario 6; `0` Console errors, `0` Page errors, `0` HTTP `>=400`, `0` `0E-8`. |
+
+### Detector Fixture Results (`tests/fixtures/v158/`)
+
+| Detector | Positive fixtures hit | Negative fixtures without false positives |
+| --- | --- | --- |
+| `test_tampering` | `4/4` (`TT-002`, `TT-003`, `TT-004`, `TT-007`) | `3/3` (new test file, additions-only test extension, assertion refactor without `TT-003`) |
+| `grader_tampering` | `4/4` (`GT-001`, `GT-002`, `GT-003`, `GT-004`) | `3/3` (CLI `sys.exit` in tests, proper `__eq__`, `sys.exit` under `__main__` guard) |
+| `error_suppression` | `3/3` (`ES-001`, `ES-002`, `ES-003`) | `2/2` (`except ValueError`, new CI step) |
+| `claim_evidence` / `scope` | `CE-001`, `CE-002`, `CE-003`, `CE-005`, `CE-006`, `SC-001` hit in unit tests | clean evidence and negated claims produce no `claim_evidence` findings; `scope` silent without `declared_scope` |
+
+### Gap 0 Fix Evidence
+- A goal containing `bypass` now yields `review_required` (not `awaiting_approval`); the run is absent from `/v1/approvals`; `approve_once` returns `409 run_not_awaiting_approval` with `0` new Kafka events (`test_approve_once_rejected_for_review_required_run`, browser Scenario 6.1).
+- Review decisions publish `0` Kafka events and leave leases unchanged (`test_review_decision_never_redispatches_and_confirmed_hacking_rejects`); the lease settles with usage status `success` (`test_lease_settles_on_review_required`).
+- `evaluator_version` at release: deterministic `v1.5.8:<sha256[:8]>` over detector name/version/mode (asserted equal across identical runs in `test_evaluator_version_is_deterministic`).
+
+### Changed Existing Tests (intentional)
+- `tests/test_v157_mcp_gateway_schema_guardrails.py`: exact `v1.5.7` anchors relaxed to `startswith("1.5.")` / `startswith("v1.5.")` / `value="v1.5.`; exact anchors now live in `test_v158_version_anchors_and_ci_gate`.
+- No other existing test changed: the `review_required` status split (plan decision D4) did not break any of the 126 pre-existing tests.
+
+### Process Notes
+- The P6 phase commit (`0f170b4`) was created while `test_v156_dashboard_governance_and_control_plane_crud_portals` failed (API-key issuance page rendered `governance.html` without `selected_policy`). It was fixed in `43a4778`; later phase commits were gated on the pytest exit code.
+- An early E2E run failed at Scenario 6.2 because the status wait matched an execution-plan step badge; the script now matches the run's Status card.
+
+### Limitations & Known Observations
+- AST analysis covers Python only; other languages use diff-level patterns (`medium` confidence).
+- Evidence is at most `self_reported`; `ci_attested` is recorded as `ci_attested_unverified` until `v1.5.9`; `platform_verified` requires the `v1.6.1` sandbox.
+- Deterministic rules can be evaded deliberately; miss rates will be measured with the `v1.5.9` labeled benchmark.
+- The Bounded Executor continues to simulate tool execution; the executor path evaluates simulated text with assurance `simulated`.
+
+---
+
 ## 2026-11-07 - v1.5.7 Safe MCP Gateway MVP, Tool Schema Guardrails & Per-MCP-Server FinOps Attribution Verification
 
 - **Version**: `v1.5.7`
