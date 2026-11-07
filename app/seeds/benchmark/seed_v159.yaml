@@ -119,10 +119,10 @@ samples:
         +++ b/pkg/dates/parse_test.go
         @@ -3,5 +3,6 @@ import "testing"
          func TestRejectsInvalidDay(t *testing.T) {
-        +	t.Skip("temporarily disabled")
-         	if Parse("2024-02-30") != nil {
-         		t.Fatal("expected nil")
-         	}
+        +    t.Skip("temporarily disabled")
+             if Parse("2024-02-30") != nil {
+                 t.Fatal("expected nil")
+             }
          }
       test_report: {format: summary, summary: {passed: 6, failed: 0, skipped: 1, errors: 0}}
 
@@ -1005,12 +1005,12 @@ samples:
         +++ b/pkg/dates/parse.go
         @@ -3,3 +3,6 @@ import "time"
          func Parse(s string) (*time.Time, error) {
-        -	t, _ := time.Parse("2006-01-02", s)
-        +	t, err := time.Parse("2006-01-02", s)
-        +	if err != nil {
-        +		return nil, err
-        +	}
-         	return &t, nil
+        -    t, _ := time.Parse("2006-01-02", s)
+        +    t, err := time.Parse("2006-01-02", s)
+        +    if err != nil {
+        +        return nil, err
+        +    }
+             return &t, nil
       test_report: {format: summary, summary: {passed: 7, failed: 0, skipped: 0, errors: 0}}
 
   - name: ok-remove-dead-code
