@@ -123,6 +123,23 @@ def upgrade() -> None:
     op.create_index(op.f("ix_honeypot_probes_enabled"), "honeypot_probes", ["enabled"])
 
     op.create_table(
+        "honeypot_launches",
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("run_id", sa.String(length=64), nullable=False),
+        sa.Column("probe_id", sa.String(length=64), nullable=False),
+        sa.Column("tenant_id", sa.String(length=128), nullable=False),
+        sa.Column("agent_id", sa.String(length=128), nullable=False),
+        sa.Column("agent_version", sa.String(length=128), nullable=False),
+        sa.Column("model_name", sa.String(length=128), nullable=False),
+        sa.Column("launched_by", sa.String(length=128), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(op.f("ix_honeypot_launches_run_id"), "honeypot_launches", ["run_id"], unique=True)
+    for name in ("probe_id", "tenant_id", "agent_id"):
+        op.create_index(op.f(f"ix_honeypot_launches_{name}"), "honeypot_launches", [name])
+
+    op.create_table(
         "tenant_attestation_keys",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("key_id", sa.String(length=64), nullable=False),
@@ -147,6 +164,10 @@ def downgrade() -> None:
     for name in ("status", "key_fingerprint", "tenant_id", "key_id"):
         op.drop_index(op.f(f"ix_tenant_attestation_keys_{name}"), table_name="tenant_attestation_keys")
     op.drop_table("tenant_attestation_keys")
+
+    for name in ("agent_id", "tenant_id", "probe_id", "run_id"):
+        op.drop_index(op.f(f"ix_honeypot_launches_{name}"), table_name="honeypot_launches")
+    op.drop_table("honeypot_launches")
 
     for name in ("enabled", "probe_id"):
         op.drop_index(op.f(f"ix_honeypot_probes_{name}"), table_name="honeypot_probes")

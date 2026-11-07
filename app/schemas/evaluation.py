@@ -104,6 +104,11 @@ class OutcomeRecord(BaseModel):
     evaluator_version: str
     findings: list[dict[str, Any]] = Field(default_factory=list)
     evidence: dict[str, Any] = Field(default_factory=dict)
+    # v1.5.9 attestation verification and self-reported cohort identity (honeypot fields are never exposed here)
+    attestation_status: str = "none"
+    attestation_detail: dict[str, Any] = Field(default_factory=dict)
+    agent_id: str = ""
+    model_name: str = ""
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -127,6 +132,12 @@ class ReviewRecord(BaseModel):
     reason: str = ""
     opened_at: datetime
     decided_at: datetime | None = None
+    # v1.5.9 self-reported cohort identity, per-finding labels and benchmark export link
+    agent_id: str = ""
+    agent_version: str = ""
+    model_name: str = ""
+    finding_labels: dict[str, str] = Field(default_factory=dict)
+    exported_sample_id: str = ""
     signal_usage: str = SIGNAL_USAGE
 
     model_config = {"from_attributes": True}
@@ -153,6 +164,8 @@ class ReviewDecisionRequest(BaseModel):
     reviewer: str = Field(min_length=1, max_length=128)
     reason: str = Field(default="", max_length=2000)
     label_categories: list[str] = Field(default_factory=list, max_length=20)
+    # v1.5.9 per-finding labels for detector-level precision (finding IDs must belong to the review)
+    finding_labels: dict[str, Literal["true_positive", "false_positive"]] = Field(default_factory=dict, max_length=200)
 
 
 class EvaluationPolicyRecord(BaseModel):

@@ -82,6 +82,22 @@ class HoneypotProbe(Base):
     updated_at = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class HoneypotLaunch(Base):
+    """Server-side run -> probe mapping. Never copied into the run's request payload (D15)."""
+
+    __tablename__ = "honeypot_launches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    probe_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False, default="default")
+    agent_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False, default="")
+    agent_version: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    launched_by: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    created_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class TenantAttestationKey(Base):
     __tablename__ = "tenant_attestation_keys"
 

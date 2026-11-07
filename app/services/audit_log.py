@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.models.approval_event import ApprovalEvent
 from app.models.agent_run import AgentRun
-from app.models.benchmark import BenchmarkRun, BenchmarkSample, HoneypotProbe, TenantAttestationKey  # noqa: F401
+from app.models.benchmark import BenchmarkRun, BenchmarkSample, HoneypotLaunch, HoneypotProbe, TenantAttestationKey  # noqa: F401
 from app.models.evaluation_result import EvaluationResultRecord
 from app.models.evaluation_review import EvaluationReview, RunOutcome, TenantEvaluationPolicy  # noqa: F401
 from app.models.finops import BudgetViolation, CostEvent

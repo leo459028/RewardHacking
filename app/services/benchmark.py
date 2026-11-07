@@ -480,6 +480,270 @@ async def run_benchmark(
     return run
 
 
+# ---------------------------------------------------------------------------
+# Review export, relabel and retire (D7-D10)
+# ---------------------------------------------------------------------------
+
+EXPORTABLE_LABELS = {"confirmed_hacking": "hacking", "false_positive": "benign", "accepted": "benign"}
+
+
+async def get_sample(session: AsyncSession, sample_id: str) -> BenchmarkSample | None:
+    return await session.scalar(select(BenchmarkSample).where(BenchmarkSample.sample_id == sample_id))
+
+
+def _governance(tenant_id: str, actor: str, event_type: str, decision: str, reason: str, details: dict[str, Any]):
+    from app.models.governance_event import GovernanceEvent
+
+    return GovernanceEvent(
+        tenant_id=tenant_id or "default",
+        user_id=(actor or "")[:128],
+        event_type=event_type,
+        decision=decision,
+        reason=reason[:500],
+        details=details,
+    )
+
+
+async def export_review(
+    session: AsyncSession,
+    *,
+    review_id: str,
+    scope: str = "tenant",
+    allow_global: bool = False,
+    label_categories: list[str] | None = None,
+    notes: list[str] | None = None,
+    actor: str = "",
+    commit: bool = True,
+) -> BenchmarkSample:
+    """Copy a decided review's redacted evidence and label into a benchmark sample (explicit action only)."""
+    from app.models.agent_run import AgentRun
+    from app.models.evaluation_review import EvaluationReview, RunOutcome
+
+    review = await session.scalar(select(EvaluationReview).where(EvaluationReview.review_id == review_id))
+    if review is None:
+        raise BenchmarkError("review_not_found", f"Review {review_id} not found.", 404)
+    if review.status != "closed" or review.label not in EXPORTABLE_LABELS:
+        raise BenchmarkError("review_not_exportable", "Only closed reviews labelled confirmed_hacking, false_positive or accepted can be exported.", 409)
+    if scope not in {"tenant", "global"}:
+        raise BenchmarkError("benchmark_scope_invalid", "scope must be 'tenant' or 'global'.", 422)
+    if scope == "global" and not allow_global:
+        raise BenchmarkError("benchmark_scope_forbidden", "Only admins can export samples to the global corpus.", 403)
+
+    sample_id = sample_id_for(f"review:{review.review_id}")
+    existing = await get_sample(session, sample_id)
+    if existing is not None:
+        raise BenchmarkError("benchmark_sample_duplicate", "This review was already exported.", 409, {"sample_id": existing.sample_id})
+
+    run = await session.scalar(select(AgentRun).where(AgentRun.run_id == review.run_id))
+    latest = await session.scalar(
+        select(RunOutcome).where(RunOutcome.run_id == review.run_id).order_by(RunOutcome.submission_seq.desc()).limit(1)
+    )
+    label_notes = [str(item) for item in (notes or []) if str(item).strip()][:20]
+    if latest is not None:
+        raw = {key: value for key, value in dict(latest.evidence or {}).items() if key in EVIDENCE_FIELDS}
+    else:
+        raw = {"final_message": (run.execution_output if run is not None else "") or ""}
+        label_notes.append("simulated_executor_output")
+    # Evidence was redacted at ingestion; redact again (D9) and drop submitter identity (never stored here).
+    evidence = normalize_evidence(raw)
+    label = EXPORTABLE_LABELS[review.label]
+    if review.label == "accepted":
+        label_notes.append("accepted_behavior")
+    categories = [str(c) for c in (label_categories or review.label_categories or review.categories or []) if str(c) in CATEGORIES]
+    categories = [c for c in categories if c not in {"legacy_text_signal", "evidence_quality"}] if label == "hacking" else []
+    if label == "hacking" and not categories:
+        raise BenchmarkError("benchmark_label_categories_required", "A hacking sample needs at least one taxonomy category.", 422)
+    corpus = "global" if scope == "global" else f"tenant:{review.tenant_id}"
+    digest = evidence_digest(evidence)
+    clash = await session.scalar(select(BenchmarkSample).where(BenchmarkSample.corpus == corpus, BenchmarkSample.evidence_digest == digest))
+    if clash is not None:
+        raise BenchmarkError("benchmark_sample_duplicate", "Identical evidence is already in this corpus.", 409, {"sample_id": clash.sample_id})
+    request_payload = dict((run.request_payload if run is not None else {}) or {})
+    sample = BenchmarkSample(
+        sample_id=sample_id,
+        corpus=corpus,
+        scope=scope,
+        tenant_id=GLOBAL_TENANT if scope == "global" else review.tenant_id,
+        source="review_export",
+        split=split_for(sample_id),
+        name=f"review-{review.review_id[-8:]}",
+        label=label,
+        label_categories=categories,
+        label_notes=sorted(set(label_notes)),
+        finding_labels=dict(review.finding_labels or {}),
+        task=normalize_task(request_payload),
+        evidence=evidence,
+        evidence_digest=digest,
+        origin_review_id=review.review_id,
+        origin_run_id=review.run_id,
+        status="active",
+        label_history=[],
+        created_by=actor[:128],
+    )
+    session.add(sample)
+    review.exported_sample_id = sample_id
+    session.add(
+        _governance(
+            review.tenant_id,
+            actor,
+            "evaluation.benchmark.exported",
+            label,
+            f"Review {review.review_id} exported to {corpus}",
+            {"review_id": review.review_id, "sample_id": sample_id, "corpus": corpus, "label": label, "categories": categories},
+        )
+    )
+    if commit:
+        await session.commit()
+        await session.refresh(sample)
+    else:
+        await session.flush()
+    return sample
+
+
+async def export_reviews(
+    session: AsyncSession,
+    *,
+    tenant_id: str | None,
+    label: str | None = None,
+    decided_after: Any = None,
+    scope: str = "tenant",
+    allow_global: bool = False,
+    actor: str = "",
+    limit: int = 500,
+) -> dict[str, Any]:
+    from app.models.evaluation_review import EvaluationReview
+
+    stmt = select(EvaluationReview).where(EvaluationReview.status == "closed").order_by(EvaluationReview.decided_at.asc(), EvaluationReview.id.asc())
+    if tenant_id:
+        stmt = stmt.where(EvaluationReview.tenant_id == tenant_id)
+    if label:
+        stmt = stmt.where(EvaluationReview.label == label)
+    if decided_after is not None:
+        stmt = stmt.where(EvaluationReview.decided_at >= decided_after)
+    reviews = list((await session.scalars(stmt.limit(limit))).all())
+    counts = {"exported": 0, "skipped_duplicates": 0, "skipped_not_exportable": 0, "errors": 0}
+    sample_ids: list[str] = []
+    for review in reviews:
+        try:
+            sample = await export_review(
+                session, review_id=review.review_id, scope=scope, allow_global=allow_global, actor=actor, commit=False
+            )
+        except BenchmarkError as exc:
+            if exc.code == "benchmark_sample_duplicate":
+                counts["skipped_duplicates"] += 1
+            elif exc.code in {"review_not_exportable", "benchmark_label_categories_required"}:
+                counts["skipped_not_exportable"] += 1
+            else:
+                raise
+            continue
+        counts["exported"] += 1
+        sample_ids.append(sample.sample_id)
+    await session.commit()
+    return {**counts, "considered": len(reviews), "sample_ids": sample_ids, "signal_usage": "monitor_only"}
+
+
+async def relabel_sample(
+    session: AsyncSession,
+    *,
+    sample_id: str,
+    label: str,
+    label_categories: list[str],
+    reason: str,
+    actor: str,
+) -> BenchmarkSample:
+    sample = await get_sample(session, sample_id)
+    if sample is None:
+        raise BenchmarkError("benchmark_sample_not_found", f"Sample {sample_id} not found.", 404)
+    if sample.source == "seed_fixture":
+        raise BenchmarkError("benchmark_seed_immutable", "Seed samples are code-owned; change the seed YAML instead.", 409)
+    if label not in LABELS:
+        raise BenchmarkError("benchmark_label_invalid", "label must be 'hacking' or 'benign'.", 422)
+    categories = [str(c) for c in label_categories if str(c) in CATEGORIES] if label == "hacking" else []
+    if label == "hacking" and not categories:
+        raise BenchmarkError("benchmark_label_categories_required", "A hacking sample needs at least one taxonomy category.", 422)
+    from datetime import datetime, timezone
+
+    history = list(sample.label_history or [])
+    history.append(
+        {
+            "label": sample.label,
+            "label_categories": list(sample.label_categories or []),
+            "changed_by": actor[:128],
+            "changed_at": datetime.now(timezone.utc).isoformat(),
+            "reason": reason[:500],
+        }
+    )
+    sample.label_history = history
+    sample.label = label
+    sample.label_categories = categories
+    session.add(
+        _governance(
+            sample.tenant_id if sample.tenant_id != GLOBAL_TENANT else "default",
+            actor,
+            "evaluation.benchmark.relabeled",
+            label,
+            reason or "relabel",
+            {"sample_id": sample_id, "label": label, "categories": categories, "previous": history[-1]},
+        )
+    )
+    await session.commit()
+    await session.refresh(sample)
+    return sample
+
+
+async def retire_sample(session: AsyncSession, *, sample_id: str, tenant_id: str | None, is_admin: bool, actor: str) -> BenchmarkSample:
+    sample = await get_sample(session, sample_id)
+    if sample is None:
+        raise BenchmarkError("benchmark_sample_not_found", f"Sample {sample_id} not found.", 404)
+    if sample.scope == "global" and not is_admin:
+        raise BenchmarkError("benchmark_scope_forbidden", "Only admins can retire global or seed samples.", 403)
+    if sample.scope == "tenant" and tenant_id and sample.tenant_id != tenant_id and not is_admin:
+        raise BenchmarkError("benchmark_sample_not_found", f"Sample {sample_id} not found.", 404)
+    if sample.status != "retired":
+        sample.status = "retired"
+        session.add(
+            _governance(
+                sample.tenant_id if sample.tenant_id != GLOBAL_TENANT else "default",
+                actor,
+                "evaluation.benchmark.retired",
+                "retired",
+                f"Sample {sample_id} retired",
+                {"sample_id": sample_id},
+            )
+        )
+        await session.commit()
+        await session.refresh(sample)
+    return sample
+
+
+def sample_to_dict(sample: BenchmarkSample, *, include_evidence: bool = True) -> dict[str, Any]:
+    data = {
+        "sample_id": sample.sample_id,
+        "corpus": sample.corpus,
+        "scope": sample.scope,
+        "tenant_id": sample.tenant_id,
+        "source": sample.source,
+        "split": sample.split,
+        "name": sample.name,
+        "label": sample.label,
+        "label_categories": list(sample.label_categories or []),
+        "label_notes": list(sample.label_notes or []),
+        "finding_labels": dict(sample.finding_labels or {}),
+        "task": dict(sample.task or {}),
+        "evidence_digest": sample.evidence_digest,
+        "origin_review_id": sample.origin_review_id,
+        "origin_run_id": sample.origin_run_id,
+        "status": sample.status,
+        "label_history": list(sample.label_history or []),
+        "created_by": sample.created_by,
+        "created_at": sample.created_at,
+        "signal_usage": "monitor_only",
+    }
+    if include_evidence:
+        data["evidence"] = dict(sample.evidence or {})
+    return data
+
+
 async def latest_benchmark_run(session: AsyncSession, *, evaluator_version: str | None = None, tenant_id: str | None = None) -> BenchmarkRun | None:
     stmt = select(BenchmarkRun)
     if evaluator_version:

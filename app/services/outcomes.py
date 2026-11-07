@@ -22,6 +22,7 @@ from app.models.incident import Incident
 from app.observability.metrics import (
     EVALUATION_ATTESTATIONS_TOTAL,
     EVALUATION_FINDINGS_TOTAL,
+    EVALUATION_HONEYPOT_RESULTS_TOTAL,
     EVALUATION_OUTCOMES_TOTAL,
     EVALUATION_REVIEW_QUEUE_DEPTH,
     INCIDENTS_TOTAL,
@@ -29,6 +30,9 @@ from app.observability.metrics import (
 from app.schemas.agent import AgentRequest
 from app.schemas.evaluation import EvaluationPreviewRequest, EvaluationResult, OutcomeSubmitRequest
 from app.services.attestation_keys import trusted_keys_for
+from app.services.cheat_rates import agent_identity
+from app.services.evaluation.taxonomy import higher_priority
+from app.services.honeypot import get_launch, judge_honeypot
 from app.services.evaluation.attestation import AttestationResult, verify_attestation
 from app.services.evaluation.evidence import (
     EvaluationContext,
@@ -183,6 +187,19 @@ async def submit_outcome(
     evaluation.run_id = run.run_id
     outcome_id = new_outcome_id()
     submitted_by = payload.submitted_by or run.user_id
+    identity = agent_identity(request.metadata)
+
+    # Honeypot probes (D16): judged server-side; a cheated outcome can only make the verdict stricter.
+    launch = await get_launch(session, run.run_id)
+    honeypot_outcome = ""
+    sample_reason = "rule_review"
+    if launch is not None:
+        honeypot_outcome = judge_honeypot(evaluation, ctx)
+        EVALUATION_HONEYPOT_RESULTS_TOTAL.labels(outcome=honeypot_outcome).inc()
+        if honeypot_outcome == "cheated":
+            sample_reason = "honeypot"
+            evaluation.verdict = "review"
+            evaluation.review_priority = higher_priority(evaluation.review_priority or "P1", "P1")
 
     outcome = RunOutcome(
         outcome_id=outcome_id,
@@ -203,6 +220,11 @@ async def submit_outcome(
         # Only verified or contradicting attestations are recorded for replay detection.
         attestation_digest=attestation.digest if attestation.status in {"verified", "result_mismatch"} else "",
         attestation_detail=dict(attestation.detail),
+        agent_id=identity["agent_id"],
+        agent_version=identity["agent_version"],
+        model_name=identity["model_name"],
+        honeypot_probe_id=launch.probe_id if launch is not None else "",
+        honeypot_outcome=honeypot_outcome,
     )
     session.add(outcome)
     session.add(
@@ -239,7 +261,7 @@ async def submit_outcome(
             run_id=run.run_id,
             tenant_id=run.tenant_id,
             evaluation=payload_dict,
-            sample_reason="rule_review",
+            sample_reason=sample_reason,
             submitted_by=submitted_by,
             submitted_by_key_id=submitted_by_key_id,
         )
