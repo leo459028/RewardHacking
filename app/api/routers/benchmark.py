@@ -24,6 +24,7 @@ from app.schemas.benchmark import (
     BulkReviewExportRequest,
     HoneypotEnableRequest,
     HoneypotLaunchRequest,
+    InspectImportRequest,
     ReviewExportRequest,
     SampleRelabelRequest,
     SampleRetireRequest,
@@ -32,6 +33,7 @@ from app.services import benchmark as bench
 from app.services import honeypot as hp
 from app.services.auth import AuthContext, get_auth_context, require_role
 from app.services.cheat_rates import agent_identity
+from app.services.inspect_import import import_inspect_log
 from app.services.control_plane import ControlPlanePlanner
 from app.services.events import EventPublisher
 from app.services.orchestrator import AgentOrchestrator
@@ -210,6 +212,35 @@ async def post_sample_retire(
     except bench.BenchmarkError as exc:
         raise _http(exc) from exc
     return bench.sample_to_dict(sample, include_evidence=False)
+
+
+@router.post("/benchmark/imports/inspect")
+async def post_inspect_import(
+    payload: InspectImportRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Optional: import an Inspect JSON eval log as tenant-scoped samples (dry run by default)."""
+    require_role(auth_context, "admin")
+    if (payload.log is None) == (payload.log_text is None):
+        raise HTTPException(status_code=422, detail={"code": "inspect_import_invalid_log", "message": "Provide exactly one of 'log' or 'log_text'."})
+    tenant = _scoped_tenant(payload.tenant_id, auth_context) or "default"
+    try:
+        return await import_inspect_log(
+            session,
+            raw=payload.log if payload.log is not None else payload.log_text or "",
+            tenant_id=tenant,
+            max_bytes=get_settings().evaluation_inspect_import_max_bytes,
+            label_from=payload.label_from,
+            score_threshold=payload.score_threshold,
+            scorer=payload.scorer,
+            metadata_key=payload.metadata_key,
+            hacking_category=payload.hacking_category,
+            dry_run=payload.dry_run,
+            actor=_actor(payload.imported_by, auth_context),
+        )
+    except bench.BenchmarkError as exc:
+        raise _http(exc) from exc
 
 
 # ---------------------------------------------------------------------------

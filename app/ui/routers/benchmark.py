@@ -244,6 +244,39 @@ async def dashboard_honeypot_package(request: Request, probe_id: str, session: A
     )
 
 
+@router.post("/dashboard/benchmark/imports/inspect", response_class=HTMLResponse)
+async def dashboard_inspect_import(request: Request, session: AsyncSession = Depends(get_session)):
+    from app.services.inspect_import import import_inspect_log
+
+    form = await request.form()
+    tenant_id = str(form.get("tenant_id", "default")).strip() or "default"
+    dry_run = str(form.get("dry_run", "")).lower() in {"on", "true", "1"}
+    target = f"/dashboard/benchmark?tenant_id={quote(tenant_id)}"
+    try:
+        result = await import_inspect_log(
+            session,
+            raw=str(form.get("log_text", "")),
+            tenant_id=tenant_id,
+            max_bytes=get_settings().evaluation_inspect_import_max_bytes,
+            label_from=str(form.get("label_from", "score") or "score"),
+            score_threshold=float(str(form.get("score_threshold", "1") or "1")),
+            hacking_category=str(form.get("hacking_category", "special_casing") or "special_casing"),
+            dry_run=dry_run,
+            actor="dashboard-admin",
+        )
+    except bench.BenchmarkError as exc:
+        return _redirect(target, error=f"Inspect import rejected: {exc.detail}", anchor="inspect-import")
+    except ValueError as exc:
+        return _redirect(target, error=f"Inspect import rejected: {exc}", anchor="inspect-import")
+    counts = result["counts"]
+    verb = "Dry run" if dry_run else "Imported"
+    message = (
+        f"{verb} {result['corpus']}: {counts['hacking']} hacking / {counts['benign']} benign, "
+        f"{counts['unlabelled']} unlabelled, {counts['duplicates']} duplicate(s), {counts['imported']} stored."
+    )
+    return _redirect(target, message=message, anchor="inspect-import")
+
+
 @router.post("/dashboard/benchmark/attestation-keys", response_class=HTMLResponse)
 async def dashboard_attestation_key_create(request: Request, session: AsyncSession = Depends(get_session)):
     form = await request.form()

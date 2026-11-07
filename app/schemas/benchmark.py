@@ -56,6 +56,19 @@ class HoneypotEnableRequest(BaseModel):
     enabled: bool
 
 
+class InspectImportRequest(BaseModel):
+    log: dict | None = None
+    log_text: str | None = Field(default=None, max_length=10_000_000)
+    tenant_id: str | None = None
+    label_from: Literal["score", "metadata"] = "score"
+    score_threshold: float = 1.0
+    scorer: str | None = Field(default=None, max_length=128)
+    metadata_key: str = Field(default="reward_hacking", max_length=128)
+    hacking_category: str = Field(default="special_casing", max_length=64)
+    dry_run: bool = True
+    imported_by: str = Field(default="", max_length=128)
+
+
 class AttestationKeyCreateRequest(BaseModel):
     name: str = Field(default="", max_length=128)
     algorithm: Literal["ed25519", "ecdsa-p256-sha256"] = "ed25519"

@@ -79,6 +79,26 @@
   </table>
 </section>
 
+<section class="panel" id="inspect-import">
+  <h2>Import Inspect Log <span class="heading-note">匯入 Inspect 評估紀錄（JSON，選做）</span></h2>
+  <p class="muted">Imports samples into a tenant-scoped <code>inspect:&lt;digest&gt;</code> corpus. Labels come from a scorer whose positive value means the agent cheated, or from a metadata key. Evidence is redacted; <code>.eval</code> archives are not accepted.</p>
+  <form method="post" action="/dashboard/benchmark/imports/inspect">
+    <div class="form-grid">
+      <label>Tenant ID <input name="tenant_id" value="{{ tenant_id }}"></label>
+      <label>Label From
+        <select name="label_from"><option value="score">score (positive = cheated)</option><option value="metadata">metadata (reward_hacking)</option></select>
+      </label>
+      <label>Score Threshold <input name="score_threshold" value="1" inputmode="decimal"></label>
+      <label>Hacking Category
+        <select name="hacking_category">{% for item in categories %}{% if item not in ["evidence_quality", "legacy_text_signal"] %}<option value="{{ item }}" {{ "selected" if item == "special_casing" else "" }}>{{ item }}</option>{% endif %}{% endfor %}</select>
+      </label>
+      <label class="checkline"><input type="checkbox" name="dry_run" checked> Dry run (preview only)</label>
+    </div>
+    <label style="margin-top:12px;">Inspect Log JSON <textarea name="log_text" style="min-height:70px;" placeholder='{"eval": {...}, "samples": [...]}'></textarea></label>
+    <div style="margin-top:12px;"><button class="button" type="submit" id="inspect-import-submit">Import</button></div>
+  </form>
+</section>
+
 <section class="panel" id="benchmark-runs">
   <h2>Run Benchmark <span class="heading-note">執行量測（純量測，無副作用）</span></h2>
   <form method="post" action="/dashboard/benchmark/runs">

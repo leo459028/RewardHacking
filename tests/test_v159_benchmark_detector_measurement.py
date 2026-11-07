@@ -1293,3 +1293,63 @@ def test_dashboard_review_finding_labels_export_and_attestation_form(client, ses
     assert "error=" in bad_json.headers["location"]
     assert run_id
 
+
+# ---------------------------------------------------------------------------
+# P8: optional Inspect JSON log importer
+# ---------------------------------------------------------------------------
+
+INSPECT_LOG = (Path(__file__).resolve().parent / "fixtures" / "v159" / "inspect_log_sample.json").read_text(encoding="utf-8")
+
+
+def test_inspect_import_dry_run_then_import(client):
+    dry = client.post("/v1/benchmark/imports/inspect", json={"log_text": INSPECT_LOG, "tenant_id": "v159-inspect"})
+    assert dry.status_code == 200, dry.text
+    body = dry.json()
+    assert body["dry_run"] is True and body["corpus"].startswith("inspect:")
+    assert body["counts"] == {"samples": 3, "hacking": 2, "benign": 1, "unlabelled": 0, "duplicates": 0, "imported": 0}
+    assert len(body["preview"]) == 3 and body["model"] == "example/model-a"
+    assert client.get(f"/v1/benchmark/samples?corpus={body['corpus']}&tenant_id=v159-inspect").json()["count"] == 0
+
+    stored = client.post("/v1/benchmark/imports/inspect", json={"log_text": INSPECT_LOG, "tenant_id": "v159-inspect", "dry_run": False}).json()
+    assert stored["counts"]["imported"] == 3 and stored["import_id"] == body["import_id"]
+    samples = client.get(f"/v1/benchmark/samples?corpus={stored['corpus']}&tenant_id=v159-inspect&include_evidence=true").json()["samples"]
+    assert {s["label"] for s in samples} == {"hacking", "benign"} and all(s["source"] == "inspect_import" for s in samples)
+    serialized = json.dumps(samples)
+    assert "sk-test-abcdefghijklmnop" not in serialized and "[REDACTED]" in serialized
+    assert all(s["tenant_id"] == "v159-inspect" and s["scope"] == "tenant" for s in samples)
+    again = client.post("/v1/benchmark/imports/inspect", json={"log_text": INSPECT_LOG, "tenant_id": "v159-inspect", "dry_run": False}).json()
+    assert again["counts"]["duplicates"] == 3 and again["counts"]["imported"] == 0
+    by_metadata = client.post("/v1/benchmark/imports/inspect", json={"log_text": INSPECT_LOG, "label_from": "metadata"}).json()
+    assert by_metadata["counts"]["hacking"] == 1 and by_metadata["counts"]["benign"] == 1 and by_metadata["counts"]["unlabelled"] == 1
+    run = client.post("/v1/benchmark/runs", json={"corpora": [stored["corpus"]], "tenant_id": "v159-inspect"})
+    assert run.status_code == 201 and run.json()["sample_count"] == 3
+
+
+def test_inspect_import_rejects_unsafe_inputs(client, monkeypatch):
+    zipped = client.post("/v1/benchmark/imports/inspect", json={"log_text": "PK\u0003\u0004rest"})
+    assert zipped.status_code == 415 and zipped.json()["error"]["code"] == "inspect_import_unsupported_format"
+    invalid = client.post("/v1/benchmark/imports/inspect", json={"log_text": "{nope"})
+    assert invalid.status_code == 422 and invalid.json()["error"]["code"] == "inspect_import_invalid_json"
+    both = client.post("/v1/benchmark/imports/inspect", json={"log_text": INSPECT_LOG, "log": {"samples": []}})
+    assert both.status_code == 422
+    bad_category = client.post("/v1/benchmark/imports/inspect", json={"log_text": INSPECT_LOG, "hacking_category": "legacy_text_signal"})
+    assert bad_category.status_code == 422
+    monkeypatch.setenv("EVALUATION_INSPECT_IMPORT_MAX_BYTES", "100")
+    get_settings.cache_clear()
+    too_large = client.post("/v1/benchmark/imports/inspect", json={"log_text": INSPECT_LOG})
+    assert too_large.status_code == 413 and too_large.json()["error"]["code"] == "inspect_import_too_large"
+    get_settings.cache_clear()
+
+
+def test_dashboard_inspect_import_form(client):
+    response = client.post(
+        "/dashboard/benchmark/imports/inspect",
+        data={"tenant_id": "v159-ui-inspect", "log_text": INSPECT_LOG, "label_from": "score", "score_threshold": "1", "dry_run": "on"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303 and "Dry+run" in response.headers["location"].replace("%20", "+")
+    page = client.get(response.headers["location"])
+    assert page.status_code == 200 and "2 hacking / 1 benign" in page.text and "Import Inspect Log" in page.text
+    rejected = client.post("/dashboard/benchmark/imports/inspect", data={"log_text": "{bad"}, follow_redirects=False)
+    assert "error=" in rejected.headers["location"]
+
