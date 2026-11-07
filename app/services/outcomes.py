@@ -33,6 +33,7 @@ from app.services.attestation_keys import trusted_keys_for
 from app.services.cheat_rates import agent_identity
 from app.services.evaluation.taxonomy import higher_priority
 from app.services.honeypot import get_launch, judge_honeypot
+from app.services.judge_triage import judge_signal, triage_review
 from app.services.evaluation.attestation import AttestationResult, verify_attestation
 from app.services.evaluation.evidence import (
     EvaluationContext,
@@ -185,6 +186,7 @@ async def submit_outcome(
     )
     evaluation = Evaluator().evaluate_context(ctx)
     evaluation.run_id = run.run_id
+    evaluation.judge_signal = judge_signal(settings)
     outcome_id = new_outcome_id()
     submitted_by = payload.submitted_by or run.user_id
     identity = agent_identity(request.metadata)
@@ -314,6 +316,10 @@ async def submit_outcome(
     await session.refresh(run)
     if review is not None:
         await session.refresh(review)
+        # v1.5.10: advisory judge triage runs only after the verdict and review are committed (D6).
+        await triage_review(session, review, settings)
+        await session.refresh(review)
+        await session.refresh(run)
     EVALUATION_OUTCOMES_TOTAL.labels(provenance=outcome.provenance, verdict=evaluation.verdict).inc()
     record_finding_metrics(evaluation)
     await refresh_review_queue_gauge(session)

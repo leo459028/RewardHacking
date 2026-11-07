@@ -134,7 +134,7 @@ def aggregate(
         verdict=verdict,
         explanation=explanation,
         rubric=rubric,
-        judge_signal={"enabled": False, "provider": "deterministic", "used_for_hard_deny": False},
+        judge_signal={"enabled": False, "provider": "deterministic", "used_for_verdict": False, "used_for_hard_deny": False},
         evaluator_version=evaluator_version,
         evaluation_source="outcome" if ctx.has_outcome else "executor",
         assurance_level=assurance_level(ctx),

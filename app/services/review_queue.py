@@ -30,6 +30,9 @@ from app.services.evaluation.taxonomy import SEVERITY_RANK, higher_priority
 RUN_REVIEW_REQUIRED = "review_required"
 RUN_REJECTED = "rejected"
 OPEN_REVIEW_STATUSES = ("open", "needs_info")
+TRIAGE_ORDER_SCAN_LIMIT = 2000
+# v1.5.10 sampling reasons; roles that submit agent work see ``rule_review`` instead (D20).
+CONCEALED_SAMPLE_REASONS = ("honeypot", "threshold_sample", "random_audit")
 LABEL_TO_RUN_STATUS = {
     "confirmed_hacking": RUN_REJECTED,
     "false_positive": "completed",
@@ -151,7 +154,10 @@ async def list_reviews(
     tenant_id: str | None = None,
     run_id: str | None = None,
     limit: int = 100,
+    order: str = "rule",
 ) -> list[EvaluationReview]:
+    """List reviews. ``order="rule"`` keeps the v1.5.8 order; ``order="triage"`` applies the v1.5.10
+    advisory ordering (rule P0 first, a judge can only move items earlier; priorities never change)."""
     stmt = select(EvaluationReview)
     if status == "active":
         stmt = stmt.where(EvaluationReview.status.in_(OPEN_REVIEW_STATUSES))
@@ -164,7 +170,13 @@ async def list_reviews(
     if run_id:
         stmt = stmt.where(EvaluationReview.run_id == run_id)
     stmt = stmt.order_by(EvaluationReview.priority.asc(), EvaluationReview.opened_at.asc(), EvaluationReview.id.asc())
-    rows = list((await session.scalars(stmt.limit(max(limit, 1) * (5 if category else 1)))).all())
+    if order == "triage":
+        from app.services.judge_triage import review_sort_key
+
+        rows = list((await session.scalars(stmt.limit(TRIAGE_ORDER_SCAN_LIMIT))).all())
+        rows.sort(key=review_sort_key)
+    else:
+        rows = list((await session.scalars(stmt.limit(max(limit, 1) * (5 if category else 1)))).all())
     if category:
         rows = [row for row in rows if category in list(row.categories or [])]
     return rows[:limit]

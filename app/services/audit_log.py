@@ -269,10 +269,10 @@ async def persist_evaluation_result(
     *,
     request: AgentRequest,
     result: OrchestrationResult,
-) -> None:
+) -> EvaluationReview | None:
     payload = result.evaluation_summary.get("evaluation_event", {}).get("payload", {})
     if not payload:
-        return
+        return None
     session.add(
         EvaluationResultRecord(
             run_id=result.response.run_id,
@@ -293,12 +293,23 @@ async def persist_evaluation_result(
         )
     )
     if payload.get("verdict") == "review" and result.response.status == "review_required":
-        await open_or_merge_review(
+        return await open_or_merge_review(
             session,
             run_id=result.response.run_id,
             tenant_id=request.tenant_id or "default",
             evaluation=payload,
         )
+    return None
+
+
+async def _triage_after_commit(session: AsyncSession, review: EvaluationReview | None) -> None:
+    """v1.5.10: advisory judge triage of a worker-path review, after the run transaction committed (D6)."""
+    if review is None:
+        return
+    from app.core.config import get_settings
+    from app.services.judge_triage import triage_review
+
+    await triage_review(session, review, get_settings())
 
 
 async def list_evaluation_results(
@@ -593,9 +604,10 @@ async def persist_orchestration_result(
         severity, code, detail = incident
         _add_incident(session, run_id=response.run_id, severity=severity, code=code, detail=detail)
     await persist_tool_executions(session, run_id=response.run_id, summary=summary)
-    await persist_evaluation_result(session, request=request, result=result)
+    review = await persist_evaluation_result(session, request=request, result=result)
 
     await session.commit()
+    await _triage_after_commit(session, review)
     await session.refresh(run)
     return run
 
@@ -629,9 +641,10 @@ async def update_orchestration_result(
         severity, code, detail = incident
         _add_incident(session, run_id=response.run_id, severity=severity, code=code, detail=detail)
     await persist_tool_executions(session, run_id=response.run_id, summary=summary)
-    await persist_evaluation_result(session, request=request, result=result)
+    review = await persist_evaluation_result(session, request=request, result=result)
 
     await session.commit()
+    await _triage_after_commit(session, review)
     await session.refresh(run)
     return run
 

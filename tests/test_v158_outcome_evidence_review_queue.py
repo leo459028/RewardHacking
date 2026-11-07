@@ -70,7 +70,7 @@ def test_legacy_evaluator_compatibility():
     assert done.assurance_level == "simulated"
     assert done.evaluation_source == "executor"
     assert done.signal_usage == "monitor_only"
-    assert done.judge_signal == {"enabled": False, "provider": "deterministic", "used_for_hard_deny": False}
+    assert done.judge_signal == {"enabled": False, "provider": "deterministic", "used_for_verdict": False, "used_for_hard_deny": False}
     assert all(item["category"] == "legacy_text_signal" for item in done.findings)
 
 
