@@ -65,7 +65,7 @@ CI_FILE_PATTERNS: tuple[str, ...] = (
 )
 
 _KV_SECRET_PATTERN = re.compile(
-    r"(?i)\b(api[_-]?key|secret|password|passwd|access[_-]?token|refresh[_-]?token|client[_-]?secret|token)"
+    r"(?i)\b([\w-]*?(?:api[_-]?key|secret|password|passwd|access[_-]?token|refresh[_-]?token|client[_-]?secret|token))"
     r"(\s*[:=]\s*)([\"']?)([^\s\"',;]{6,})"
 )
 _UNSAFE_XML_PATTERN = re.compile(r"<!\s*(doctype|entity)", re.IGNORECASE)

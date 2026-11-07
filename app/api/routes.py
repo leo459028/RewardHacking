@@ -30,7 +30,6 @@ from app.schemas.audit import (
     ApprovalDecisionRequest,
     DashboardSummaryResponse,
     DlqResolveRequest,
-    EvaluationRecord,
     ExpireStaleApprovalsResponse,
     GovernanceEventRecord,
     GovernanceSummaryResponse,
@@ -121,7 +120,6 @@ from app.services.audit_log import (
     governance_summary,
     incidents_for_run,
     list_approvals,
-    list_evaluation_results,
     list_governance_events,
     list_incidents,
     list_runs,
@@ -2519,21 +2517,7 @@ async def post_expire_stale_approvals(
     )
 
 
-@router.get("/evaluations", response_model=list[EvaluationRecord])
-async def get_evaluations(
-    task_type: str | None = None,
-    verdict: str | None = None,
-    tenant_id: str | None = None,
-    auth_context: AuthContext = Depends(get_auth_context),
-    session: AsyncSession = Depends(get_session),
-):
-    tenant_id = _query_tenant(tenant_id, auth_context)
-    return await list_evaluation_results(
-        session,
-        task_type=task_type,
-        verdict=verdict,
-        tenant_id=tenant_id,
-    )
+# v1.5.8: GET /v1/evaluations moved to app/api/routers/evaluations.py (router split rule).
 
 
 @router.get("/observability/summary")

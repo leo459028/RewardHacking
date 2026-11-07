@@ -1,4 +1,4 @@
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Gauge, Histogram
 
 HTTP_REQUESTS_TOTAL = Counter(
     "http_requests_total",
@@ -165,4 +165,29 @@ MCP_ARGUMENT_REDACTIONS_TOTAL = Counter(
     "agent_mcp_argument_redactions_total",
     "Total sensitive MCP tool argument redactions",
     ["tool_name", "redaction_type"],
+)
+
+# v1.5.8 evidence-based evaluation & post-execution review queue (signals are monitor-only)
+EVALUATION_FINDINGS_TOTAL = Counter(
+    "agent_evaluation_findings_total",
+    "Total evaluation findings by category, detector, severity and mode",
+    ["category", "detector", "severity", "mode"],
+)
+
+EVALUATION_OUTCOMES_TOTAL = Counter(
+    "agent_evaluation_outcomes_total",
+    "Total agent outcome evidence submissions by provenance and verdict",
+    ["provenance", "verdict"],
+)
+
+EVALUATION_REVIEWS_TOTAL = Counter(
+    "agent_evaluation_reviews_total",
+    "Total post-execution review decisions by label",
+    ["label"],
+)
+
+EVALUATION_REVIEW_QUEUE_DEPTH = Gauge(
+    "agent_evaluation_review_queue_depth",
+    "Open post-execution reviews by priority",
+    ["priority"],
 )

@@ -302,7 +302,7 @@ async def upsert_evaluation_policy(
     allow_default_protected_paths: bool,
     updated_by: str = "",
 ) -> TenantEvaluationPolicy:
-    cleaned = [normalize_path(item) for item in dict.fromkeys(protected_paths) if normalize_path(item)]
+    cleaned = list(dict.fromkeys(normalize_path(item) for item in protected_paths if normalize_path(item)))
     policy = await get_evaluation_policy(session, tenant_id)
     if policy is None:
         policy = TenantEvaluationPolicy(tenant_id=tenant_id)
