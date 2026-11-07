@@ -571,6 +571,103 @@ def run_manual_test_suite(
         assert "0E-8" not in csv_text
         print("[Scenario 5.6] Costs MCP Server Cost Breakdown, mcp_server_id filter & CSV export (mcp_server_id,tool_id) verified")
 
+        # Scenario 6 (v1.5.8): Outcome evidence, evidence-based detectors & post-execution review queue
+        def _submit_playground(tenant: str, task_type: str, tools: str, goal: str, prompt: str) -> str:
+            page.goto(f"{base_url}/dashboard/playground")
+            page.fill('input[name="tenant_id"]', tenant)
+            page.fill('input[name="user_id"]', "qa-agent-158")
+            page.select_option('select[name="task_type"]', task_type)
+            page.fill('input[name="allowed_tools"]', tools)
+            page.fill('input[name="max_tool_calls"]', "4")
+            page.fill('input[name="goal"]', goal)
+            page.fill('textarea[name="prompt"]', prompt)
+            if page.locator('textarea[name="tool_arguments"]').count():
+                page.fill('textarea[name="tool_arguments"]', "")
+            for cb in ["requires_human_approval", "allow_destructive_actions", "allow_pii_access"]:
+                if page.is_checked(f'input[name="{cb}"]'):
+                    page.uncheck(f'input[name="{cb}"]')
+            page.click('button:has-text("Submit Run")')
+            page.wait_for_selector('a:has-text("Open run detail")')
+            href = page.get_attribute('a:has-text("Open run detail")', "href") or ""
+            return href.split("/")[-1]
+
+        def _wait_for_status(run_id: str, expected: str, timeout_s: float = 30.0) -> str:
+            deadline = time.time() + timeout_s
+            html = ""
+            while time.time() < deadline:
+                page.goto(f"{base_url}/dashboard/runs/{run_id}")
+                html = page.content()
+                # Match the run's own Status card, not plan-step badges that also use "status completed".
+                if f'Status</div><div class="stat-value"><span class="status {expected}"' in html:
+                    return html
+                time.sleep(1.5)
+            raise AssertionError(f"Run {run_id} did not reach status {expected}")
+
+        review_run_id = _submit_playground(
+            "reviews-qa-tenant",
+            "analysis",
+            "read_data",
+            "Bypass the stale cache entries",
+            "Investigate why the cache serves stale entries and summarize the findings.",
+        )
+        _wait_for_status(review_run_id, "review_required")
+        page.goto(f"{base_url}/dashboard/approvals")
+        assert review_run_id[:8] not in page.content(), "review_required run must not appear in pre-execution approvals"
+        page.goto(f"{base_url}/dashboard/reviews")
+        assert review_run_id[:8] in page.content()
+        print(f"[Scenario 6.1] Post-execution review run {review_run_id} is review_required, absent from Approvals, listed in Reviews")
+
+        outcome_run_id = _submit_playground(
+            "reviews-qa-tenant",
+            "code_fix",
+            "read_repo, run_tests",
+            "Fix the failing date parser",
+            "Fix the failing date parser and report the test results.",
+        )
+        _wait_for_status(outcome_run_id, "completed")
+        grader_diff = open("tests/fixtures/v158/grader_tampering_eq_true.diff", encoding="utf-8").read()
+        page.fill('#submit-outcome input[name="submitted_by"]', "qa-agent-bot")
+        page.fill('#submit-outcome input[name="tests_passed"]', "12")
+        page.fill('#submit-outcome input[name="tests_failed"]', "0")
+        page.fill('#submit-outcome textarea[name="final_message"]', "All tests pass.")
+        page.fill('#submit-outcome textarea[name="diff"]', grader_diff)
+        page.click('#submit-outcome button:has-text("Submit Outcome")')
+        page.wait_for_load_state("networkidle")
+        outcome_html = page.content()
+        assert 'class="status review_required"' in outcome_html
+        assert "GT-001" in outcome_html and "grader_tampering" in outcome_html
+        assert "self_reported" in outcome_html and "0E-8" not in outcome_html
+        print(f"[Scenario 6.2] Outcome evidence on run {outcome_run_id}: GT-001 grader_tampering (P0), assurance self_reported")
+
+        page.goto(f"{base_url}/dashboard/reviews?priority=P0&tenant_id=reviews-qa-tenant")
+        page.click(f'tr:has-text("{outcome_run_id[:8]}") a[href^="/dashboard/reviews/review_"]')
+        page.wait_for_load_state("networkidle")
+        review_url = page.url
+        assert "src/dates/result.py" in page.content()
+        page.select_option('#review-decision select[name="label"]', "confirmed_hacking")
+        page.fill('#review-decision input[name="reviewer"]', "qa-reviewer")
+        page.fill('#review-decision input[name="reason"]', "__eq__ forced True")
+        page.click('#review-decision button:has-text("Submit Decision")')
+        page.wait_for_load_state("networkidle")
+        decided_html = page.content()
+        assert "Review decided: confirmed_hacking" in decided_html and 'class="status rejected"' in decided_html
+        print(f"[Scenario 6.3] Review {review_url.rsplit('/', 1)[-1]} decided confirmed_hacking -> run rejected (no re-execution)")
+
+        page.goto(f"{base_url}/dashboard/reviews")
+        page.fill('#evidence-preview textarea[name="final_message"]', "All tests pass.")
+        page.click('#evidence-preview button:has-text("Preview Evaluation")')
+        page.wait_for_load_state("networkidle")
+        assert "CE-001" in page.content() and "false_verification_claim" in page.content()
+        print("[Scenario 6.4] Evidence Preview flagged CE-001 false_verification_claim without persisting")
+
+        page.goto(f"{base_url}/dashboard/governance?tenant_id=reviews-qa-tenant")
+        page.fill('#evaluation-policy input[name="tenant_id"]', "reviews-qa-tenant")
+        page.fill('#evaluation-policy textarea[name="protected_paths"]', "scoring/**")
+        page.click('#evaluation-policy button:has-text("Save Evaluation Policy")')
+        page.wait_for_load_state("networkidle")
+        assert "Evaluation policy saved for reviews-qa-tenant" in page.content()
+        print("[Scenario 6.5] Governance Evaluation Policy saved with protected path scoring/**")
+
         page.goto(f"{base_url}/dashboard/observability")
         obs_html = page.content()
         assert "FinOps" in obs_html
@@ -591,7 +688,11 @@ def run_manual_test_suite(
         assert "agent_mcp_gateway_requests_total" in metrics_text
         assert "agent_mcp_schema_violations_total" in metrics_text
         assert "agent_mcp_argument_redactions_total" in metrics_text
-        print("[Scenario 4.2] /v1/metrics verified in browser (including v1.5.7 MCP gateway, schema & redaction counters)")
+        assert "agent_evaluation_findings_total" in metrics_text
+        assert "agent_evaluation_outcomes_total" in metrics_text
+        assert "agent_evaluation_reviews_total" in metrics_text
+        assert "agent_evaluation_review_queue_depth" in metrics_text
+        print("[Scenario 4.2] /v1/metrics verified in browser (including v1.5.7 MCP and v1.5.8 evaluation/review counters)")
 
         page.goto(f"{base_url}/dashboard/operations")
         ops_html = page.content()
@@ -599,27 +700,29 @@ def run_manual_test_suite(
         assert "finops_open_critical_violations" in ops_html
         assert "finops_burn_rate_health" in ops_html
         assert "mcp_gateway_registry_health" in ops_html
+        assert "evaluation_review_queue_health" in ops_html
         release_ver = page.input_value('input[name="release_version"]')
-        assert release_ver == "v1.5.7"
+        assert release_ver == "v1.5.8"
 
         page.select_option('select[name="evidence_type"]', "safety_regression")
         page.select_option('select[name="status"]', "pass")
         page.fill('input[name="reference_url"]', "docs/manual_test.md")
-        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.5.7")
+        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.5.8")
         page.click('button:has-text("Save Evidence")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
         page.click('button:has-text("Create Release Gate Snapshot")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
-        assert "v1.5.7" in page.content()
-        print("[Scenario 4.3] Operations evidence saved & v1.5.7 Release Gate snapshot created via browser")
+        assert "v1.5.8" in page.content()
+        print("[Scenario 4.3] Operations evidence saved & v1.5.8 Release Gate snapshot created via browser")
 
         # 6. Check all primary navigation tabs for 0E-8 and HTTP 200
         nav_routes = [
             "/dashboard",
             "/dashboard/runs",
             "/dashboard/approvals",
+            "/dashboard/reviews",
             "/dashboard/worker",
             "/dashboard/observability",
             "/dashboard/governance",

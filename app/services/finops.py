@@ -56,7 +56,7 @@ from app.schemas.finops import (
 )
 from app.services.run_state import RunStateStore
 
-FINOPS_CALCULATION_VERSION = "v1.5.7"
+FINOPS_CALCULATION_VERSION = "v1.5.8"
 _ATTRIBUTION_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _ALLOCATION_TAG_KEY_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 _VALID_ENVIRONMENTS = {"dev", "staging", "prod"}

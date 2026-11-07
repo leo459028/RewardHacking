@@ -169,6 +169,37 @@ All REST API endpoints are exposed under the `/v1` route prefix. The service ret
 
 ---
 
+### Outcome Evidence, Evaluation & Post-Execution Reviews (`v1.5.8`)
+
+Served by `app/api/routers/evaluations.py`. Every response carries `signal_usage: "monitor_only"`. See [`docs/evaluation.md`](evaluation.md) for detector rules.
+
+| Method | Path | Description | Access Role |
+| --- | --- | --- | --- |
+| `GET` | `/v1/evaluations` | Lists evaluation records (`task_type`, `verdict`, `tenant_id`); adds `evaluator_version`, `evaluation_source` (`executor` \| `outcome`), `assurance_level`, `review_priority`, `findings`, `outcome_id` | any authenticated role |
+| `POST` | `/v1/runs/{run_id}/outcome` | Submits agent outcome evidence (`final_message`, `diff`, `changed_files`, `test_report`, `tests_before`, `lint_report`, `tool_transcript`, `provenance`, `submitted_by`) for runs in `completed` / `review_required`; returns `outcome_id`, `run_status`, `submission_seq`, `evaluation`, `review` | `operator`, `admin` |
+| `GET` | `/v1/runs/{run_id}/outcomes` | Lists append-only outcome submissions with redacted evidence and findings | `viewer`, `operator`, `admin` |
+| `POST` | `/v1/evaluations/preview` | Dry-runs the evaluation engine against evidence (plus `task_type`, `goal`, `tenant_id`, `metadata`) without persisting | `viewer`, `operator`, `admin` |
+| `GET` | `/v1/reviews` | Lists post-execution reviews sorted by priority then age (`status` = `open` \| `needs_info` \| `closed` \| `active`, `priority`, `category`, `tenant_id`, `run_id`, `limit`) | `viewer`, `operator`, `admin` |
+| `GET` | `/v1/reviews/{review_id}` | Review detail with findings and evidence pointers | `viewer`, `operator`, `admin` |
+| `POST` | `/v1/reviews/{review_id}/decision` | Decides a review (`label` = `confirmed_hacking` \| `false_positive` \| `accepted` \| `needs_info`, `reviewer`, `reason`, `label_categories`). Never re-dispatches the run or touches token leases | `reviewer`, `tenant_admin`, `admin` |
+| `GET` | `/v1/tenants/{tenant_id}/evaluation-policy` | Tenant protected paths, defaults and effective list | `viewer`, `operator`, `admin` |
+| `PUT` | `/v1/tenants/{tenant_id}/evaluation-policy` | Sets `protected_paths` and `allow_default_protected_paths` | `tenant_admin`, `admin` |
+
+#### Outcome Payload Example
+```json
+{
+  "final_message": "Fixed the bug. All tests pass.",
+  "diff": "diff --git a/src/dates/parser.py b/src/dates/parser.py\n...",
+  "test_report": {"format": "summary", "summary": {"passed": 12, "failed": 0, "command": "pytest -q"}},
+  "provenance": "self_reported",
+  "submitted_by": "agent-bot"
+}
+```
+
+**Run statuses**: `review_required` (executed, awaiting post-execution review) and `rejected` (review confirmed reward hacking) are distinct from `awaiting_approval`. `POST /v1/approvals/{run_id}/decision` on any run that is not `awaiting_approval` returns `409 run_not_awaiting_approval`.
+
+---
+
 ## Common Error Codes
 
 | Status Code | Error Code | Description |
@@ -181,4 +212,11 @@ All REST API endpoints are exposed under the `/v1` route prefix. The service ret
 | `429` | `quota_exceeded` | Tenant exceeded request limit or high-risk rate limit |
 | `429` | `mcp_server_quota_exceeded` | Per-MCP-server call quota exceeded (`quota_per_minute` or `MCP_SERVER_CALL_LIMIT_PER_MINUTE`) |
 | `422` | `validation_error` (reserved prefix) | `tool_name` starting with `__mcp_server__:` or `mcp_server_id` longer than 113 characters |
+| `409` | `run_not_awaiting_approval` | Approval decision on a run that is not awaiting pre-execution approval (e.g. `review_required`) |
+| `409` | `outcome_run_state_invalid` | Outcome evidence for a run not in `completed` / `review_required` |
+| `429` | `outcome_submission_limit_reached` | More than `EVALUATION_OUTCOME_MAX_SUBMISSIONS` outcome submissions for one run |
+| `413` | `test_report_too_large` | JUnit XML larger than `EVALUATION_MAX_TEST_REPORT_BYTES` |
+| `422` | `test_report_rejected_unsafe_xml` / `test_report_invalid_xml` | JUnit XML with `DOCTYPE` / `ENTITY` declarations, or unparsable XML |
+| `409` | `review_already_closed` | Decision on a closed review |
+| `403` | `review_self_approval_forbidden` | The outcome submitter tried to decide the same run's review |
 | `500` | `internal_error` | Internal server or unhandled exception |

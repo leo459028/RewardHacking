@@ -848,3 +848,17 @@ def test_responses_mark_signal_usage_monitor_only(client, session_factory):
     assert outcome["review"]["signal_usage"] == "monitor_only"
     assert all(item["signal_usage"] == "monitor_only" for item in client.get("/v1/reviews").json())
     assert all(item["signal_usage"] == "monitor_only" for item in client.get("/v1/evaluations").json())
+
+
+def test_v158_version_anchors_and_ci_gate():
+    from app.main import app as fastapi_app
+    from app.services.finops import FINOPS_CALCULATION_VERSION
+
+    assert fastapi_app.version == "1.5.8"
+    assert FINOPS_CALCULATION_VERSION == "v1.5.8"
+    assert 'version = "1.5.8"' in Path("pyproject.toml").read_text(encoding="utf-8")
+    assert "(v1.5.8)" in Path("scripts/security_check.py").read_text(encoding="utf-8")
+    assert 'value="v1.5.8"' in Path("app/ui/templates/operations.html").read_text(encoding="utf-8")
+    assert 'release_version", "v1.5.8"' in Path("app/ui/routes.py").read_text(encoding="utf-8")
+    assert 'assert release_ver == "v1.5.8"' in Path("scripts/browser_manual_test.py").read_text(encoding="utf-8")
+    assert "-W error::DeprecationWarning" in Path(".github/workflows/ci.yml").read_text(encoding="utf-8")

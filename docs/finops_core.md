@@ -1,12 +1,16 @@
 # Agent FinOps Core & Cost Accounting Reference
 
-> **Module**: Agent FinOps Core (`v1.5.7`)
-> **Schema Revision**: `202606010004` (Alembic Head)  
+> **Module**: Agent FinOps Core (`v1.5.8`, `FINOPS_CALCULATION_VERSION = "v1.5.8"`)
+> **Schema Revision**: `202611070001` (Alembic Head; FinOps tables unchanged since `202606010004`)
 > **Reference Seed**: `app/seeds/model_pricing_seed.yaml`
 
 This document details the architectural design, database schemas, burn-rate forecasting, Dynamic Token Broker pre-execution leasing, settled ledger deduplication, multi-currency FX & tax accounting, cost-center attribution, manual reconciliation adjustments, ledger exports, model-aware routing, active budget enforcement, context-aware pricing resolution, administration APIs, and YAML seed ingestion mechanics of the **Agent FinOps Core** engine.
 
 ---
+
+## Lease Settlement for Post-Execution Reviews (`v1.5.8`)
+
+Runs that finish in `review_required` or `rejected` are execution-finished: `record_actual_usage()` records actual usage with status `success` and settles the token lease exactly like `completed`. Post-execution review decisions never acquire or release leases and never re-dispatch the run, so no duplicate cost is recorded.
 
 ## Per-MCP-Server & Per-Tool Attribution (`v1.5.7`)
 

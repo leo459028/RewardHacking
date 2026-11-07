@@ -1,7 +1,7 @@
 # Operational Dashboard Guide
 
-> **Dashboard Version**: `v1.5.7`
-> **Previous Versions**: `v1.5.6`, `v1.5.5`, `v1.5.4`, `v1.5.3`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.4.0`
+> **Dashboard Version**: `v1.5.8`
+> **Previous Versions**: `v1.5.7`, `v1.5.6`, `v1.5.5`, `v1.5.4`, `v1.5.3`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.4.0`
 > **Access URL**: `http://localhost:8000/dashboard`
 
 RewardHacking includes a lightweight, server-rendered (Jinja2) web dashboard providing full observability, human-in-the-loop governance, and FinOps administration without requiring separate Node.js or React build pipelines.
@@ -14,18 +14,19 @@ RewardHacking includes a lightweight, server-rendered (Jinja2) web dashboard pro
 | --- | --- | --- |
 | `/dashboard` | **Overview** | System summary: total runs, status distribution, average risk scores, active flags, and recent incidents. |
 | `/dashboard/runs` | **Runs Explorer** | Searchable audit list of agent runs with filters for status, tenant, and task type. |
-| `/dashboard/runs/{run_id}` | **Run Detail** | Comprehensive forensic dossier: policy decision, Classical Chinese prompt guard, execution plan, checkpoint timeline, one-click **Trigger Dry-Run Replay** & **Resume from Checkpoint**, step audit, tool transcripts, MCP Server & Tool cost breakdowns, tool executions with `mcp_server_id` and `sanitized_arguments` (`v1.5.7`), FinOps cost summary (including Settled Total, Tax, Billed, Adjustments, Reconciled Total, FX rates, and Cost Center), and budget violations. |
+| `/dashboard/runs/{run_id}` | **Run Detail** | Comprehensive forensic dossier: policy decision, Classical Chinese prompt guard, execution plan, checkpoint timeline, one-click **Trigger Dry-Run Replay** & **Resume from Checkpoint**, step audit, tool transcripts, MCP Server & Tool cost breakdowns, tool executions with `mcp_server_id` and `sanitized_arguments` (`v1.5.7`), **Outcome Evidence & Findings** panel (verdict, `P0`–`P3` priority, assurance level, findings with evidence pointers, linked reviews) and **Submit Outcome Evidence** form for `completed` / `review_required` runs (`v1.5.8`), FinOps cost summary (including Settled Total, Tax, Billed, Adjustments, Reconciled Total, FX rates, and Cost Center), and budget violations. |
+| `/dashboard/reviews` | **Post-Execution Review Queue** (`v1.5.8`) | Open reviews by priority (`P0`–`P3`) with Status / Priority / Category / Tenant filters, review detail pages with findings and evidence pointers (file, line, diff snippet), **Review Decision** form (`confirmed_hacking`, `false_positive`, `accepted`, `needs_info`, corrected categories), append-only outcome submissions, and an **Evidence Preview** form that dry-runs the evaluation engine without persisting. Decisions never re-execute a run. |
 | `/dashboard/approvals` | **Approval Queue** | Actionable queue for high-risk / destructive runs. Operators can execute `approve_once`, `deny`, `request_changes`, or **Expire Stale Approvals**. |
 | `/dashboard/worker` | **Worker Operations** | Background worker telemetry: active attempts, retry backoffs, and Dead Letter Queue (DLQ) with inline **Requeue Run** and **Resolve DLQ** controls. |
 | `/dashboard/observability` | **Observability & SLOs** | Aggregated SLI/SLO trends, incident resolution rates, evaluator scores, approval turnaround latencies, and FinOps summary. |
-| `/dashboard/governance` | **Tenant Governance** | Interactive multi-tenant governance portal: Tenant Upsert form (`request_limit_per_minute`, `high_risk_limit_per_hour`), API Key Issuance form (with one-time plaintext key banner) & Revoke buttons, and governance security audit logs. |
+| `/dashboard/governance` | **Tenant Governance** | Interactive multi-tenant governance portal: Tenant Upsert form (`request_limit_per_minute`, `high_risk_limit_per_hour`), API Key Issuance form (with one-time plaintext key banner) & Revoke buttons, governance security audit logs, and the **Evaluation Policy** panel (`v1.5.8`: tenant protected-path globs and the default-path toggle). |
 | `/dashboard/control-plane` | **Control Plane** | Interactive Control Plane registry: Tool Registry Upsert form, Circuit Breaker status badges (`open`/`closed`), failure counters & inline **Trip Breaker** / **Reset Breaker** buttons, Workflow Registry Upsert form, **MCP Server Registry** (`v1.5.7`: Register / Update MCP Server form, trust tier / transport / external-network / quota table, inline **Trip MCP Breaker** / **Reset MCP Breaker**), tool `MCP Server ID` / `Required Args (CSV)` / `Sensitive Args (CSV)` fields and `MCP Server` / `Schema / Redaction` columns, pre-execution plans, live step completion (`3/3 completed`, `healthy`), and resumable checkpoints. |
 | `/dashboard/costs` | **FinOps Costs** | Tenant settled cost totals (`Settled MTD`, `Tax`, `Billed`, `Adjustments`, `Reconciled MTD`), **Burn-Rate & Exhaustion Forecast** cards and policy table (`Hourly Burn`, `Projected Month-End`, `Burn Status`), **Dynamic Token Broker** active lease table with inline **Release Lease** buttons, **MCP Server Cost Breakdown** & **Top Tools** panels with `mcp_server_id` filter (`v1.5.7`), cost center & currency breakdowns, manual reconciliation adjustment form, **Export CSV** / **Export JSON** ledger downloads, model expense rankings, active budget policies, and inline budget violation triage (`Acknowledge`, `Resolve`, `Ignore`). |
 | `/dashboard/admin/finops/pricing` | **Pricing Catalog** | Admin management interface for the model pricing catalog (`currency`, `fx_rate`, `tax_rate`, `tax_inclusive` editing on Pricing Detail). |
 | `/dashboard/admin/finops/pricing/import` | **Pricing Import** | Dry-run validation, stale source detection, and application of official model pricing YAML seeds. |
 | `/dashboard/admin/finops/pricing/sources` | **Source Audit** | Versioned pricing change logs, stale source badges, and official documentation source tracking. |
 | `/dashboard/admin/finops/budgets` | **Budget Policies** | FinOps budget governance portal for creating, superseding, and disabling multi-scope/period budget policies. |
-| `/dashboard/operations` | **Operations Gate** | Production release gate checklist (including FinOps pricing catalog and critical violation checks), operational evidence logging, the `mcp_gateway_registry_health` check, and `v1.5.7` release snapshot management. |
+| `/dashboard/operations` | **Operations Gate** | Production release gate checklist (including FinOps pricing catalog and critical violation checks), operational evidence logging, the `mcp_gateway_registry_health` and `evaluation_review_queue_health` (`v1.5.8`) checks, and `v1.5.8` release snapshot management. |
 | `/dashboard/playground` | **Interactive Playground** | Rapid experimentation console with FinOps model routing (`provider`, `model_name`, `pricing_mode`, `project_id`, `cost_center`, `org_id`) and optional **Tool Arguments (JSON)** for MCP schema validation & redaction testing (`v1.5.7`, raw JSON is never echoed back) to submit test prompts and inspect guardrail verdicts in real time. |
 
 ---
@@ -42,6 +43,13 @@ When an agent submits an operation with high risk (e.g. `destructive=true`, sens
    - **Deny**: Permanently rejects the task, sets status to `denied`, and logs an incident event.
    - **Request Changes**: Rejects with notes for prompt revision.
 
+### 1b. Post-Execution Review (`/dashboard/reviews`, `v1.5.8`)
+Post-execution review is separate from pre-execution approval:
+1. After execution, the evaluation engine (or an outcome submission on Run Detail) flags evidence such as test tampering, grader tampering, CI tampering or false verification claims. The run becomes `review_required` and a review opens with priority `P0`–`P3`.
+2. `review_required` runs never appear on `/dashboard/approvals`, and **Approve Once** is rejected for them (`409 run_not_awaiting_approval`).
+3. The reviewer opens `/dashboard/reviews`, filters by priority, inspects the findings and evidence snippets, and records a decision: `confirmed_hacking` (run `rejected`, high incident), `false_positive` / `accepted` (run `completed`), or `needs_info` (agent may submit more evidence).
+4. The outcome submitter cannot decide the same run's review. Signals are monitor-only and must not be used as training rewards.
+
 ### 2. Forensic Auditing via Run Detail (`/dashboard/runs/{run_id}`)
 The Run Detail view aggregates the full end-to-end lifecycle of a single agent task:
 - **Trace & Replay Section**: Displays the unified `X-Trace-Id` and provides a direct link to download the JSON Replay Bundle (`/v1/runs/{run_id}/replay-bundle`).
@@ -57,4 +65,4 @@ In production environments (`APP_ENV=prod`), deployments must meet strict releas
    - Backup/restore drill verification.
    - Secret rotation compliance (< 90 days).
    - Deterministic safety regression test evidence.
-4. Click **Create Release Gate Snapshot** with version `v1.5.5` to record the official gate sign-off in the audit trail.
+4. Click **Create Release Gate Snapshot** with version `v1.5.8` to record the official gate sign-off in the audit trail.

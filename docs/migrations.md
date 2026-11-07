@@ -21,7 +21,8 @@ migrations/versions/
 ├── 202606010001_add_v13_trace_replay.py          (Trace metadata & step-level audit tables)
 ├── 202606010002_add_v14_checkpoints_replay.py    (Submit/resume checkpoints & replay attempts)
 ├── 202606010003_add_v15_finops_core.py           (FinOps pricing catalog, usage & cost events)
-└── 202606010004_expand_v151_finops_core.py       (Head: Expanded pricing metadata & source audits)
+├── 202606010004_expand_v151_finops_core.py       (Expanded pricing metadata & source audits)
+└── 202611070001_add_v158_outcome_review_queue.py (Head: run_outcomes, evaluation_reviews, tenant_evaluation_policies, evaluation_results evidence columns)
 ```
 
 ---

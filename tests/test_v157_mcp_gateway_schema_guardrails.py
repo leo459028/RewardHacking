@@ -516,7 +516,7 @@ def test_v157_dashboard_mcp_control_plane_playground_and_costs_ui(client, sessio
 
     ops = client.get("/dashboard/operations")
     assert ops.status_code == 200
-    assert "mcp_gateway_registry_health" in ops.text and 'value="v1.5.7"' in ops.text
+    assert "mcp_gateway_registry_health" in ops.text and 'value="v1.5.' in ops.text
     readiness = client.get("/v1/operations/readiness").json()
     check = next(item for item in readiness["checks"] if item["check_key"] == "mcp_gateway_registry_health")
     assert check["status"] == "pass"
@@ -535,16 +535,11 @@ def test_v157_observability_metrics_and_version_anchors(client):
         "agent_mcp_argument_redactions_total",
     ):
         assert name in metrics
-    assert FINOPS_CALCULATION_VERSION == "v1.5.7"
+    # Exact version anchors are asserted by the newest release test (test_v158_*).
+    assert FINOPS_CALCULATION_VERSION.startswith("v1.5.")
     from app.main import app as fastapi_app
 
-    assert fastapi_app.version == "1.5.7"
-    with open("pyproject.toml", encoding="utf-8") as fh:
-        assert 'version = "1.5.7"' in fh.read()
-    with open("scripts/security_check.py", encoding="utf-8") as fh:
-        assert "(v1.5.7)" in fh.read()
-    with open("app/ui/templates/operations.html", encoding="utf-8") as fh:
-        assert 'value="v1.5.7"' in fh.read()
+    assert fastapi_app.version.startswith("1.5.")
 
 
 def test_v157_approved_untrusted_run_completes_in_worker_without_reescalation(client, session_factory):

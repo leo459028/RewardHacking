@@ -29,4 +29,4 @@ jobs:
         run: python scripts/security_check.py
 
       - name: Test
-        run: pytest -q
+        run: pytest -q -W error::DeprecationWarning
