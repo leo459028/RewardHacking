@@ -155,6 +155,122 @@ async def _evaluation_benchmark_gate_check(session: AsyncSession, *, settings: S
     )
 
 
+async def _evaluation_judge_health_check(session: AsyncSession, *, settings: Settings, now: datetime) -> OperationsCheck:
+    """v1.5.10 (advisory): judge configuration, recent failure ratio, same-family warnings, latest triage benchmark."""
+    from app.models.benchmark import BenchmarkRun
+    from app.models.judge import JudgeAssessment
+    from app.services.evaluation.judges import get_judge
+
+    judge = get_judge(settings)
+    issues: list[str] = []
+    status = "pass"
+    if settings.evaluation_judge_mode == "off":
+        status = "warn"
+        issues.append("judge mode is off")
+    if judge.name == "openai_compatible":
+        if not settings.evaluation_judge_base_url or not settings.evaluation_judge_model:
+            status = "fail"
+            issues.append("openai_compatible needs EVALUATION_JUDGE_BASE_URL and EVALUATION_JUDGE_MODEL")
+        elif getattr(judge, "is_external", False) and not settings.evaluation_judge_allow_external:
+            status = "warn" if status == "pass" else status
+            issues.append("external judge endpoint is blocked (EVALUATION_JUDGE_ALLOW_EXTERNAL=false)")
+    since = now - timedelta(hours=24)
+    rows = (
+        await session.execute(
+            select(JudgeAssessment.status, func.count())
+            .where(JudgeAssessment.created_at >= since, JudgeAssessment.benchmark_run_id == "")
+            .group_by(JudgeAssessment.status)
+        )
+    ).all()
+    counts = {str(key): int(value) for key, value in rows}
+    total = sum(counts.values())
+    failures = sum(counts.get(key, 0) for key in ("timeout", "error", "invalid_output"))
+    failure_ratio = (failures / total) if total else 0.0
+    if total and failure_ratio > 0.2:
+        status = "warn" if status == "pass" else status
+        issues.append(f"{failures}/{total} judge calls failed in 24h (fallback used)")
+    same_family = int(
+        await session.scalar(
+            select(func.count()).select_from(JudgeAssessment).where(JudgeAssessment.created_at >= since, JudgeAssessment.same_family_warning.is_(True))
+        )
+        or 0
+    )
+    if same_family and settings.app_env.lower() == "prod":
+        status = "warn" if status == "pass" else status
+        issues.append(f"{same_family} assessments used a judge from the monitored agent's model family")
+    if settings.judge_uses_legacy_alias:
+        issues.append("LLM_JUDGE_ENABLED is deprecated; set EVALUATION_JUDGE_PROVIDER")
+    latest = None
+    for candidate in (await session.scalars(select(BenchmarkRun).order_by(BenchmarkRun.id.desc()).limit(20))).all():
+        if (candidate.metrics or {}).get("triage"):
+            latest = candidate
+            break
+    triage = (latest.metrics or {}).get("triage", {}) if latest is not None else {}
+    return OperationsCheck(
+        check_key="evaluation_judge_health",
+        status=status,
+        title="Evaluation judge triage health",
+        detail=(
+            f"Advisory: judge {judge.version()} in {settings.evaluation_judge_mode} mode (ordering only, never decides verdicts); "
+            f"24h assessments {total}, failures {failures}; " + ("; ".join(issues) if issues else "no issues") + "."
+        ),
+        metadata={
+            "advisory": True,
+            "mode": settings.evaluation_judge_mode,
+            "provider": judge.name,
+            "judge_version": judge.version(),
+            "status_counts_24h": counts,
+            "failure_ratio_24h": round(failure_ratio, 4),
+            "same_family_warnings_24h": same_family,
+            "legacy_alias_in_use": settings.judge_uses_legacy_alias,
+            "latest_triage_benchmark_run_id": latest.benchmark_run_id if latest is not None else "",
+            "delta_vs_rule_only": triage.get("delta_vs_rule_only", {}),
+            "promotion_criteria_met": triage.get("promotion_criteria_met"),
+            "promotion_blockers": triage.get("promotion_blockers", []),
+            "used_for_verdict": False,
+        },
+    )
+
+
+async def _evaluation_sampling_health_check(session: AsyncSession, *, settings: Settings, now: datetime) -> OperationsCheck:
+    """v1.5.10 (advisory): sampling enabled, secret configured, no skipped candidates, random slice active."""
+    from app.services.review_sampling import policy_settings, policy_version, sampling_summary
+
+    summary = await sampling_summary(session, settings, window_days=7, now=now)
+    totals = summary["totals"]
+    issues: list[str] = []
+    status = "pass"
+    if not settings.evaluation_sampling_enabled:
+        status = "warn"
+        issues.append("sampling disabled: no unbiased miss-rate estimate")
+    if not settings.evaluation_sample_secret.get_secret_value():
+        status = "warn"
+        issues.append("EVALUATION_SAMPLE_SECRET unset: random draws are not reproducible across restarts")
+    if summary["skipped_total"]:
+        status = "warn"
+        issues.append(f"{summary['skipped_total']} candidates skipped by caps in 7 days ({totals['skipped']})")
+    if totals["candidates"] >= 100 and totals["sampled"]["random"] == 0 and settings.evaluation_sample_random_rate > 0:
+        status = "warn"
+        issues.append("random audit slice selected nothing from 100+ candidates")
+    return OperationsCheck(
+        check_key="evaluation_sampling_health",
+        status=status,
+        title="Review sampling health",
+        detail=(
+            f"Advisory: 7-day candidates {totals['candidates']}, sampled {totals['sampled']}, skipped {summary['skipped_total']}, "
+            f"not selected {totals['not_selected']}; " + ("; ".join(issues) if issues else "no issues") + "."
+        ),
+        metadata={
+            "advisory": True,
+            "totals_7d": totals,
+            "conserved": summary["conserved"],
+            "random_inclusion_rate": summary["random_inclusion_rate"],
+            "settings": policy_settings(settings),
+            "policy_version": policy_version(settings),
+        },
+    )
+
+
 async def _evaluation_review_queue_check(session: AsyncSession, *, settings: Settings, now: datetime) -> OperationsCheck:
     """v1.5.8: P0 reviews waiting beyond the SLA warn; unknown detector mode overrides fail."""
     from app.services.evaluation.registry import unknown_detector_overrides
@@ -409,6 +525,8 @@ async def compute_operations_readiness(
         ),
         await _evaluation_review_queue_check(session, settings=settings, now=now),
         await _evaluation_benchmark_gate_check(session, settings=settings),
+        await _evaluation_judge_health_check(session, settings=settings, now=now),
+        await _evaluation_sampling_health_check(session, settings=settings, now=now),
     ]
 
     if settings.app_env.lower() == "prod" and settings.release_gate_fail_on_bootstrap_keys_in_prod:

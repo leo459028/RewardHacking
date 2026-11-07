@@ -847,3 +847,136 @@ def test_random_audit_hacking_rate_and_insufficient_data(client, session_factory
     assert rate["value"] == pytest.approx(1 / 3) and rate["insufficient_data"] is True and rate["ci_low"] < rate["value"] < rate["ci_high"]
     assert group["flagged"] == 0  # sampled reviews are not rule flags
     assert "random_audit_hacking_rate" in rates["rate_semantics"]
+
+
+# ---------------------------------------------------------------------------
+# P5: benchmark precision@K, judge in benchmark runs, readiness checks
+# ---------------------------------------------------------------------------
+
+from app.models.benchmark import BenchmarkRun as _BenchmarkRun  # noqa: E402,F811
+from app.models.evaluation_result import EvaluationResultRecord  # noqa: E402
+from app.services import benchmark as bench  # noqa: E402
+from app.services import benchmark_triage as bt  # noqa: E402
+from app.services.evaluation import metrics as em  # noqa: E402
+from app.services.evaluation.engine import EvaluationEngine  # noqa: E402
+from app.services.operations import compute_operations_readiness  # noqa: E402
+
+
+def test_precision_at_k_hand_computed():
+    labels = [True, False, True, True, False, False]
+    assert em.precision_at_k(labels, 1)["precision"] == 1.0
+    assert em.precision_at_k(labels, 2)["precision"] == 0.5
+    cell = em.precision_at_k(labels, 4)
+    assert (cell["hits"], cell["reviewed"], cell["precision"]) == (3, 4, 0.75)
+    assert cell["ci_low"] < 0.75 < cell["ci_high"]
+    capped = em.precision_at_k(labels, 50)
+    assert (capped["k"], capped["reviewed"], capped["precision"]) == (50, 6, 0.5)
+    assert em.precision_at_k([], 5)["precision"] is None and em.precision_at_k(labels, 0)["precision"] is None
+
+
+def test_combined_ranking_keeps_rule_p0_first():
+    rows = [
+        {"sample_id": "a", "label": "benign", "verdict": "pass", "priority": "", "score": 0.0, "triage_score": 0.95, "triage_priority": "P1", "judge_status": "ok", "categories": []},
+        {"sample_id": "b", "label": "hacking", "verdict": "review", "priority": "P0", "score": 0.9, "triage_score": 0.1, "triage_priority": "P3", "judge_status": "ok", "categories": ["test_tampering"]},
+        {"sample_id": "c", "label": "hacking", "verdict": "review", "priority": "P2", "score": 0.3, "triage_score": 0.6, "triage_priority": "P2", "judge_status": "ok", "categories": ["error_suppression"]},
+    ]
+    assert [r["sample_id"] for r in bt.rank_rows(rows, "rule_only")] == ["b", "c", "a"]
+    assert [r["sample_id"] for r in bt.rank_rows(rows, "judge_only")] == ["a", "c", "b"]
+    assert [r["sample_id"] for r in bt.rank_rows(rows, "combined")] == ["b", "a", "c"]
+
+
+def _run_bench(session_factory, **kwargs) -> _BenchmarkRun:
+    return _db(session_factory, lambda s: bench.run_benchmark(s, tenant_id="default", settings=get_settings(), created_by="qa", **kwargs))
+
+
+def test_benchmark_without_judge_matches_v159_metrics(session_factory):
+    plain = _run_bench(session_factory)
+    assert "triage" not in plain.metrics and plain.judge_config == {}
+    judged = _run_bench(session_factory, judge_provider="deterministic")
+    for key in ("as_configured", "all_enforced", "by_detector", "positives", "negatives"):
+        assert judged.metrics[key] == plain.metrics[key]
+    assert {"triage_score", "triage_priority", "judge_status"} <= set(judged.per_sample[0])
+    assert all("_findings" not in row for row in judged.per_sample)
+
+
+def test_benchmark_deterministic_judge_reproducible(session_factory):
+    first = _run_bench(session_factory, judge_provider="deterministic")
+    second = _run_bench(session_factory, judge_provider="deterministic")
+    assert first.metrics["triage"] == second.metrics["triage"]
+    triage = first.metrics["triage"]
+    assert triage["reproducible"] is True and triage["provider"] == "deterministic"
+    assert triage["judged_samples"] == first.sample_count
+    assert set(triage["rankings"]) == {"rule_only", "judge_only", "combined"}
+    cell = triage["rankings"]["combined"]["precision_at_k"]["budget_0.05"]
+    assert cell["k"] == 5 and cell["precision"] is not None
+    assert triage["promotion_criteria_met"] is False and "seed_corpus_only" in triage["promotion_blockers"]
+    assert first.judge_config["judge_version"] == "deterministic:1.0.0"
+    assert set(triage["delta_vs_rule_only"]) == {"judge_only", "combined"}
+
+
+def test_benchmark_llm_judge_not_reproducible_and_records_cost(session_factory, monkeypatch):
+    calls = _use_llm_judge(monkeypatch, lambda request: _chat_response({"suspicion": 0.4}, prompt_tokens=10, completion_tokens=5))
+    run = _run_bench(session_factory, judge_provider="openai_compatible", max_judge_samples=3)
+    assert len(calls) == 3
+    triage = run.metrics["triage"]
+    assert triage["reproducible"] is False and triage["judged_samples"] == 3
+    assert sum(1 for row in run.per_sample if row["judge_status"] == "not_judged") == run.sample_count - 3
+    stored = _db(session_factory, lambda s: _all(s, select(JudgeAssessment).where(JudgeAssessment.benchmark_run_id == run.benchmark_run_id)))
+    assert len(stored) == 3 and all(item.run_id == "" and item.review_id == "" and item.sample_id for item in stored)
+    usage = _db(session_factory, lambda s: _all(s, select(UsageEvent).where(UsageEvent.step_id == "evaluation_judge")))
+    assert len(usage) == 6 and all(row.metadata_payload.get("benchmark_run_id") == run.benchmark_run_id for row in usage)
+    with pytest.raises(Exception):
+        _run_bench(session_factory, judge_provider="magic")
+
+
+def test_benchmark_with_judge_has_no_side_effects(session_factory, client):
+    def counts(session):
+        async def _c():
+            from sqlalchemy import func as _f
+
+            result = {}
+            for model in (EvaluationResultRecord, EvaluationReview, Incident):
+                result[model.__name__] = int(await session.scalar(select(_f.count()).select_from(model)) or 0)
+            result["assessments_review"] = int(
+                await session.scalar(select(_f.count()).select_from(JudgeAssessment).where(JudgeAssessment.benchmark_run_id == "")) or 0
+            )
+            return result
+
+        return _c()
+
+    before = _db(session_factory, counts)
+    events_before = len(client.event_publisher.events)
+    _run_bench(session_factory, judge_provider="deterministic")
+    assert _db(session_factory, counts) == before
+    assert len(client.event_publisher.events) == events_before
+
+
+def test_operations_judge_and_sampling_health_are_advisory(session_factory, monkeypatch):
+    def readiness(session):
+        return compute_operations_readiness(session, settings=get_settings())
+
+    result = _db(session_factory, readiness)
+    checks = {check.check_key: check for check in result.checks}
+    judge = checks["evaluation_judge_health"]
+    sampling = checks["evaluation_sampling_health"]
+    assert judge.metadata["advisory"] is True and judge.metadata["used_for_verdict"] is False
+    assert judge.status == "pass" and judge.metadata["provider"] == "deterministic"
+    assert sampling.metadata["advisory"] is True and sampling.status == "warn"  # no secret configured in tests
+    monkeypatch.setenv("EVALUATION_JUDGE_PROVIDER", "openai_compatible")
+    monkeypatch.setenv("EVALUATION_SAMPLE_SECRET", "v1510-test-sampling-key")
+    get_settings.cache_clear()
+    result = _db(session_factory, readiness)
+    checks = {check.check_key: check for check in result.checks}
+    assert checks["evaluation_judge_health"].status == "fail"  # missing base URL / model
+    assert checks["evaluation_sampling_health"].status == "pass"
+    # Advisory checks never decide the overall readiness status on their own.
+    others = {c.status for c in result.checks if not (c.metadata or {}).get("advisory")}
+    assert result.status == ("fail" if "fail" in others else "warn" if "warn" in others else "pass")
+
+
+def test_evaluator_version_unchanged_by_judge():
+    version = EvaluationEngine().version()
+    assert version.startswith("v1.5.9:")
+    from app.services.evaluation import registry
+
+    assert registry.ENGINE_VERSION == "v1.5.9"

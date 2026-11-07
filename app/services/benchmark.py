@@ -269,7 +269,9 @@ def _sample_dict(sample: BenchmarkSample | dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def evaluate_sample(sample: BenchmarkSample | dict[str, Any], *, engine: EvaluationEngine, settings: Settings) -> dict[str, Any]:
+def evaluate_sample(
+    sample: BenchmarkSample | dict[str, Any], *, engine: EvaluationEngine, settings: Settings, keep_findings: bool = False
+) -> dict[str, Any]:
     """Evaluate one sample twice (configured modes and shadow promoted). Pure; nothing is persisted."""
     data = _sample_dict(sample)
     task = dict(data.get("task") or {})
@@ -309,6 +311,8 @@ def evaluate_sample(sample: BenchmarkSample | dict[str, Any], *, engine: Evaluat
         "finding_ids": [{"finding_id": f.get("finding_id"), "detector": f.get("detector")} for f in configured.findings],
         "detector_scores": detector_scores,
         "evaluator_version": configured.evaluator_version,
+        # v1.5.10: full findings feed the judge input; removed before the row is stored.
+        **({"_findings": list(configured.findings)} if keep_findings else {}),
     }
 
 
@@ -431,7 +435,13 @@ async def run_benchmark(
     exclude_accepted_behavior: bool = False,
     created_by: str = "",
     engine: EvaluationEngine | None = None,
+    judge_provider: str = "none",
+    max_judge_samples: int = 100,
 ) -> BenchmarkRun:
+    from app.services import benchmark_triage as bt
+
+    if judge_provider not in bt.JUDGE_PROVIDERS:
+        raise BenchmarkError("benchmark_judge_provider_invalid", f"judge_provider must be one of {', '.join(bt.JUDGE_PROVIDERS)}.", 422)
     await ensure_seed_corpus(session)
     engine = engine or EvaluationEngine()
     corpora = list(corpora or [SEED_CORPUS])
@@ -447,9 +457,46 @@ async def run_benchmark(
             422,
         )
     started = time.perf_counter()
-    rows = [evaluate_sample(sample, engine=engine, settings=settings) for sample in samples]
+    judging = judge_provider != "none"
+    rows = [evaluate_sample(sample, engine=engine, settings=settings, keep_findings=judging) for sample in samples]
+    benchmark_run_id = new_benchmark_run_id()
+    assessments: list[Any] = []
+    judge_results: list[Any] = []
+    judge_config: dict[str, Any] = {}
+    if judging:
+        from app.services.evaluation.judges import get_judge
+
+        judge = get_judge(settings, provider=judge_provider)
+        max_judge = min(int(max_judge_samples), int(settings.evaluation_judge_benchmark_max_samples))
+        assessments, judge_results = await bt.judge_benchmark_rows(
+            session,
+            rows,
+            {sample.sample_id: _sample_dict(sample) for sample in samples},
+            settings,
+            tenant_id=tenant_id,
+            provider=judge_provider,
+            max_samples=max_judge,
+            benchmark_run_id=benchmark_run_id,
+        )
+        judge_config = {
+            "provider": judge.name,
+            "model": getattr(judge, "model", ""),
+            "judge_version": judge.version(),
+            "mode": settings.evaluation_judge_mode,
+            "reproducible": judge.name == "deterministic",
+            "max_judge_samples": max_judge if judge.name != "deterministic" else len(rows),
+        }
     fpr_targets = tuple(sorted({0.01, float(settings.evaluation_benchmark_gate_fpr)}))
     metrics = compute_metrics(rows, fpr_targets=fpr_targets)
+    if judging:
+        metrics["triage"] = bt.compute_triage_metrics(
+            rows,
+            provider=judge_config["provider"],
+            judge_version=judge_config["judge_version"],
+            reproducible=judge_config["reproducible"],
+            corpora=corpora,
+            seed_corpus=SEED_CORPUS,
+        )
     metrics["errors"] = sum(1 for r in rows if r.get("verdict") == "error")
     gate_status, gate_reason = gate_evaluation(metrics, settings)
     metrics["gate"] = {
@@ -459,7 +506,7 @@ async def run_benchmark(
         "fpr": settings.evaluation_benchmark_gate_fpr,
     }
     run = BenchmarkRun(
-        benchmark_run_id=new_benchmark_run_id(),
+        benchmark_run_id=benchmark_run_id,
         tenant_id=tenant_id,
         corpus_selector={"corpora": sorted(corpora), "split": split, "exclude_accepted_behavior": exclude_accepted_behavior},
         corpus_digest=corpus_digest(samples),
@@ -471,14 +518,37 @@ async def run_benchmark(
         metrics=metrics,
         per_sample=rows,
         gate_status=gate_status,
+        judge_config=judge_config,
         duration_ms=int((time.perf_counter() - started) * 1000),
         created_by=created_by,
     )
     session.add(run)
+    for assessment in assessments:
+        session.add(assessment)
     await session.commit()
     await session.refresh(run)
+    if judge_results:
+        await _record_benchmark_judge_usage(session, settings, tenant_id, benchmark_run_id, assessments, judge_results)
     record_benchmark_metrics(run.metrics)
+    if run.metrics.get("triage"):
+        bt.record_triage_metrics(run.metrics["triage"])
     return run
+
+
+async def _record_benchmark_judge_usage(
+    session: AsyncSession, settings: Settings, tenant_id: str, benchmark_run_id: str, assessments: list[Any], results: list[Any]
+) -> None:
+    """Judge tokens spent on a benchmark are recorded like review triage (no run, no lease)."""
+    from app.services.judge_triage import _record_judge_usage
+
+    for assessment, result in zip(assessments, results):
+        usage_id = await _record_judge_usage(
+            session, settings=settings, tenant_id=tenant_id, run_id="", result=result,
+            extra={"benchmark_run_id": benchmark_run_id, "sample_id": assessment.sample_id},
+        )
+        if usage_id:
+            assessment.usage_id = usage_id
+    await session.commit()
 
 
 def record_benchmark_metrics(metrics: dict[str, Any]) -> None:
@@ -528,6 +598,7 @@ def benchmark_run_to_dict(run: BenchmarkRun, *, include_per_sample: bool = True)
         "positive_count": run.positive_count,
         "negative_count": run.negative_count,
         "gate_status": run.gate_status,
+        "judge_config": dict(run.judge_config or {}),
         "duration_ms": run.duration_ms,
         "created_by": run.created_by,
         "created_at": run.created_at,
@@ -553,6 +624,9 @@ PER_SAMPLE_CSV_COLUMNS = (
     "verdict_all_enforced",
     "priority",
     "rule_ids",
+    "triage_score",
+    "triage_priority",
+    "judge_status",
 )
 
 
