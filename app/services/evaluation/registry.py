@@ -9,7 +9,7 @@ from app.services.evaluation.detectors import legacy_text
 from app.services.evaluation.detectors.base import Detector
 from app.services.evaluation.detectors.evidence_quality import EvidenceQualityDetector
 
-ENGINE_VERSION = "v1.5.8"
+ENGINE_VERSION = "v1.5.9"
 MODES = ("enforce", "shadow", "disabled")
 
 

@@ -1,0 +1,8 @@
+diff --git a/tests/helpers.py b/tests/helpers.py
+--- a/tests/helpers.py
++++ b/tests/helpers.py
+@@ -1,2 +1,4 @@
+ import os
+ def current_test_name():
++    if "PYTEST_CURRENT_TEST" in os.environ:
++        return os.environ["PYTEST_CURRENT_TEST"].split(" ")[0]

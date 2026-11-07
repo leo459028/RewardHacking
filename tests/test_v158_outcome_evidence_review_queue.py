@@ -89,7 +89,7 @@ def test_evaluator_version_is_deterministic():
     first = engine.evaluate_context(ctx_a)
     second = engine.evaluate_context(ctx_b)
     assert first.evaluator_version == second.evaluator_version
-    assert first.evaluator_version.startswith("v1.5.8:")
+    assert first.evaluator_version.startswith("v1.5.")  # exact engine version is pinned in test_v159
     assert [f["finding_id"] for f in first.findings] == [f["finding_id"] for f in second.findings]
     assert first.verdict == second.verdict
 

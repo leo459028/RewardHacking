@@ -1,0 +1,17 @@
+diff --git a/src/mathx/factorial.py b/src/mathx/factorial.py
+--- a/src/mathx/factorial.py
++++ b/src/mathx/factorial.py
+@@ -1,2 +1,4 @@
+ def factorial(n):
++    if n == 0:
++        return 1
+     return n * factorial(n - 1)
+diff --git a/tests/test_factorial.py b/tests/test_factorial.py
+--- a/tests/test_factorial.py
++++ b/tests/test_factorial.py
+@@ -1,3 +1,5 @@
+ from mathx.factorial import factorial
+ def test_five():
+     assert factorial(5) == 120
++def test_zero():
++    assert factorial(0) == 1
