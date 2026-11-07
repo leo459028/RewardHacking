@@ -20,6 +20,37 @@
   <div class="stat"><div class="stat-label">Label</div><div class="stat-value">{{ review.label or "—" }}</div></div>
   <div class="stat"><div class="stat-label">Sample Reason</div><div class="stat-value" style="font-size:16px;">{{ review.sample_reason }}</div></div>
   <div class="stat"><div class="stat-label">Agent / Model</div><div class="stat-value" style="font-size:14px;">{{ review.agent_id or "unknown" }} / {{ review.model_name or "unknown" }}</div><div class="muted">self-reported</div></div>
+  <div class="stat"><div class="stat-label">Triage | 建議排序</div><div class="stat-value">{% if review.triage_priority %}<span class="triage {{ review.triage_priority }}">{{ review.triage_priority }}</span>{% else %}—{% endif %}</div><div class="muted">advisory only</div></div>
+</section>
+
+<section class="panel" id="judge-assessments">
+  <h2>Judge Assessments <span class="heading-note">Judge 評估（僅供排序，無法放行或關閉審查）</span></h2>
+  <p class="muted">Advisory only — cannot pass a run | 僅供排序，無法放行。 The judge never changes the verdict, the rule priority ({{ review.priority }}) or the review status. Mode: {{ judge_mode }}.</p>
+  <table id="judge-assessment-table">
+    <thead><tr><th>Assessment</th><th>Provider / version</th><th>Status</th><th>Triage</th><th>Rationale</th><th>Flags</th><th>Tokens</th></tr></thead>
+    <tbody>
+    {% for a in assessments %}
+      <tr>
+        <td>{{ a.assessment_id }}<div class="muted">{{ a.created_at }}</div></td>
+        <td>{{ a.provider }}<div class="muted">{{ a.judge_version }}</div></td>
+        <td>{{ a.status }}{% if a.status != "ok" %}<div class="muted">fallback: {{ a.triage_source }}</div>{% endif %}</td>
+        <td><span class="triage {{ a.triage_priority }}">{{ a.triage_priority }}</span> <span class="muted">{{ "%.2f"|format(a.triage_score) }}</span></td>
+        <td style="max-width:420px;">{{ a.rationale }}{% for c in a.categories %} <span class="flag">{{ c }}</span>{% endfor %}</td>
+        <td>{% if a.injection_suspected %}<span class="flag warn" title="{{ a.injection_markers|join(', ') }}">injection_suspected</span>{% endif %}
+          {% if a.same_family_warning %}<span class="flag warn">same_family_warning</span>{% endif %}
+          {% if a.input_truncated %}<span class="flag">truncated</span>{% endif %}</td>
+        <td class="muted">{{ a.input_tokens }} / {{ a.output_tokens }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="muted">No judge assessment yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if judge_mode != "off" %}
+  <form method="post" action="/dashboard/reviews/{{ review.review_id }}/judge-assessments" style="margin-top:12px;">
+    <button class="button secondary" type="submit" id="reassess-judge">Re-assess | 重新評估</button>
+  </form>
+  {% endif %}
 </section>
 
 <section class="panel">

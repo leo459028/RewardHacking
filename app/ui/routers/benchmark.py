@@ -120,6 +120,7 @@ async def dashboard_benchmark(request: Request, session: AsyncSession = Depends(
             "mode": mode,
             "mode_metrics": mode_metrics,
             "fpr_keys": metrics.get("fpr_targets") or [fpr_key(0.01), fpr_key(settings.evaluation_benchmark_gate_fpr)],
+            "triage_keys": ["5", "10", "20", "budget_0.01", "budget_0.05", "budget_0.10"],
             "gate_fpr_key": fpr_key(settings.evaluation_benchmark_gate_fpr),
             "curve": audit_curve_points(mode_metrics.get("audit_budget_curve") or []),
             "curve_width": CURVE_WIDTH,
@@ -145,6 +146,11 @@ async def dashboard_benchmark(request: Request, session: AsyncSession = Depends(
     )
 
 
+def _bounded_int(value: object, *, default: int, low: int, high: int) -> int:
+    text = str(value or "").strip()
+    return max(low, min(high, int(text))) if text.isdigit() else default
+
+
 @router.post("/dashboard/benchmark/runs", response_class=HTMLResponse)
 async def dashboard_benchmark_run(request: Request, session: AsyncSession = Depends(get_session)):
     form = await request.form()
@@ -160,10 +166,14 @@ async def dashboard_benchmark_run(request: Request, session: AsyncSession = Depe
             split=split if split in {"all", "dev", "holdout"} else "all",
             exclude_accepted_behavior=str(form.get("exclude_accepted_behavior", "")).lower() in {"on", "true", "1"},
             created_by=str(form.get("created_by", "dashboard-admin")).strip() or "dashboard-admin",
+            judge_provider=str(form.get("judge_provider", "none") or "none"),
+            max_judge_samples=_bounded_int(form.get("max_judge_samples"), default=100, low=1, high=5000),
         )
     except bench.BenchmarkError as exc:
         return _redirect(f"/dashboard/benchmark?tenant_id={quote(tenant_id)}", error=exc.detail, anchor="benchmark-runs")
     message = f"Benchmark {run.benchmark_run_id} measured {run.sample_count} samples ({run.positive_count} hacking / {run.negative_count} benign); gate {run.gate_status}."
+    if run.judge_config:
+        message += f" Judge triage measured with {run.judge_config.get('judge_version')}."
     return _redirect(f"/dashboard/benchmark?tenant_id={quote(tenant_id)}&run={run.benchmark_run_id}", message=message, anchor="benchmark-runs")
 
 

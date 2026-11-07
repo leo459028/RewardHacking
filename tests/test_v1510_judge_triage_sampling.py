@@ -1085,3 +1085,50 @@ def test_v1510_responses_mark_signal_usage_monitor_only(client, session_factory)
     ordered = client.get("/v1/reviews?order=triage").json()
     assert ordered[0]["priority"] == "P0"
     assert client.get("/v1/reviews?order=sideways").status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# P7: Dashboard
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_reviews_triage_sampling_and_benchmark_render(client, session_factory, monkeypatch):
+    _sampling_env(monkeypatch)
+    tampering_run = _completed_run(client, session_factory, "v1510-ui")
+    review_id = _submit(client, tampering_run)["review"]["review_id"]
+    sampled_run = _completed_run(client, session_factory, "v1510-ui")
+    _submit(client, sampled_run, diff=SHADOW_ONLY_DIFF, message="Slug helper.")
+
+    page = client.get("/dashboard/reviews?tenant_id=v1510-ui")
+    assert page.status_code == 200 and "0E-8" not in page.text
+    assert "Rule priority | 規則優先級" in page.text and 'id="order-by-triage"' in page.text
+    assert "threshold_sample" in page.text and 'id="sampling-stats"' in page.text
+    assert "Counts conserved: <strong>yes</strong>" in page.text
+    triage_page = client.get("/dashboard/reviews?tenant_id=v1510-ui&order=triage")
+    assert "Triage (advisory) | 依建議排序" in triage_page.text and 'id="order-by-rule"' in triage_page.text
+    assert triage_page.text.index(review_id) < triage_page.text.index(sampled_run[:8])  # rule P0 first
+
+    detail = client.get(f"/dashboard/reviews/{review_id}")
+    assert detail.status_code == 200 and 'id="judge-assessment-table"' in detail.text
+    assert "Advisory only — cannot pass a run" in detail.text and "deterministic:1.0.0" in detail.text
+    reassess = client.post(f"/dashboard/reviews/{review_id}/judge-assessments", follow_redirects=False)
+    assert reassess.status_code == 303 and "Already%20assessed" in reassess.headers["location"]
+
+    run_page = client.get(f"/dashboard/runs/{tampering_run}")
+    assert run_page.status_code == 200 and "Judge Triage | 審查排序建議" in run_page.text
+    sampled_page = client.get(f"/dashboard/runs/{sampled_run}")
+    assert "threshold_sample" in sampled_page.text
+
+    submitted = client.post(
+        "/dashboard/benchmark/runs",
+        data={"tenant_id": "default", "corpora": "seed-v1.5.9", "split": "all", "judge_provider": "deterministic"},
+        follow_redirects=False,
+    )
+    assert submitted.status_code == 303
+    location = submitted.headers["location"]
+    assert "Judge%20triage%20measured" in location
+    bench_page = client.get(location.split("#")[0])
+    assert bench_page.status_code == 200 and "0E-8" not in bench_page.text
+    assert 'id="triage-precision-table"' in bench_page.text and "rule_only" in bench_page.text and "combined" in bench_page.text
+    assert "Manual switch only | 僅能手動切換" in bench_page.text and "seed_corpus_only" in bench_page.text
+    assert "Random audit (unbiased)" in bench_page.text and 'id="judge-provider"' in bench_page.text

@@ -52,27 +52,58 @@
   </form>
 </section>
 
-<section class="panel">
-  <h2>Reviews <span class="heading-note">審查項目（依優先級排序）</span></h2>
+{% set order_query = "status=" ~ (filters.status|urlencode) ~ "&priority=" ~ (filters.priority|urlencode) ~ "&category=" ~ (filters.category|urlencode) ~ "&tenant_id=" ~ (filters.tenant_id|urlencode) %}
+<section class="panel" id="review-list">
+  <h2>Reviews <span class="heading-note">審查項目（{{ "依建議排序" if order == "triage" else "依規則優先級排序" }}）</span></h2>
+  <div class="filters" style="margin-bottom:10px; align-items:center;">
+    <span id="review-order">Order: <strong>{{ "Triage (advisory) | 依建議排序" if order == "triage" else "Rule priority | 規則優先級" }}</strong></span>
+    {% if order == "triage" %}
+    <a class="button secondary" id="order-by-rule" href="/dashboard/reviews?{{ order_query }}&order=rule#review-list">Order by rule priority | 依規則優先級</a>
+    {% else %}
+    <a class="button secondary" id="order-by-triage" href="/dashboard/reviews?{{ order_query }}&order=triage#review-list">Order by triage | 依建議排序</a>
+    {% endif %}
+    <span class="muted">Judge {{ judge_provider }} · mode <strong id="judge-mode">{{ judge_mode }}</strong>. Triage only reorders work: rule P0 stays first and no priority or verdict changes.</span>
+  </div>
   <table>
-    <thead><tr><th>Priority</th><th>Review</th><th>Run</th><th>Tenant</th><th>Categories</th><th>Status</th><th>Opened</th><th>Label</th></tr></thead>
+    <thead><tr><th>Priority</th><th>Triage | 建議</th><th>Review</th><th>Run</th><th>Tenant</th><th>Categories</th><th>Sample reason</th><th>Status</th><th>Opened</th><th>Label</th></tr></thead>
     <tbody>
     {% for review in reviews %}
       <tr>
         <td><span class="priority {{ review.priority }}">{{ review.priority }}</span></td>
+        <td>{% if review.triage_priority %}<span class="triage {{ review.triage_priority }}" title="{{ review.triage_source }}">{{ review.triage_priority }}</span>
+          <span class="muted">{{ "%.2f"|format(review.triage_score or 0) }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
         <td><a href="/dashboard/reviews/{{ review.review_id }}">{{ review.review_id }}</a></td>
         <td><a href="/dashboard/runs/{{ review.run_id }}">{{ review.run_id[:8] }}</a></td>
         <td>{{ review.tenant_id }}</td>
         <td>{% for c in review.categories %}<span class="flag">{{ c }}</span>{% endfor %}</td>
+        <td>{% if review.sample_reason != "rule_review" %}<span class="flag warn">{{ review.sample_reason }}</span>{% else %}<span class="muted">rule_review</span>{% endif %}</td>
         <td>{{ review.status }}</td>
         <td class="muted">{{ review.opened_at }}</td>
         <td>{{ review.label or "—" }}</td>
       </tr>
     {% else %}
-      <tr><td colspan="8" class="muted">No reviews match the current filters.</td></tr>
+      <tr><td colspan="10" class="muted">No reviews match the current filters.</td></tr>
     {% endfor %}
     </tbody>
   </table>
+</section>
+
+<section class="panel" id="sampling">
+  <h2>Sampling <span class="heading-note">抽樣審查（規則判 pass 的 run；近 {{ sampling.window_days }} 天）</span></h2>
+  <p class="muted">Rule-passed outcome submissions are candidates. The random audit slice gives an unbiased miss-rate estimate; the threshold slice pulls in shadow-detector hits and high pre-execution risk. Skipped candidates are counted, never dropped.</p>
+  {% set totals = sampling.totals %}
+  <section class="grid stats" id="sampling-stats">
+    <div class="stat"><div class="stat-label">Candidates</div><div class="stat-value" id="sampling-candidates">{{ totals.candidates }}</div></div>
+    <div class="stat"><div class="stat-label">Sampled · threshold</div><div class="stat-value">{{ totals.sampled.threshold }}</div></div>
+    <div class="stat"><div class="stat-label">Sampled · random</div><div class="stat-value">{{ totals.sampled.random }}</div></div>
+    <div class="stat"><div class="stat-label">Skipped</div><div class="stat-value" id="sampling-skipped">{{ sampling.skipped_total }}</div>
+      <div class="muted">{% for reason, count in totals.skipped.items() %}{{ reason }} {{ count }}{% if not loop.last %} · {% endif %}{% endfor %}</div></div>
+    <div class="stat"><div class="stat-label">Not selected</div><div class="stat-value">{{ totals.not_selected }}</div></div>
+  </section>
+  <p class="muted" id="sampling-settings">Counts conserved: <strong>{{ "yes" if sampling.conserved else "no" }}</strong> ·
+    threshold ≥ {{ sampling.settings.min_score }} · daily cap {{ sampling.settings.daily_cap_per_tenant }} · max share {{ "%g"|format(sampling.settings.max_share * 100) }}% ·
+    random rate {{ "%g"|format(sampling.settings.random_rate * 100) }}% (daily cap {{ sampling.settings.random_daily_cap_per_tenant }}) ·
+    secret {{ "configured" if sampling.settings.secret_configured else "not configured (not reproducible across restarts)" }} · {{ sampling.policy_version }}</p>
 </section>
 
 <section class="panel" id="evidence-preview">

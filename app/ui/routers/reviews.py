@@ -20,8 +20,10 @@ from app.schemas.evaluation import EvaluationPreviewRequest, OutcomeSubmitReques
 from app.services.audit_log import get_run
 from app.services.evaluation.evidence import EvidenceError
 from app.services.evaluation.taxonomy import CATEGORIES
+from app.services.judge_triage import default_order, effective_priority, list_assessments, triage_review
 from app.services.outcomes import list_outcomes, preview_evaluation, refresh_review_queue_gauge, submit_outcome
 from app.services.review_queue import ReviewError, decide_review, get_review, list_reviews, upsert_evaluation_policy
+from app.services.review_sampling import sampling_summary
 from app.ui.routes import dashboard_auth, templates
 
 router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth)])
@@ -78,10 +80,13 @@ async def _render_reviews(
     error: str = "",
 ) -> HTMLResponse:
     params = request.query_params
+    settings = get_settings()
     status = params.get("status", "active")
     priority = params.get("priority", "")
     category = params.get("category", "")
     tenant_id = params.get("tenant_id", "")
+    order = params.get("order", "")
+    order = order if order in {"rule", "triage"} else default_order(settings)
     reviews = await list_reviews(
         session,
         status=status or None,
@@ -89,14 +94,21 @@ async def _render_reviews(
         category=category or None,
         tenant_id=tenant_id or None,
         limit=200,
+        order=order,
     )
     depth = await refresh_review_queue_gauge(session)
+    sampling = await sampling_summary(session, settings, tenant_id=tenant_id or None, window_days=7)
     return templates.TemplateResponse(
         request,
         "reviews.html",
         {
             "reviews": reviews,
             "depth": depth,
+            "order": order,
+            "judge_mode": settings.evaluation_judge_mode,
+            "judge_provider": settings.effective_judge_provider,
+            "sampling": sampling,
+            "effective_priority": effective_priority,
             "filters": {"status": status, "priority": priority, "category": category, "tenant_id": tenant_id},
             "categories": sorted(CATEGORIES.keys()),
             "preview": preview,
@@ -138,6 +150,7 @@ async def dashboard_review_detail(request: Request, review_id: str, session: Asy
         raise HTTPException(status_code=404, detail="Review not found.")
     run = await get_run(session, review.run_id)
     outcomes = await list_outcomes(session, review.run_id)
+    assessments = await list_assessments(session, review_id=review_id)
     return templates.TemplateResponse(
         request,
         "review_detail.html",
@@ -145,6 +158,8 @@ async def dashboard_review_detail(request: Request, review_id: str, session: Asy
             "review": review,
             "run": run,
             "outcomes": outcomes,
+            "assessments": assessments,
+            "judge_mode": get_settings().evaluation_judge_mode,
             "labels": REVIEW_LABELS,
             "categories": sorted(CATEGORIES.keys()),
             "message": request.query_params.get("message", ""),
@@ -181,6 +196,26 @@ async def dashboard_review_decision(request: Request, review_id: str, session: A
     status = run.status if run is not None else "n/a"
     message = f"Review decided: {decision.label}. Run status is now {status}."
     return RedirectResponse(f"/dashboard/reviews/{review_id}?message={quote(message)}", status_code=303)
+
+
+@router.post("/dashboard/reviews/{review_id}/judge-assessments", response_class=HTMLResponse)
+async def dashboard_review_reassess(request: Request, review_id: str, session: AsyncSession = Depends(get_session)):
+    """v1.5.10: re-run advisory judge triage (deduplicated by evidence digest and judge version)."""
+    review = await get_review(session, review_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail="Review not found.")
+    settings = get_settings()
+    if settings.evaluation_judge_mode == "off":
+        return RedirectResponse(f"/dashboard/reviews/{review_id}?error={quote('Judge mode is off.')}#judge-assessments", status_code=303)
+    assessment, deduplicated = await triage_review(session, review, settings)
+    if assessment is None:
+        return RedirectResponse(f"/dashboard/reviews/{review_id}?error={quote('Judge assessment could not be stored.')}#judge-assessments", status_code=303)
+    message = (
+        f"Already assessed | 已評估: {assessment.assessment_id} (same evidence and judge version)."
+        if deduplicated
+        else f"Judge assessment {assessment.assessment_id} recorded ({assessment.status}, triage {assessment.triage_priority})."
+    )
+    return RedirectResponse(f"/dashboard/reviews/{review_id}?message={quote(message)}#judge-assessments", status_code=303)
 
 
 @router.post("/dashboard/runs/{run_id}/outcome", response_class=HTMLResponse)
