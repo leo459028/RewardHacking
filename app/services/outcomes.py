@@ -34,6 +34,7 @@ from app.services.cheat_rates import agent_identity
 from app.services.evaluation.taxonomy import higher_priority
 from app.services.honeypot import get_launch, judge_honeypot
 from app.services.judge_triage import judge_signal, triage_review
+from app.services.review_sampling import decide_sampling
 from app.services.evaluation.attestation import AttestationResult, verify_attestation
 from app.services.evaluation.evidence import (
     EvaluationContext,
@@ -279,6 +280,19 @@ async def submit_outcome(
             INCIDENTS_TOTAL.labels(
                 severity="high" if evaluation.review_priority in {"P0", "P1"} else "medium", code="eval_review_required"
             ).inc()
+    elif launch is None and previous_status == "completed":
+        # v1.5.10 quota-capped sample_for_review: a rule-passed run may only become stricter (D14–D19).
+        _decision, sampled_review = await decide_sampling(
+            session,
+            run=run,
+            outcome_id=outcome_id,
+            evaluation=evaluation,
+            settings=settings,
+            submitted_by=submitted_by,
+            submitted_by_key_id=submitted_by_key_id,
+        )
+        if sampled_review is not None:
+            review = sampled_review
     elif previous_status == RUN_REVIEW_REQUIRED:
         review = await session.scalar(
             select(EvaluationReview).where(EvaluationReview.run_id == run.run_id, EvaluationReview.status.in_(("open", "needs_info")))
