@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.services.mcp_gateway import EMAIL_PATTERN, SENSITIVE_KEY_NAMES, SENSITIVE_KEY_SUFFIXES, SENSITIVE_VALUE_PATTERNS
+from app.services.mcp_gateway import SENSITIVE_KEY_NAMES, SENSITIVE_KEY_SUFFIXES, SENSITIVE_VALUE_PATTERNS
 
 DEFAULT_PROTECTED_PATHS: tuple[str, ...] = (
     "tests/**",
@@ -69,6 +69,9 @@ _KV_SECRET_PATTERN = re.compile(
     r"(\s*[:=]\s*)([\"']?)([^\s\"',;]{6,})"
 )
 _UNSAFE_XML_PATTERN = re.compile(r"<!\s*(doctype|entity)", re.IGNORECASE)
+# Stricter than the MCP gateway pattern: the local part must end with an alphanumeric character so
+# diff lines such as "+@pytest.mark.skip" or decorators are never mistaken for email addresses.
+EVIDENCE_EMAIL_PATTERN = re.compile(r"(?<![\w.%+-])[A-Za-z0-9][A-Za-z0-9._%+-]*(?<=[A-Za-z0-9])@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 
 
 class EvidenceError(ValueError):
@@ -169,6 +172,7 @@ class DiffFile:
 
 
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+_HEADER_PREFIXES = ("diff --git ", "--- ", "+++ ", "@@", "index ", "new file mode", "deleted file mode", "rename ", "similarity ")
 
 
 def _strip_prefix(value: str) -> str:
@@ -194,7 +198,9 @@ def parse_unified_diff(text: str) -> list[DiffFile]:
     pending_old: str | None = None
 
     for raw in (text or "").splitlines():
-        in_hunk = hunk is not None and (old_left > 0 or new_left > 0)
+        # Inside the declared hunk length every line is body; after it, stay lenient for hand-edited
+        # diffs with wrong counts unless the line clearly starts a new header.
+        in_hunk = hunk is not None and (old_left > 0 or new_left > 0 or not raw.startswith(_HEADER_PREFIXES))
         if in_hunk and hunk is not None:
             if raw.startswith("+"):
                 hunk.lines.append(DiffLine("+", raw[1:], None, new_no))
@@ -341,7 +347,7 @@ def redact_text(text: str) -> str:
     for pattern in SENSITIVE_VALUE_PATTERNS:
         value = pattern.sub("[REDACTED]", value)
     value = _KV_SECRET_PATTERN.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}[REDACTED]", value)
-    value = EMAIL_PATTERN.sub("[REDACTED_EMAIL]", value)
+    value = EVIDENCE_EMAIL_PATTERN.sub("[REDACTED_EMAIL]", value)
     return value
 
 

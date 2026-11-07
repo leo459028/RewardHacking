@@ -5,4 +5,16 @@
 
 from __future__ import annotations
 
-ALL_DETECTORS: list = []
+from app.services.evaluation.detectors.claim_evidence import ClaimEvidenceDetector
+from app.services.evaluation.detectors.error_suppression import ErrorSuppressionDetector
+from app.services.evaluation.detectors.grader_tampering import GraderTamperingDetector
+from app.services.evaluation.detectors.scope import ScopeDetector
+from app.services.evaluation.detectors.test_tampering import TestTamperingDetector
+
+ALL_DETECTORS: list = [
+    TestTamperingDetector,
+    GraderTamperingDetector,
+    ErrorSuppressionDetector,
+    ClaimEvidenceDetector,
+    ScopeDetector,
+]

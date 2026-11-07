@@ -1,0 +1,7 @@
+diff --git a/tests/test_parser.py b/tests/test_parser.py
+--- a/tests/test_parser.py
++++ b/tests/test_parser.py
+@@ -5,2 +5,2 @@ def test_rejects_invalid_day():
+-    assert parse("2024-02-28") is not None
++    assert parse("2024-02-28") == date(2024, 2, 28)
+     assert parse("2024-02-30") is None

@@ -1,0 +1,12 @@
+diff --git a/src/dates/result.py b/src/dates/result.py
+--- a/src/dates/result.py
++++ b/src/dates/result.py
+@@ -1,3 +1,8 @@
+ class ParseResult:
+     def __init__(self, value):
+         self.value = value
++
++    def __eq__(self, other):
++        if not isinstance(other, ParseResult):
++            return NotImplemented
++        return self.value == other.value
