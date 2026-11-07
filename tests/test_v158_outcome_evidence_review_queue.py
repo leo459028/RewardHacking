@@ -765,3 +765,86 @@ def test_review_queue_metrics_and_operations_check(client, session_factory):
     _db(session_factory, _age)
     aged = _check()
     assert aged["status"] == "warn" and aged["metadata"]["overdue_p0"] == 1
+
+
+# ---------------------------------------------------------------------------
+# P6: Dashboard review queue, evidence preview, outcome form and evaluation policy
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_reviews_outcome_form_and_decision_flow(client, session_factory):
+    run_id = _completed_run(client, session_factory, tenant="v158-ui")
+    page = client.get(f"/dashboard/runs/{run_id}")
+    assert page.status_code == 200
+    assert "Submit Outcome Evidence" in page.text and "Outcome Evidence &amp; Findings" in page.text
+
+    form = {
+        "submitted_by": "dashboard-agent",
+        "provenance": "self_reported",
+        "tests_passed": "12",
+        "tests_failed": "0",
+        "test_format": "summary",
+        "final_message": "All tests pass.",
+        "diff": _fixture("grader_tampering_eq_true.diff"),
+    }
+    submitted = client.post(f"/dashboard/runs/{run_id}/outcome", data=form, follow_redirects=False)
+    assert submitted.status_code == 303 and "message=" in submitted.headers["location"]
+    detail = client.get(submitted.headers["location"])
+    assert detail.status_code == 200
+    assert "review_required" in detail.text and "grader_tampering" in detail.text and "GT-001" in detail.text
+    assert "self_reported" in detail.text
+
+    queue = client.get("/dashboard/reviews?priority=P0")
+    assert queue.status_code == 200 and "Post-Execution Review Queue" in queue.text
+    review_id = client.get(f"/v1/reviews?run_id={run_id}").json()[0]["review_id"]
+    assert review_id in queue.text
+    review_page = client.get(f"/dashboard/reviews/{review_id}")
+    assert review_page.status_code == 200 and "Review Decision" in review_page.text and "src/dates/result.py" in review_page.text
+
+    decided = client.post(
+        f"/dashboard/reviews/{review_id}/decision",
+        data={"label": "confirmed_hacking", "reviewer": "qa-reviewer", "reason": "__eq__ forced True", "label_categories": ["grader_tampering"]},
+        follow_redirects=False,
+    )
+    assert decided.status_code == 303
+    after = client.get(decided.headers["location"])
+    assert "Review decided: confirmed_hacking" in after.text and "rejected" in after.text
+    for path in ("/dashboard/reviews", f"/dashboard/reviews/{review_id}", f"/dashboard/runs/{run_id}", "/dashboard/runs?status=rejected"):
+        body = client.get(path).text
+        assert "0E-8" not in body
+
+
+def test_dashboard_evidence_preview_and_evaluation_policy(client, session_factory):
+    preview = client.post(
+        "/dashboard/reviews/preview",
+        data={"task_type": "code_fix", "final_message": "All tests pass.", "diff": "", "test_format": "summary"},
+    )
+    assert preview.status_code == 200
+    assert "CE-001" in preview.text and "false_verification_claim" in preview.text
+    rejected = client.post(
+        "/dashboard/reviews/preview",
+        data={"task_type": "code_fix", "final_message": "x", "test_format": "junit_xml", "junit_xml": UNSAFE_JUNIT},
+    )
+    assert rejected.status_code == 200 and "Preview rejected" in rejected.text
+
+    saved = client.post(
+        "/dashboard/governance/evaluation-policy",
+        data={"tenant_id": "v158-ui-policy", "protected_paths": "scoring/**\nrubrics/**", "allow_default_protected_paths": "on", "updated_by": "qa"},
+        follow_redirects=False,
+    )
+    assert saved.status_code == 303
+    governance = client.get(saved.headers["location"])
+    assert governance.status_code == 200 and "Evaluation Policy saved" not in governance.text
+    assert "Evaluation policy saved for v158-ui-policy" in governance.text and "rubrics/**" in governance.text
+    policy = client.get("/v1/tenants/v158-ui-policy/evaluation-policy").json()
+    assert policy["protected_paths"] == ["scoring/**", "rubrics/**"]
+
+
+def test_responses_mark_signal_usage_monitor_only(client, session_factory):
+    run_id = _completed_run(client, session_factory, tenant="v158-signal")
+    outcome = client.post(f"/v1/runs/{run_id}/outcome", json={"final_message": "All tests pass."}).json()
+    assert outcome["signal_usage"] == "monitor_only"
+    assert outcome["evaluation"]["signal_usage"] == "monitor_only"
+    assert outcome["review"]["signal_usage"] == "monitor_only"
+    assert all(item["signal_usage"] == "monitor_only" for item in client.get("/v1/reviews").json())
+    assert all(item["signal_usage"] == "monitor_only" for item in client.get("/v1/evaluations").json())

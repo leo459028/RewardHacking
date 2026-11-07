@@ -10,6 +10,9 @@
   <a class="button secondary" href="/dashboard/runs">Back to Runs</a>
 </div>
 
+{% if message %}<div class="success" role="status">{{ message }}</div>{% endif %}
+{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+
 <section class="grid stats">
   <div class="stat"><div class="stat-label">Status</div><div class="stat-value"><span class="status {{ run.status }}">{{ run.status }}</span></div></div>
   <div class="stat"><div class="stat-label">Task</div><div class="stat-value">{{ run.task_type }}</div></div>
@@ -103,6 +106,55 @@
   <p>{{ run.decision_reason }}</p>
   {% for flag in run.policy_flags %}<span class="flag">{{ flag }}</span>{% else %}<span class="muted">No policy flags.</span>{% endfor %}
 </section>
+
+<section class="panel" id="outcome-evidence">
+  <h2>Outcome Evidence &amp; Findings <span class="heading-note">產出證據與偵測結果（monitor-only）</span></h2>
+  {% set current = latest_outcome %}
+  <p>
+    {% if current %}
+      Latest outcome <strong>{{ current.outcome_id }}</strong> (#{{ current.submission_seq }}, {{ current.provenance }}) ·
+      Verdict: <strong>{{ current.verdict }}</strong>
+      {% if current.review_priority %}<span class="priority {{ current.review_priority }}">{{ current.review_priority }}</span>{% endif %}
+      · Assurance: <span class="assurance {{ current.assurance_level }}">{{ current.assurance_level }}</span>
+      {% if current.assurance_level == "self_reported" %}<span class="muted">(unverified, agent-reported)</span>{% endif %}
+      · <span class="muted">{{ current.evaluator_version }}</span>
+    {% else %}
+      Executor evaluation: <strong>{{ executor_eval.get("verdict", "n/a") }}</strong>
+      {% if executor_eval.get("review_priority") %}<span class="priority {{ executor_eval.get('review_priority') }}">{{ executor_eval.get("review_priority") }}</span>{% endif %}
+      · Assurance: <span class="assurance {{ executor_eval.get('assurance_level', 'simulated') }}">{{ executor_eval.get("assurance_level", "simulated") }}</span>
+      <span class="muted">· no agent outcome evidence submitted yet</span>
+    {% endif %}
+  </p>
+  {% for review in run_reviews %}
+    <p>Review <a href="/dashboard/reviews/{{ review.review_id }}"><strong>{{ review.review_id }}</strong></a>
+      <span class="priority {{ review.priority }}">{{ review.priority }}</span> · {{ review.status }}{% if review.label %} · {{ review.label }}{% endif %}</p>
+  {% endfor %}
+  {% set findings = current.findings if current else executor_eval.get("findings", []) %}
+  {% include "_findings.html" %}
+</section>
+
+{% if run.status in ["completed", "review_required"] %}
+<section class="panel" id="submit-outcome">
+  <h2>Submit Outcome Evidence <span class="heading-note">提交產出證據（agent 自行回報＝self_reported）</span></h2>
+  <form method="post" action="/dashboard/runs/{{ run.run_id }}/outcome">
+    <div class="form-grid">
+      <label>Submitted By <input name="submitted_by" value="dashboard-agent"></label>
+      <label>Provenance
+        <select name="provenance"><option value="self_reported">self_reported</option><option value="ci_attested">ci_attested</option></select>
+      </label>
+      <label>Tests Passed <input name="tests_passed" type="number" min="0" value=""></label>
+      <label>Tests Failed <input name="tests_failed" type="number" min="0" value=""></label>
+      <label>Tests Skipped <input name="tests_skipped" type="number" min="0" value=""></label>
+      <label>Lint Errors <input name="lint_errors" type="number" min="0" value="" placeholder="optional"></label>
+    </div>
+    <input type="hidden" name="test_format" value="summary">
+    <label style="margin-top:12px;">Final Message <textarea name="final_message" style="min-height:70px;" placeholder="All tests pass."></textarea></label>
+    <label style="margin-top:12px;">Unified Diff <textarea name="diff" placeholder="diff --git a/... b/..."></textarea></label>
+    <div style="margin-top:12px;"><button class="button" type="submit">Submit Outcome</button>
+      <span class="muted">{{ outcomes|length }} / {{ outcome_max_submissions }} submissions used; a run under review is never downgraded by new evidence.</span></div>
+  </form>
+</section>
+{% endif %}
 
 {% if run.evaluation_summary.get("prompt_guard") %}
 <section class="panel">

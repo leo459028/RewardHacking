@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Review Detail | 審查詳情{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Review {{ review.review_id }}</h1>
+    <div class="title-note">審查詳情</div>
+    <div class="muted">Run <a href="/dashboard/runs/{{ review.run_id }}">{{ review.run_id }}</a> · tenant {{ review.tenant_id }} · {{ review.evaluator_version }}</div>
+  </div>
+  <a class="button secondary" href="/dashboard/reviews">Back to Reviews</a>
+</div>
+
+{% if message %}<div class="success" role="status">{{ message }}</div>{% endif %}
+{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+
+<section class="grid stats">
+  <div class="stat"><div class="stat-label">Priority</div><div class="stat-value"><span class="priority {{ review.priority }}">{{ review.priority }}</span></div></div>
+  <div class="stat"><div class="stat-label">Review Status</div><div class="stat-value">{{ review.status }}</div></div>
+  <div class="stat"><div class="stat-label">Run Status</div><div class="stat-value">{% if run %}<span class="status {{ run.status }}">{{ run.status }}</span>{% else %}—{% endif %}</div></div>
+  <div class="stat"><div class="stat-label">Label</div><div class="stat-value">{{ review.label or "—" }}</div></div>
+  <div class="stat"><div class="stat-label">Sample Reason</div><div class="stat-value" style="font-size:16px;">{{ review.sample_reason }}</div></div>
+</section>
+
+<section class="panel">
+  <h2>Findings <span class="heading-note">偵測結果與證據位置</span></h2>
+  {% set findings = review.findings %}
+  {% include "_findings.html" %}
+</section>
+
+{% if review.status in ["open", "needs_info"] %}
+<section class="panel" id="review-decision">
+  <h2>Review Decision <span class="heading-note">審查決定（不會重新執行 run）</span></h2>
+  <form method="post" action="/dashboard/reviews/{{ review.review_id }}/decision">
+    <div class="form-grid">
+      <label>Label
+        <select name="label">
+          {% for item in labels %}<option value="{{ item }}">{{ item }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Reviewer <input name="reviewer" value="dashboard-reviewer" required></label>
+      <label>Corrected Categories
+        <select name="label_categories" multiple size="4">
+          {% for item in categories %}<option value="{{ item }}" {{ "selected" if item in review.categories else "" }}>{{ item }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Reason <input name="reason" value="" placeholder="why"></label>
+    </div>
+    <div style="margin-top:12px;"><button class="button" type="submit">Submit Decision</button></div>
+  </form>
+</section>
+{% else %}
+<section class="panel">
+  <h2>Decision <span class="heading-note">已決定</span></h2>
+  <p><strong>{{ review.label }}</strong> by {{ review.reviewer }} at {{ review.decided_at }}</p>
+  <p class="muted">{{ review.reason }}</p>
+  {% for c in review.label_categories %}<span class="flag">{{ c }}</span>{% endfor %}
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>Outcome Submissions <span class="heading-note">產出證據提交紀錄（append-only）</span></h2>
+  <table>
+    <thead><tr><th>#</th><th>Outcome</th><th>Provenance</th><th>Verdict</th><th>Priority</th><th>Assurance</th><th>Submitted By</th><th>Created</th></tr></thead>
+    <tbody>
+    {% for o in outcomes %}
+      <tr>
+        <td>{{ o.submission_seq }}</td>
+        <td>{{ o.outcome_id }}</td>
+        <td>{{ o.provenance }}</td>
+        <td>{{ o.verdict }}</td>
+        <td>{% if o.review_priority %}<span class="priority {{ o.review_priority }}">{{ o.review_priority }}</span>{% else %}—{% endif %}</td>
+        <td><span class="assurance {{ o.assurance_level }}">{{ o.assurance_level }}</span></td>
+        <td>{{ o.submitted_by }}</td>
+        <td class="muted">{{ o.created_at }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="muted">No outcome evidence submitted (review opened from executor evaluation).</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

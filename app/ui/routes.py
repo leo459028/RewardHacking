@@ -270,11 +270,25 @@ async def dashboard_run_detail(
     checkpoints = await list_run_checkpoints(session, run_id=run_id)
     replay_attempts = await list_replay_attempts(session, run_id=run_id)
     cost_summary = await run_cost_summary(session, run_id=run_id)
+    from app.services.outcomes import list_outcomes
+    from app.services.review_queue import list_reviews
+
+    outcomes = await list_outcomes(session, run_id)
+    run_reviews = await list_reviews(session, run_id=run_id, limit=20)
+    executor_eval = dict((run.evaluation_summary or {}).get("evaluation_event", {}).get("payload", {}) or {})
+    latest_outcome = outcomes[-1] if outcomes else None
     return templates.TemplateResponse(
         request,
         "run_detail.html",
         {
             "run": run,
+            "outcomes": outcomes,
+            "latest_outcome": latest_outcome,
+            "run_reviews": run_reviews,
+            "executor_eval": executor_eval,
+            "outcome_max_submissions": get_settings().evaluation_outcome_max_submissions,
+            "message": request.query_params.get("message", ""),
+            "error": request.query_params.get("error", ""),
             "incidents": incidents,
             "attempts": attempts,
             "tool_executions": tool_executions,
@@ -591,10 +605,18 @@ async def dashboard_governance(
     summary = await governance_summary(session, tenant_id=selected_tenant)
     events = await list_governance_events(session, tenant_id=tenant_id or None, limit=25)
     api_keys = await list_tenant_api_keys(session, tenant_id=selected_tenant)
+    from app.services.review_queue import get_evaluation_policy, policy_to_dict
+    from app.ui.routers.reviews import list_evaluation_policies
+
+    evaluation_policies = await list_evaluation_policies(session)
+    selected_policy = policy_to_dict(selected_tenant, await get_evaluation_policy(session, selected_tenant))
     return templates.TemplateResponse(
         request,
         "governance.html",
         {
+            "evaluation_policies": evaluation_policies,
+            "selected_policy": selected_policy,
+            "governance_message": request.query_params.get("message", ""),
             "summary": summary,
             "events": events,
             "runs": runs,

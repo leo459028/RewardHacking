@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Reviews | 審查佇列{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Post-Execution Review Queue</h1>
+    <div class="title-note">執行後審查佇列</div>
+    <div class="muted">Runs flagged by evidence-based reward-hacking detectors. Decisions never re-execute a run. Signals are monitor-only and must not be used as training rewards.</div>
+  </div>
+  <a class="button secondary" href="/dashboard/approvals">Pre-Execution Approvals</a>
+</div>
+
+{% if message %}<div class="success" role="status">{{ message }}</div>{% endif %}
+{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+
+<section class="grid stats">
+  {% for p in ["P0", "P1", "P2", "P3"] %}
+  <div class="stat"><div class="stat-label">Open {{ p }}</div><div class="stat-value"><span class="priority {{ p }}">{{ depth.get(p, 0) }}</span></div></div>
+  {% endfor %}
+</section>
+
+<section class="panel">
+  <h2>Filter <span class="heading-note">篩選</span></h2>
+  <form class="filters" method="get" action="/dashboard/reviews">
+    <label>Status
+      <select name="status">
+        {% for item in ["active", "open", "needs_info", "closed", ""] %}
+        <option value="{{ item }}" {{ "selected" if filters.status == item else "" }}>{{ item or "all" }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Priority
+      <select name="priority">
+        <option value="" {{ "selected" if not filters.priority else "" }}>All</option>
+        {% for item in ["P0", "P1", "P2", "P3"] %}
+        <option value="{{ item }}" {{ "selected" if filters.priority == item else "" }}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Category
+      <select name="category">
+        <option value="" {{ "selected" if not filters.category else "" }}>All</option>
+        {% for item in categories %}
+        <option value="{{ item }}" {{ "selected" if filters.category == item else "" }}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Tenant
+      <input name="tenant_id" value="{{ filters.tenant_id }}" placeholder="all tenants">
+    </label>
+    <div><button class="button" type="submit">Apply Filters</button></div>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Reviews <span class="heading-note">審查項目（依優先級排序）</span></h2>
+  <table>
+    <thead><tr><th>Priority</th><th>Review</th><th>Run</th><th>Tenant</th><th>Categories</th><th>Status</th><th>Opened</th><th>Label</th></tr></thead>
+    <tbody>
+    {% for review in reviews %}
+      <tr>
+        <td><span class="priority {{ review.priority }}">{{ review.priority }}</span></td>
+        <td><a href="/dashboard/reviews/{{ review.review_id }}">{{ review.review_id }}</a></td>
+        <td><a href="/dashboard/runs/{{ review.run_id }}">{{ review.run_id[:8] }}</a></td>
+        <td>{{ review.tenant_id }}</td>
+        <td>{% for c in review.categories %}<span class="flag">{{ c }}</span>{% endfor %}</td>
+        <td>{{ review.status }}</td>
+        <td class="muted">{{ review.opened_at }}</td>
+        <td>{{ review.label or "—" }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="muted">No reviews match the current filters.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel" id="evidence-preview">
+  <h2>Evidence Preview <span class="heading-note">證據試算（不落庫）</span></h2>
+  <p class="muted">Dry-run the evaluation engine against pasted evidence. Nothing is persisted.</p>
+  <form method="post" action="/dashboard/reviews/preview">
+    <div class="form-grid">
+      <label>Task Type
+        <select name="task_type">
+          {% for item in ["code_fix", "analysis", "data_query", "workflow", "other"] %}
+          <option value="{{ item }}" {{ "selected" if preview_input.get("task_type", "code_fix") == item else "" }}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Tenant <input name="tenant_id" value="{{ preview_input.get('tenant_id', '') }}" placeholder="default"></label>
+      <label>Tests Passed <input name="tests_passed" type="number" min="0" value="{{ preview_input.get('tests_passed', '') }}"></label>
+      <label>Tests Failed <input name="tests_failed" type="number" min="0" value="{{ preview_input.get('tests_failed', '') }}"></label>
+    </div>
+    <label style="margin-top:12px;">Final Message <textarea name="final_message" style="min-height:70px;">{{ preview_input.get('final_message', '') }}</textarea></label>
+    <label style="margin-top:12px;">Unified Diff <textarea name="diff">{{ preview_input.get('diff', '') }}</textarea></label>
+    <input type="hidden" name="test_format" value="summary">
+    <div style="margin-top:12px;"><button class="button" type="submit">Preview Evaluation</button></div>
+  </form>
+  {% if preview %}
+  <div style="margin-top:16px;">
+    <p>
+      Verdict: <strong>{{ preview.verdict }}</strong>
+      {% if preview.review_priority %}<span class="priority {{ preview.review_priority }}">{{ preview.review_priority }}</span>{% endif %}
+      · Assurance: <span class="assurance {{ preview.assurance_level }}">{{ preview.assurance_level }}</span>
+      · <span class="muted">{{ preview.evaluator_version }} · {{ preview.signal_usage }}</span>
+    </p>
+    {% set findings = preview.findings %}
+    {% include "_findings.html" %}
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

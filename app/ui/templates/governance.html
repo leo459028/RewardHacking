@@ -185,4 +185,31 @@
     </tbody>
   </table>
 </section>
+<section class="panel" id="evaluation-policy">
+  <h2>Evaluation Policy <span class="heading-note">評估政策（受保護路徑）</span></h2>
+  {% if governance_message %}<div class="success" role="status">{{ governance_message }}</div>{% endif %}
+  <p class="muted">Changes to protected paths are flagged as test / grader tampering. Run metadata may only add paths, never remove them.</p>
+  <form method="post" action="/dashboard/governance/evaluation-policy">
+    <div class="form-grid">
+      <label>Tenant ID <input name="tenant_id" value="{{ selected_policy.tenant_id }}" required></label>
+      <label>Updated By <input name="updated_by" value="dashboard-admin"></label>
+      <label class="checkline"><input type="checkbox" name="allow_default_protected_paths" {{ "checked" if selected_policy.allow_default_protected_paths else "" }}> Include default protected paths</label>
+    </div>
+    <label style="margin-top:12px;">Custom Protected Paths (one glob per line)
+      <textarea name="protected_paths" style="min-height:80px;" placeholder="scoring/**">{{ selected_policy.protected_paths|join("\n") }}</textarea>
+    </label>
+    <div style="margin-top:12px;"><button class="button" type="submit">Save Evaluation Policy</button></div>
+  </form>
+  <table style="margin-top:14px;">
+    <thead><tr><th>Tenant</th><th>Custom Paths</th><th>Defaults</th><th>Updated By</th></tr></thead>
+    <tbody>
+    {% for policy in evaluation_policies %}
+      <tr><td>{{ policy.tenant_id }}</td><td>{% for p in policy.protected_paths %}<span class="flag">{{ p }}</span>{% else %}<span class="muted">none</span>{% endfor %}</td>
+        <td>{{ "yes" if policy.allow_default_protected_paths else "no" }}</td><td>{{ policy.updated_by }}</td></tr>
+    {% else %}
+      <tr><td colspan="4" class="muted">No tenant evaluation policies yet (defaults apply).</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
 {% endblock %}
