@@ -10,7 +10,9 @@ from app.models.control_plane import ExecutionPlan, ExecutionPlanStep, ToolDefin
 from app.observability.metrics import CONTROL_PLANE_STEPS_TOTAL
 from app.schemas.agent import AgentRequest
 from app.schemas.control_plane import ExecutionPlanDraft
+from app.schemas.control_plane import MCP_SERVER_TOOL_PREFIX
 from app.services.finops import FINOPS_CALCULATION_VERSION, extract_allocation
+from app.services.mcp_gateway import DEFAULT_OUTPUT_SCHEMA, build_tool_mcp_map
 
 
 BUILTIN_WORKFLOWS: list[dict] = [
@@ -65,7 +67,7 @@ BUILTIN_TOOLS: list[dict] = [
         "task_types": ["analysis", "data_query", "workflow"],
         "requires_approval": False,
         "risk_level": "low",
-        "metadata": {"source": "builtin"},
+        "metadata": {"source": "builtin", "mcp_server_id": "mcp-core-local", "input_schema": {"type": "object", "properties": {"source": {"type": "string", "maxLength": 512, "x-scan-profile": ["path", "shell"]}, "limit": {"type": "integer", "minimum": 1, "maximum": 10000}}, "additionalProperties": True}, "output_schema": DEFAULT_OUTPUT_SCHEMA},
     },
     {
         "tool_name": "inspect_docs",
@@ -74,7 +76,7 @@ BUILTIN_TOOLS: list[dict] = [
         "task_types": ["analysis", "other"],
         "requires_approval": False,
         "risk_level": "low",
-        "metadata": {"source": "builtin"},
+        "metadata": {"source": "builtin", "mcp_server_id": "mcp-core-local", "input_schema": {"type": "object", "properties": {"doc_path": {"type": "string", "maxLength": 512, "x-scan-profile": ["path", "shell"]}}, "additionalProperties": True}, "output_schema": DEFAULT_OUTPUT_SCHEMA},
     },
     {
         "tool_name": "summarize",
@@ -83,7 +85,7 @@ BUILTIN_TOOLS: list[dict] = [
         "task_types": ["analysis", "data_query", "other"],
         "requires_approval": False,
         "risk_level": "low",
-        "metadata": {"source": "builtin"},
+        "metadata": {"source": "builtin", "mcp_server_id": "mcp-core-local", "input_schema": {"type": "object", "properties": {"text": {"type": "string", "maxLength": 20000, "x-scan-profile": "none"}, "max_words": {"type": "integer", "minimum": 1, "maximum": 5000}}, "additionalProperties": True}, "output_schema": DEFAULT_OUTPUT_SCHEMA},
     },
     {
         "tool_name": "read_repo",
@@ -92,7 +94,7 @@ BUILTIN_TOOLS: list[dict] = [
         "task_types": ["code_fix"],
         "requires_approval": False,
         "risk_level": "low",
-        "metadata": {"source": "builtin"},
+        "metadata": {"source": "builtin", "mcp_server_id": "mcp-core-local", "input_schema": {"type": "object", "properties": {"repo_path": {"type": "string", "maxLength": 512, "x-scan-profile": ["path", "shell"]}, "ref": {"type": "string", "maxLength": 128}}, "additionalProperties": True}, "output_schema": DEFAULT_OUTPUT_SCHEMA},
     },
     {
         "tool_name": "write_patch",
@@ -101,7 +103,7 @@ BUILTIN_TOOLS: list[dict] = [
         "task_types": ["code_fix"],
         "requires_approval": False,
         "risk_level": "medium",
-        "metadata": {"source": "builtin"},
+        "metadata": {"source": "builtin", "mcp_server_id": "mcp-core-local", "input_schema": {"type": "object", "required": ["file_path", "patch_diff"], "properties": {"file_path": {"type": "string", "minLength": 1, "maxLength": 512, "x-scan-profile": ["path"]}, "patch_diff": {"type": "string", "maxLength": 200000, "x-scan-profile": "none"}}, "additionalProperties": False}, "output_schema": DEFAULT_OUTPUT_SCHEMA},
     },
     {
         "tool_name": "run_tests",
@@ -110,7 +112,7 @@ BUILTIN_TOOLS: list[dict] = [
         "task_types": ["code_fix"],
         "requires_approval": False,
         "risk_level": "low",
-        "metadata": {"source": "builtin"},
+        "metadata": {"source": "builtin", "mcp_server_id": "mcp-core-local", "input_schema": {"type": "object", "properties": {"test_path": {"type": "string", "maxLength": 512, "x-scan-profile": ["path", "shell"]}}, "additionalProperties": True}, "output_schema": DEFAULT_OUTPUT_SCHEMA},
     },
     {
         "tool_name": "query_data",
@@ -119,7 +121,7 @@ BUILTIN_TOOLS: list[dict] = [
         "task_types": ["data_query"],
         "requires_approval": False,
         "risk_level": "medium",
-        "metadata": {"source": "builtin"},
+        "metadata": {"source": "builtin", "mcp_server_id": "mcp-data-verified", "input_schema": {"type": "object", "required": ["query"], "properties": {"query": {"type": "string", "minLength": 1, "maxLength": 10000, "x-scan-profile": ["sql_destructive"]}, "limit": {"type": "integer", "minimum": 1, "maximum": 1000}, "table": {"type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9_.]+$"}, "api_key": {"type": "string", "maxLength": 512, "x-sensitive": True}}, "additionalProperties": False}, "output_schema": DEFAULT_OUTPUT_SCHEMA},
     },
     {
         "tool_name": "notify_operator",
@@ -128,7 +130,7 @@ BUILTIN_TOOLS: list[dict] = [
         "task_types": ["workflow"],
         "requires_approval": False,
         "risk_level": "low",
-        "metadata": {"source": "builtin"},
+        "metadata": {"source": "builtin", "mcp_server_id": "mcp-core-local", "input_schema": {"type": "object", "properties": {"message": {"type": "string", "maxLength": 4000, "x-scan-profile": "none"}, "channel": {"type": "string", "maxLength": 128}}, "additionalProperties": True}, "output_schema": DEFAULT_OUTPUT_SCHEMA},
     },
     {
         "tool_name": "deploy_service",
@@ -137,7 +139,7 @@ BUILTIN_TOOLS: list[dict] = [
         "task_types": ["workflow"],
         "requires_approval": True,
         "risk_level": "high",
-        "metadata": {"source": "builtin"},
+        "metadata": {"source": "builtin", "mcp_server_id": "mcp-deploy-verified", "input_schema": {"type": "object", "properties": {"service": {"type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9_.-]+$"}, "version": {"type": "string", "maxLength": 64}}, "additionalProperties": True}, "output_schema": DEFAULT_OUTPUT_SCHEMA},
     },
 ]
 
@@ -159,6 +161,14 @@ class ControlPlanePlanner:
         tool_map = {tool["tool_name"]: tool for tool in (tools or BUILTIN_TOOLS)}
         selected_tools: list[dict] = []
         approval_gates: list[dict] = []
+        gateway = dict((request.metadata or {}).get("mcp_gateway") or {})
+        gateway_servers = dict(gateway.get("servers") or {})
+        tool_mcp_map = dict(gateway.get("tool_mcp_map") or {}) or build_tool_mcp_map(
+            [name for name in requested_tools if name in tool_map],
+            list(tool_map.values()),
+        )
+        schema_validation = dict(gateway.get("schema_validation") or {})
+        redacted_fields = dict(gateway.get("redacted_fields") or {})
 
         for tool_name in requested_tools:
             tool = tool_map.get(tool_name)
@@ -180,13 +190,22 @@ class ControlPlanePlanner:
                     }
                 )
                 continue
-            selected_tools.append(
-                {
-                    "name": tool["tool_name"],
-                    "risk_level": tool.get("risk_level", "low"),
-                    "requires_approval": bool(tool.get("requires_approval", False)),
-                }
-            )
+            server_id = tool_mcp_map.get(tool_name) or str((tool.get("metadata") or {}).get("mcp_server_id") or "mcp-core-local")
+            server_info = dict(gateway_servers.get(server_id) or {})
+            selected_entry = {
+                "name": tool["tool_name"],
+                "risk_level": tool.get("risk_level", "low"),
+                "requires_approval": bool(tool.get("requires_approval", False)),
+                "mcp_server_id": server_id,
+                "mcp_trust_tier": str(server_info.get("trust_tier", "")),
+                "mcp_transport": str(server_info.get("transport", "")),
+                "schema_validation": str(schema_validation.get(tool_name, "skipped_no_args")),
+            }
+            if tool_name in (request.tool_arguments or {}):
+                selected_entry["sanitized_arguments"] = request.tool_arguments[tool_name]
+            if redacted_fields.get(tool_name):
+                selected_entry["redacted_fields"] = list(redacted_fields[tool_name])
+            selected_tools.append(selected_entry)
             if tool.get("requires_approval"):
                 approval_gates.append(
                     {
@@ -195,6 +214,33 @@ class ControlPlanePlanner:
                         "reason": f"Tool {tool_name} requires approval before execution.",
                     }
                 )
+
+        mcp_flags = [str(flag) for flag in (gateway.get("flags") or [])]
+        gate_specs = (
+            ("mcp_untrusted_server:", "mcp_trust_gate", "MCP server {server} is untrusted and requires approval."),
+            ("mcp_external_network_violation:", "mcp_network_gate", "MCP server {server} uses an external network while no_external_network=True."),
+            ("mcp_server_circuit_breaker_open:", "mcp_breaker_gate", "MCP server {server} circuit breaker is open."),
+        )
+        for prefix, gate_type, template in gate_specs:
+            for flag in mcp_flags:
+                if flag.startswith(prefix):
+                    server = flag.split(":", 1)[1]
+                    approval_gates.append(
+                        {"gate_type": gate_type, "status": "pending", "mcp_server_id": server, "reason": template.format(server=server)}
+                    )
+        tool_gate_tools = {str(t["name"]) for t in selected_tools if t.get("requires_approval")}
+        for server in gateway.get("approval_servers") or []:
+            served_tools = [name for name, sid in tool_mcp_map.items() if sid == server]
+            if served_tools and all(name in tool_gate_tools for name in served_tools):
+                continue
+            approval_gates.append(
+                {
+                    "gate_type": "mcp_trust_gate",
+                    "status": "pending",
+                    "mcp_server_id": server,
+                    "reason": f"MCP server {server} requires approval before execution.",
+                }
+            )
 
         meta = dict(request.metadata or {})
         routed_provider = str(meta.get("provider") or "internal").strip() or "internal"
@@ -213,6 +259,13 @@ class ControlPlanePlanner:
             "project_id": routed_project_id,
             "allocation": allocation,
             "routing_reason": f"{FINOPS_CALCULATION_VERSION.upper()} deterministic route for {request.task_type} ({routed_provider}/{routed_model}).",
+        }
+        selected_mcp = {str(t["name"]): str(t["mcp_server_id"]) for t in selected_tools}
+        mcp_servers = list(dict.fromkeys(selected_mcp.values()))
+        model_route["mcp_route"] = {
+            "primary_mcp_server_id": mcp_servers[0] if mcp_servers else "mcp-core-local",
+            "mcp_servers": mcp_servers,
+            "tool_mcp_map": selected_mcp,
         }
         if attribution_warnings:
             model_route["attribution_warnings"] = attribution_warnings
@@ -386,7 +439,13 @@ async def create_workflow_definition(
 
 
 async def list_tool_definitions(session: AsyncSession) -> list[dict]:
-    rows = list((await session.scalars(select(ToolDefinition))).all())
+    rows = list(
+        (
+            await session.scalars(
+                select(ToolDefinition).where(ToolDefinition.tool_name.not_like(f"{MCP_SERVER_TOOL_PREFIX}%"))
+            )
+        ).all()
+    )
     custom = [tool_to_dict(row) for row in rows]
     names = {item["tool_name"] for item in custom}
     return custom + [item for item in BUILTIN_TOOLS if item["tool_name"] not in names]
@@ -403,6 +462,8 @@ async def create_tool_definition(
     risk_level: str,
     metadata: dict,
 ) -> ToolDefinition:
+    if tool_name.strip().startswith(MCP_SERVER_TOOL_PREFIX):
+        raise ValueError(f"tool_name must not start with reserved prefix '{MCP_SERVER_TOOL_PREFIX}'.")
     existing = await session.scalar(select(ToolDefinition).where(ToolDefinition.tool_name == tool_name))
     if existing is not None:
         existing.display_name = display_name

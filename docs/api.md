@@ -1,6 +1,6 @@
 # REST API Specification
 
-> **API Version**: `v1.5.6`
+> **API Version**: `v1.5.7`
 > **Base Path**: `/v1`  
 > **Interactive Documentation**: `http://localhost:8000/docs` (Swagger UI) or `http://localhost:8000/redoc` (ReDoc)
 
@@ -151,6 +151,22 @@ All REST API endpoints are exposed under the `/v1` route prefix. The service ret
 | `POST` | `/v1/worker/dlq/{run_id}/requeue` | Requeues a DLQ run (`status="queued"`) and republishes `agent.requested` | `operator`, `admin` |
 | `POST` | `/v1/worker/dlq/{run_id}/resolve` | Marks DLQ worker attempts as `dlq_resolved` to clear readiness gate | `operator`, `admin` |
 
+### Safe MCP Gateway (`v1.5.7`)
+
+| Method | Path | Description | Access Role |
+| --- | --- | --- | --- |
+| `GET` | `/v1/control-plane/mcp-servers` | Lists builtin and custom MCP servers with trust tier, transport, external-network flag, quota and `breaker_open` | `viewer`, `operator`, `admin` |
+| `POST` | `/v1/control-plane/mcp-servers` | Upserts an MCP server (`mcp_server_id` `^[a-zA-Z0-9._-]{2,113}$`, `transport`, `endpoint`, `trust_tier`, `is_external_network` auto-detected from the parsed hostname when omitted, `status`, `requires_approval`, `risk_level`, `quota_per_minute`, `allowed_tenants`); records `GovernanceEvent(mcp_server.upserted)` | `admin` |
+| `POST` | `/v1/control-plane/mcp-servers/{mcp_server_id}/breaker/open` | Opens the MCP server breaker (`circuit:mcp:{id}`); runs using its tools escalate to `awaiting_approval` | `admin` |
+| `POST` | `/v1/control-plane/mcp-servers/{mcp_server_id}/breaker/close` | Closes the MCP server breaker | `admin` |
+| `POST` | `/v1/control-plane/tools/{tool_name}/validate-arguments` | Validates `{"arguments": {...}}` against the tool `input_schema` and scan profiles; returns `valid`, `errors`, `injection_flags`, `sanitized_arguments`, `redacted_fields` | `viewer`, `operator`, `admin` |
+
+**`AgentRequest.tool_arguments`** (optional, `dict[tool_name, dict]`, also read from `metadata.tool_arguments`): validated and redacted before persistence. Arguments for tools not in `allowed_tools`, nesting deeper than `MCP_TOOL_ARGUMENTS_MAX_DEPTH`, or payloads larger than `MCP_TOOL_ARGUMENTS_MAX_BYTES` raise `mcp_tool_schema_violation:{tool}`.
+
+**MCP policy flags**: hard-deny (`status="denied"`, no cost/lease) — `mcp_server_blocked:{id}`, `mcp_tenant_not_allowed:{id}`, `mcp_argument_injection_detected:{tool}`, `mcp_tool_schema_violation:{tool}` (when `schema_enforcement="deny"`); escalate (`awaiting_approval`) — `mcp_untrusted_server:{id}`, `mcp_external_network_violation:{id}`, `mcp_server_circuit_breaker_open:{id}`, `mcp_tool_schema_violation:{tool}` (when `schema_enforcement="escalate"`).
+
+**Cost endpoints**: `GET /v1/cost/tenants/{tenant_id}` and `/export` accept `mcp_server_id`; responses add `mcp_server_breakdown` (and `top_mcp_servers` on the summary); `GET /v1/cost/runs/{run_id}` adds `mcp_server_breakdown`; `CostEventRecord` adds `mcp_server_id` and `tool_id`. `POST /v1/budgets` accepts `scope="mcp_server"`.
+
 ---
 
 ## Common Error Codes
@@ -163,4 +179,6 @@ All REST API endpoints are exposed under the `/v1` route prefix. The service ret
 | `404` | `not_found` | Resource does not exist |
 | `422` | `validation_error` | Payload failed Pydantic schema validation |
 | `429` | `quota_exceeded` | Tenant exceeded request limit or high-risk rate limit |
+| `429` | `mcp_server_quota_exceeded` | Per-MCP-server call quota exceeded (`quota_per_minute` or `MCP_SERVER_CALL_LIMIT_PER_MINUTE`) |
+| `422` | `validation_error` (reserved prefix) | `tool_name` starting with `__mcp_server__:` or `mcp_server_id` longer than 113 characters |
 | `500` | `internal_error` | Internal server or unhandled exception |

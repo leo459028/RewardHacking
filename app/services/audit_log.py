@@ -389,6 +389,7 @@ async def governance_summary(
                         "high_risk_quota_exceeded",
                         "user_request_quota_exceeded",
                         "tool_quota_exceeded",
+                        "mcp_server_quota_exceeded",
                     ]
                 ),
             )

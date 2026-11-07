@@ -39,14 +39,23 @@ class AgentOrchestrator:
         self,
         request: AgentRequest,
         disabled_tools: list[str] | None,
+        mcp_context: object | None = None,
     ) -> tuple[AgentRequest, PolicyDecision, PromptAnalysis]:
         analysis = analyze_prompt(request.prompt)
         cleaned_request = request.model_copy(update={"prompt": analysis.cleaned_prompt})
-        policy = self.policy_engine.evaluate(
-            request=cleaned_request,
-            prompt_flags=analysis.flags,
-            disabled_tools=disabled_tools,
-        )
+        if mcp_context is not None:
+            policy = self.policy_engine.evaluate(
+                request=cleaned_request,
+                prompt_flags=analysis.flags,
+                disabled_tools=disabled_tools,
+                mcp_context=mcp_context,
+            )
+        else:
+            policy = self.policy_engine.evaluate(
+                request=cleaned_request,
+                prompt_flags=analysis.flags,
+                disabled_tools=disabled_tools,
+            )
         for flag in sorted(set(analysis.flags)):
             PROMPT_GUARD_FLAGS_TOTAL.labels(flag=flag).inc()
         return cleaned_request, policy, analysis
@@ -101,10 +110,11 @@ class AgentOrchestrator:
         request: AgentRequest,
         *,
         disabled_tools: list[str] | None = None,
+        mcp_context: object | None = None,
     ) -> OrchestrationResult:
         run_id = str(uuid4())
         trace_id = str(uuid4())
-        _cleaned_request, policy, prompt_analysis = self._evaluate_policy(request, disabled_tools)
+        _cleaned_request, policy, prompt_analysis = self._evaluate_policy(request, disabled_tools, mcp_context)
 
         if policy.decision.value == "deny":
             status = "denied"
@@ -150,10 +160,12 @@ class AgentOrchestrator:
         *,
         run_id: str | None = None,
         disabled_tools: list[str] | None = None,
+        mcp_context: object | None = None,
+        allowed_tool_map: dict[str, dict] | None = None,
     ) -> OrchestrationResult:
         run_id = run_id or str(uuid4())
         trace_id = str(uuid4())
-        cleaned_request, policy, prompt_analysis = self._evaluate_policy(request, disabled_tools)
+        cleaned_request, policy, prompt_analysis = self._evaluate_policy(request, disabled_tools, mcp_context)
 
         if policy.decision.value == "deny" or policy.requires_human_review:
             status = "denied" if policy.decision.value == "deny" else "awaiting_approval"
@@ -177,7 +189,10 @@ class AgentOrchestrator:
                 ),
             )
 
-        execution: ToolExecutionResult = self.executor.execute(cleaned_request)
+        if allowed_tool_map is not None:
+            execution: ToolExecutionResult = self.executor.execute(cleaned_request, allowed_tool_map=allowed_tool_map)
+        else:
+            execution = self.executor.execute(cleaned_request)
         evaluation = self.evaluator.evaluate(cleaned_request, execution.output, policy.flags)
         evaluation.run_id = run_id
 

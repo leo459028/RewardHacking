@@ -1,7 +1,7 @@
 # Production Runbooks & Incident Response
 
-> **Runbook Version**: `v1.5.6`
-> **Previous Versions**: `v1.5.5`, `v1.5.4`, `v1.5.3`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.0.0`
+> **Runbook Version**: `v1.5.7`
+> **Previous Versions**: `v1.5.6`, `v1.5.5`, `v1.5.4`, `v1.5.3`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.0.0`
 
 This operational runbook provides triage instructions, troubleshooting procedures, and incident response playbooks for operators maintaining the **RewardHacking** platform.
 
@@ -29,6 +29,13 @@ docker compose logs --tail=100 -f worker
 ---
 
 ## Operational Incident Playbooks
+
+### MCP Gateway: Breaker, Blocked Server, Schema Violation & Injection (`v1.5.7`)
+- **Open MCP breaker**: `mcp_gateway_registry_health` shows `warn` and runs report `mcp_server_circuit_breaker_open:{id}`. Investigate the server, then reset via `/dashboard/control-plane` (**Reset MCP Breaker**) or `POST /v1/control-plane/mcp-servers/{id}/breaker/close`.
+- **Compromised server**: set `trust_tier="blocked"` (or `status="disabled"`) with `POST /v1/control-plane/mcp-servers`; new submissions and already-queued runs are denied (worker re-check) and token leases are released.
+- **Schema violations**: review `GovernanceEvent(event_type="mcp_schema_violation")` details (`errors`, `schema_enforcement`); fix the client payload or the tool `input_schema`. Use `POST /v1/control-plane/tools/{tool}/validate-arguments` to reproduce.
+- **Injection incidents**: `Incident(code="mcp_argument_injection", severity="high")` blocks the release gate (`blocking_incidents`) until triaged; inspect the redacted `request_payload.tool_arguments` and `metadata.mcp_gateway`.
+- **False positives**: adjust the field `x-scan-profile` (e.g. `sql_destructive` or `none` for free-text) instead of disabling scanning globally.
 
 ### 1. API Gateway Startup Failure
 - **Symptoms**: Container crashes on startup; `/v1/healthz` returns connection refused; traceback in logs.

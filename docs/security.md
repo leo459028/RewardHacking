@@ -1,7 +1,7 @@
 # Threat Modeling & Security Design
 
-> **Security Document Version**: `v1.5.2`  
-> **Previous Versions**: `v1.5.1`, `v1.5.0`, `v1.1.0`
+> **Security Document Version**: `v1.5.7`  
+> **Previous Versions**: `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.1.0`
 
 The security mission of **RewardHacking** is to mitigate the critical risks of autonomous AI agent **Reward Hacking (Specification Gaming)**, prompt injection, and unauthorized tool misuse. It establishes layered defense-in-depth perimeters ensuring high-risk behaviors are intercepted, reviewed, audited, and mathematically accountable.
 
@@ -78,6 +78,19 @@ Risk scores range deterministically from `0.0` to `1.0`:
 - Excessive spending triggers budget violations logged directly in the audit trail.
 
 ---
+
+## Safe MCP Gateway Threat Model (`v1.5.7`)
+
+| Threat | Control |
+| --- | --- |
+| Schema smuggling / mass assignment through tool arguments | `input_schema` with `additionalProperties: false`, required fields, type/length/range/enum/pattern checks; `mcp_tool_schema_violation` (hard deny by default) |
+| Path traversal, shell or destructive SQL injection in arguments | Per-field `x-scan-profile` scanning (`path`, `shell`, `sql_destructive`, `sql`); `mcp_argument_injection_detected` hard deny + high-severity incident |
+| Credential / PII exfiltration via arguments and audit logs | Recursive key-name, credential-pattern and email redaction **before** persistence (`AgentRun`, `ExecutionPlan`, `ToolExecution`, checkpoints, replay bundles, Kafka events) |
+| Untrusted third-party MCP servers | `trust_tier="untrusted"` forces approval (+0.20 risk); `blocked` / `disabled` / tenant not in `allowed_tenants` hard-deny |
+| Network isolation bypass via remote MCP transports | Hostname-parsed `is_external_network` (unparseable endpoints fail closed) vs `no_external_network=True` → `mcp_external_network_violation` approval gate |
+| Registry spoofing | Reserved `__mcp_server__:` namespace rejected for tools (`422`); client-supplied `metadata.mcp_gateway` is overwritten server-side |
+| Queue-time TOCTOU | Worker re-checks blocked / tenant conditions and denies + releases the token lease |
+| Resource exhaustion | Argument depth/size limits, bounded regex evaluation (`maxLength` or 4096 chars), per-MCP-server quotas |
 
 ## Known Boundaries & Limitations
 

@@ -1,6 +1,6 @@
 # Observability, Metrics & SLOs
 
-> **Observability Baseline**: `v1.5.6`
+> **Observability Baseline**: `v1.5.7`
 > **Metrics Engine**: Prometheus Client  
 > **Endpoint**: `GET /v1/metrics`
 
@@ -36,6 +36,10 @@ RewardHacking provides deep observability across API gateways, background worker
 | `agent_finops_token_leases_total` | Counter | `tenant_id`, `action` | Dynamic Token Broker lease lifecycle transitions (`acquired`, `settled`, `released`, `expired`) |
 | `agent_quota_rejections_total` | Counter | `tenant_id`, `quota_scope` | Total HTTP 429 rate-limit rejections partitioned by scope (`tenant_minute`, `tenant_high_risk_hour`, `user_minute`, `tool_minute`) |
 | `agent_tool_breaker_transitions_total` | Counter | `tool_name`, `state`, `trigger` | Tool circuit breaker state transitions (`open`, `closed`; trigger `auto_worker_failure`, `manual`) |
+
+| `agent_mcp_gateway_requests_total` | Counter | `mcp_server_id`, `transport`, `trust_tier`, `decision` | `v1.5.7` Safe MCP Gateway preflight decisions per server (`allowed`, `escalated`, `denied`) |
+| `agent_mcp_schema_violations_total` | Counter | `tool_name`, `mcp_server_id`, `violation_type` | Tool argument violations (`schema_violation`, `injection`, `undeclared_tool`, `payload_too_large`, `type_error`) |
+| `agent_mcp_argument_redactions_total` | Counter | `tool_name`, `redaction_type` | Sensitive argument redactions (`field_name`, `value_pattern`, `pii_email`) |
 
 ---
 

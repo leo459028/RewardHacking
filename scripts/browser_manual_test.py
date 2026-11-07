@@ -90,7 +90,7 @@ def run_manual_test_suite(
         context = browser.new_context(viewport={"width": 1440, "height": 900})
         page = context.new_page()
 
-        page.on("console", lambda msg: console_errors.append(msg.text) if msg.type in ("error", "warning") else None)
+        page.on("console", lambda msg: console_errors.append(f"{msg.type}: {msg.text} @ {page.url}") if msg.type in ("error", "warning") else None)
         page.on("pageerror", lambda err: page_errors.append(str(err)))
         page.on(
             "response",
@@ -292,7 +292,7 @@ def run_manual_test_suite(
         time.sleep(1.5)
         page.reload()
         fx_detail_html = page.content()
-        assert "V1.5.6 FinOps ledger" in fx_detail_html
+        assert "V1.5.7 FinOps ledger" in fx_detail_html
         assert "Token Lease" in fx_detail_html
         assert "cc-ai-core" in fx_detail_html
         assert "org-tw" in fx_detail_html
@@ -430,7 +430,8 @@ def run_manual_test_suite(
         page.fill(f'{gov_tenant_form} input[name="display_name"]', "V1.5.6 Governance Tenant")
         page.fill(f'{gov_tenant_form} input[name="request_limit_per_minute"]', "60")
         page.fill(f'{gov_tenant_form} input[name="high_risk_limit_per_hour"]', "10")
-        page.click(f'{gov_tenant_form} button:has-text("Save Tenant")')
+        with page.expect_navigation():
+            page.click(f'{gov_tenant_form} button:has-text("Save Tenant")')
         page.wait_for_load_state("networkidle")
         assert "V1.5.6 Governance Tenant" in page.content()
 
@@ -449,13 +450,13 @@ def run_manual_test_suite(
 
         page.goto(f"{base_url}/dashboard/control-plane")
         wf_form = 'form[action="/dashboard/control-plane/workflows"]'
-        page.fill(f'{wf_form} input[name="workflow_id"]', "analysis-v156")
+        page.fill(f'{wf_form} input[name="workflow_id"]', "analysis-v157")
         page.fill(f'{wf_form} input[name="version"]', "v1")
         page.select_option(f'{wf_form} select[name="task_type"]', "analysis")
-        page.fill(f'{wf_form} input[name="display_name"]', "Analysis V1.5.6 Workflow")
+        page.fill(f'{wf_form} input[name="display_name"]', "Analysis V1.5.7 Workflow")
         page.click(f'{wf_form} button:has-text("Save Workflow")')
         page.wait_for_load_state("networkidle")
-        assert "analysis-v156" in page.content()
+        assert "analysis-v157" in page.content()
 
         tool_form = 'form[action="/dashboard/control-plane/tools"]'
         page.fill(f'{tool_form} input[name="tool_name"]', "qa_custom_tool")
@@ -476,6 +477,100 @@ def run_manual_test_suite(
         page.wait_for_load_state("networkidle")
         print("[Scenario 4.1b] Control Plane interactive portal (Save Workflow, Save Tool, Trip & Reset Breaker) verified")
 
+        # Scenario 5 (v1.5.7): Safe MCP Gateway registry, MCP breaker, schema & redaction
+        page.goto(f"{base_url}/dashboard/control-plane")
+        mcp_form = 'form[action="/dashboard/control-plane/mcp-servers"]'
+        page.fill(f'{mcp_form} input[name="mcp_server_id"]', "mcp-qa-v157")
+        page.fill(f'{mcp_form} input[name="display_name"]', "QA Verified MCP Server")
+        page.select_option(f'{mcp_form} select[name="transport"]', "sse")
+        page.fill(f'{mcp_form} input[name="endpoint"]', "https://mcp.internal.local/qa")
+        page.select_option(f'{mcp_form} select[name="trust_tier"]', "verified")
+        page.fill(f'{mcp_form} input[name="quota_per_minute"]', "45")
+        page.click(f'{mcp_form} button:has-text("Save MCP Server")')
+        page.wait_for_load_state("networkidle")
+        mcp_row = page.locator('tr[data-mcp-server="mcp-qa-v157"]')
+        assert mcp_row.count() == 1, "mcp-qa-v157 row missing from MCP Server Registry"
+        row_text = mcp_row.inner_text()
+        assert "sse" in row_text and "verified" in row_text and "45" in row_text
+        print("[Scenario 5.1] Registered MCP server mcp-qa-v157 (sse / verified / 45) via /dashboard/control-plane")
+
+        page.click('form[action="/dashboard/control-plane/mcp-servers/mcp-qa-v157/breaker/open"] button')
+        page.wait_for_load_state("networkidle")
+        assert "OPEN" in page.locator('tr[data-mcp-server="mcp-qa-v157"] .mcp-breaker-state').inner_text()
+        page.click('form[action="/dashboard/control-plane/mcp-servers/mcp-qa-v157/breaker/close"] button')
+        page.wait_for_load_state("networkidle")
+        assert "CLOSED" in page.locator('tr[data-mcp-server="mcp-qa-v157"] .mcp-breaker-state').inner_text()
+        print("[Scenario 5.2] Trip MCP Breaker -> OPEN, Reset MCP Breaker -> CLOSED for mcp-qa-v157")
+
+        page.fill(f'{tool_form} input[name="tool_name"]', "qa_mcp_tool")
+        page.fill(f'{tool_form} input[name="display_name"]', "QA MCP Tool")
+        page.fill(f'{tool_form} input[name="task_types"]', "analysis")
+        page.fill(f'{tool_form} input[name="quota_per_minute"]', "60")
+        page.fill(f'{tool_form} input[name="mcp_server_id"]', "mcp-qa-v157")
+        page.fill(f'{tool_form} input[name="required_args"]', "query")
+        page.fill(f'{tool_form} input[name="sensitive_args"]', "api_token")
+        page.click(f'{tool_form} button:has-text("Save Tool")')
+        page.wait_for_load_state("networkidle")
+        cp_html = page.content()
+        assert "qa_mcp_tool" in cp_html and "redact: api_token" in cp_html
+        print("[Scenario 5.3] Registered qa_mcp_tool bound to mcp-qa-v157 with required=query, redact=api_token")
+
+        page.goto(f"{base_url}/dashboard/playground")
+        page.fill('input[name="tenant_id"]', "finops-qa-tenant")
+        page.select_option('select[name="task_type"]', "code_fix")
+        page.fill('input[name="allowed_tools"]', "read_repo")
+        page.fill(
+            'textarea[name="tool_arguments"]',
+            '{"read_repo": {"repo_path": "app/services", "api_key": "sk-live-secret999999"}}',
+        )
+        page.click('button:has-text("Submit Run")')
+        page.wait_for_load_state("networkidle")
+        assert "sk-live-secret999999" not in page.content()
+        page.click('a:has-text("Open run detail")')
+        page.wait_for_load_state("networkidle")
+        mcp_detail_html = page.content()
+        mcp_run_id = page.url.rstrip("/").split("/")[-1]
+        assert "[REDACTED]" in mcp_detail_html
+        assert "sk-live-secret999999" not in mcp_detail_html
+        assert "MCP Server Breakdown" in mcp_detail_html
+        print(f"[Scenario 5.4] Playground read_repo api_key redacted to [REDACTED] in run {mcp_run_id}")
+
+        page.goto(f"{base_url}/dashboard/playground")
+        page.fill('input[name="tenant_id"]', "finops-qa-tenant")
+        page.select_option('select[name="task_type"]', "analysis")
+        page.fill('input[name="allowed_tools"]', "qa_mcp_tool")
+        page.fill(
+            'textarea[name="tool_arguments"]',
+            '{"qa_mcp_tool": {"query": "test", "api_token": "secret-xyz"}}',
+        )
+        page.click('button:has-text("Submit Run")')
+        page.wait_for_load_state("networkidle")
+        assert "mcp-qa-v157" in page.content() and "secret-xyz" not in page.content()
+        page.click('a:has-text("Open run detail")')
+        page.wait_for_load_state("networkidle")
+        qa_detail_html = page.content()
+        qa_run_id = page.url.rstrip("/").split("/")[-1]
+        assert "secret-xyz" not in qa_detail_html and "[REDACTED]" in qa_detail_html
+        assert "mcp-qa-v157" in qa_detail_html
+        print(f"[Scenario 5.5] qa_mcp_tool api_token redacted and attributed to mcp-qa-v157 in run {qa_run_id}")
+
+        page.goto(f"{base_url}/dashboard/costs?tenant_id=finops-qa-tenant")
+        mcp_costs_html = page.content()
+        assert "V1.5.7 Agent FinOps Core" in mcp_costs_html
+        assert "MCP Server Cost Breakdown" in mcp_costs_html
+        assert "mcp-core-local" in mcp_costs_html
+        assert "0E-8" not in mcp_costs_html
+        page.goto(f"{base_url}/dashboard/costs?tenant_id=finops-qa-tenant&mcp_server_id=mcp-core-local")
+        assert "0E-8" not in page.content()
+        csv_resp = page.request.get(
+            f"{base_url}/dashboard/costs/export?tenant_id=finops-qa-tenant&format=csv&mcp_server_id=mcp-core-local"
+        )
+        assert csv_resp.status == 200
+        csv_text = csv_resp.text()
+        assert csv_text.splitlines()[0].endswith("mcp_server_id,tool_id")
+        assert "0E-8" not in csv_text
+        print("[Scenario 5.6] Costs MCP Server Cost Breakdown, mcp_server_id filter & CSV export (mcp_server_id,tool_id) verified")
+
         page.goto(f"{base_url}/dashboard/observability")
         obs_html = page.content()
         assert "FinOps" in obs_html
@@ -493,28 +588,32 @@ def run_manual_test_suite(
         assert "agent_finops_token_leases_total" in metrics_text
         assert "agent_quota_decisions_total" in metrics_text
         assert "agent_tool_breaker_events_total" in metrics_text
-        print("[Scenario 4.2] /v1/metrics verified in browser (including v1.5.6 burn-rate, lease, quota & breaker counters)")
+        assert "agent_mcp_gateway_requests_total" in metrics_text
+        assert "agent_mcp_schema_violations_total" in metrics_text
+        assert "agent_mcp_argument_redactions_total" in metrics_text
+        print("[Scenario 4.2] /v1/metrics verified in browser (including v1.5.7 MCP gateway, schema & redaction counters)")
 
         page.goto(f"{base_url}/dashboard/operations")
         ops_html = page.content()
         assert "finops_pricing_catalog_ready" in ops_html
         assert "finops_open_critical_violations" in ops_html
         assert "finops_burn_rate_health" in ops_html
+        assert "mcp_gateway_registry_health" in ops_html
         release_ver = page.input_value('input[name="release_version"]')
-        assert release_ver == "v1.5.6"
+        assert release_ver == "v1.5.7"
 
         page.select_option('select[name="evidence_type"]', "safety_regression")
         page.select_option('select[name="status"]', "pass")
         page.fill('input[name="reference_url"]', "docs/manual_test.md")
-        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.5.6")
+        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.5.7")
         page.click('button:has-text("Save Evidence")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
         page.click('button:has-text("Create Release Gate Snapshot")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
-        assert "v1.5.6" in page.content()
-        print("[Scenario 4.3] Operations evidence saved & v1.5.6 Release Gate snapshot created via browser")
+        assert "v1.5.7" in page.content()
+        print("[Scenario 4.3] Operations evidence saved & v1.5.7 Release Gate snapshot created via browser")
 
         # 6. Check all primary navigation tabs for 0E-8 and HTTP 200
         nav_routes = [
@@ -540,6 +639,10 @@ def run_manual_test_suite(
 
         print(f"[Section 6 Checklist] All {len(nav_routes)} navigation tabs returned HTTP 200 with 0 '0E-8' artifacts")
         print(f"[Section 6 Checklist] Console errors/warnings: {len(console_errors)}")
+        for msg in console_errors[:10]:
+            print(f"  [console] {msg[:300]}")
+        for req in failed_requests[:10]:
+            print(f"  [http>=400] {req[:300]}")
         print(f"[Section 6 Checklist] Page errors: {len(page_errors)}")
         print(f"[Section 6 Checklist] Failed HTTP requests (>=400): {len(failed_requests)}")
 

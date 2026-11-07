@@ -5,12 +5,13 @@
   <div>
     <h1>Costs</h1>
     <div class="title-note">Tenant Cost Summary</div>
-    <div class="muted">V1.5.6 Agent FinOps Core / Burn-Rate Forecasting, Dynamic Token Broker &amp; Settled Ledger</div>
+    <div class="muted">V1.5.7 Agent FinOps Core / Safe MCP Gateway, Per-MCP Attribution, Burn-Rate &amp; Token Broker</div>
   </div>
   <form method="get" action="/dashboard/costs" class="inline-form">
     <input name="tenant_id" value="{{ tenant_id }}" placeholder="tenant_id">
     <input name="project_id" value="{{ project_id }}" placeholder="project_id">
     <input name="cost_center" value="{{ cost_center }}" placeholder="cost_center">
+    <input name="mcp_server_id" value="{{ mcp_server_id }}" placeholder="mcp_server_id">
     <select name="resolution_status">
       <option value="" {% if not resolution_status %}selected{% endif %}>All Violations</option>
       <option value="open" {% if resolution_status == "open" %}selected{% endif %}>open</option>
@@ -19,8 +20,8 @@
       <option value="ignored" {% if resolution_status == "ignored" %}selected{% endif %}>ignored</option>
     </select>
     <button class="button" type="submit">Filter</button>
-    <a class="button secondary" href="/dashboard/costs/export?tenant_id={{ tenant_id }}&project_id={{ project_id }}&cost_center={{ cost_center }}&format=csv">Export CSV</a>
-    <a class="button secondary" href="/dashboard/costs/export?tenant_id={{ tenant_id }}&project_id={{ project_id }}&cost_center={{ cost_center }}&format=json">Export JSON</a>
+    <a class="button secondary" href="/dashboard/costs/export?tenant_id={{ tenant_id }}&project_id={{ project_id }}&cost_center={{ cost_center }}&mcp_server_id={{ mcp_server_id }}&format=csv">Export CSV</a>
+    <a class="button secondary" href="/dashboard/costs/export?tenant_id={{ tenant_id }}&project_id={{ project_id }}&cost_center={{ cost_center }}&mcp_server_id={{ mcp_server_id }}&format=json">Export JSON</a>
     <a class="button secondary" href="/dashboard/admin/finops/budgets">Budget Policies</a>
   </form>
 </div>
@@ -102,6 +103,35 @@
     {% endfor %}
     </tbody>
   </table>
+</section>
+
+<section class="detail-grid">
+  <div class="panel">
+    <h2>MCP Server Cost Breakdown <span class="heading-note">MCP 伺服器成本歸屬</span></h2>
+    <table id="mcp-server-cost-breakdown">
+      <thead><tr><th>MCP Server</th><th>Pre-Tax Base Cost</th></tr></thead>
+      <tbody>
+      {% for item in summary.top_mcp_servers %}
+        <tr><td>{{ item.mcp_server_id }}</td><td>{{ item.cost|decimal_plain }} {{ summary.base_currency }}</td></tr>
+      {% else %}
+        <tr><td colspan="2" class="muted">No MCP-attributed tool cost recorded.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="panel">
+    <h2>Top Tools <span class="heading-note">工具成本排行</span></h2>
+    <table id="top-tools-breakdown">
+      <thead><tr><th>Tool</th><th>Pre-Tax Base Cost</th></tr></thead>
+      <tbody>
+      {% for item in summary.top_tools %}
+        <tr><td>{{ item.tool_id }}</td><td>{{ item.cost|decimal_plain }} {{ summary.base_currency }}</td></tr>
+      {% else %}
+        <tr><td colspan="2" class="muted">No tool cost recorded.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </section>
 
 <section class="detail-grid">

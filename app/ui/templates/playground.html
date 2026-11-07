@@ -63,6 +63,10 @@
     <label style="margin-top: 12px;">Goal
       <input name="goal" value="{{ form.get('goal', 'Summarize the root cause') if form else 'Summarize the root cause' }}">
     </label>
+    <label style="margin-top: 12px;">Tool Arguments (JSON, optional) <span class="heading-note">MCP Schema 驗證與敏感參數遮罩</span>
+      <textarea name="tool_arguments" placeholder='{"read_repo": {"repo_path": "app/services"}}'></textarea>
+    </label>
+    <div class="muted">Arguments are validated against each tool's input schema and sensitive fields are redacted to [REDACTED] before persistence. The raw JSON is never echoed back.</div>
     <label style="margin-top: 12px;">Prompt
       <textarea name="prompt">{{ form.get('prompt', 'Analyze the incident and summarize the likely root cause with verification notes.') if form else 'Analyze the incident and summarize the likely root cause with verification notes.' }}</textarea>
     </label>
@@ -84,6 +88,10 @@
     Risk {{ "%.3f"|format(result.response.risk_score) }}
     <a href="/dashboard/runs/{{ result.response.run_id }}">Open run detail</a>
   </p>
+  {% set mcp_gw = (result.evaluation_summary.get("execution_plan", {}).get("model_route", {}) or {}).get("mcp_route", {}) %}
+  {% if mcp_gw %}
+  <p class="muted">MCP route: primary <strong>{{ mcp_gw.get("primary_mcp_server_id", "") }}</strong> &middot; servers {{ mcp_gw.get("mcp_servers", [])|join(", ") }}</p>
+  {% endif %}
   <pre>{{ result.evaluation_summary|json_pretty }}</pre>
 </section>
 {% endif %}
