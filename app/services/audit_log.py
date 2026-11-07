@@ -15,6 +15,7 @@ from app.models.evaluation_result import EvaluationResultRecord
 from app.models.evaluation_review import EvaluationReview, RunOutcome, TenantEvaluationPolicy  # noqa: F401
 from app.models.finops import BudgetViolation, CostEvent
 from app.models.governance_event import GovernanceEvent
+from app.models.judge import JudgeAssessment, ReviewSamplingDecision  # noqa: F401
 from app.models.incident import Incident
 from app.models.tenant import Tenant, TenantApiKey
 from app.models.tool_execution import ToolExecution

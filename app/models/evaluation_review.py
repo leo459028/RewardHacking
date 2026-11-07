@@ -5,7 +5,7 @@
 - ``TenantEvaluationPolicy``: tenant-level protected-path policy (admin controlled).
 """
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, func
+from sqlalchemy import JSON, Boolean, DateTime, Float, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -68,6 +68,11 @@ class EvaluationReview(Base):
     model_name: Mapped[str] = mapped_column(String(128), index=True, nullable=False, default="")
     finding_labels: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     exported_sample_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    # v1.5.10 advisory judge triage (ordering only; never changes ``priority`` or ``status``)
+    triage_priority: Mapped[str] = mapped_column(String(8), nullable=False, default="")
+    triage_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    triage_source: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    judge_assessment_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     opened_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     decided_at = mapped_column(DateTime(timezone=True), nullable=True)

@@ -47,7 +47,9 @@ def test_v159_migration_is_single_head_after_v158():
         revisions[mod.revision] = mod.down_revision
     referenced = {down for down in revisions.values() if down}
     heads = sorted(set(revisions) - referenced)
-    assert heads == ["202611080001"]
+    # Later releases extend the chain; the single-head assertion lives in the latest release test.
+    assert len(heads) == 1
+    assert "202611080001" in referenced or heads == ["202611080001"]
 
 
 def test_v159_tables_and_columns_created(session_factory):
