@@ -72,6 +72,7 @@ class OpenAICompatibleJudge:
         self.structured_output = profile.structured_output if profile is not None else "json_object"
         self.max_retries = profile.max_retries if profile is not None else 0
         self.strip_reasoning = profile.strip_reasoning if profile is not None else True
+        self.reasoning_effort = profile.reasoning_effort if profile is not None else ""
 
     def version(self) -> str:
         base = f"{self.name}:{self.model or 'unset'}:{prompt_version()}"
@@ -129,6 +130,8 @@ class OpenAICompatibleJudge:
             "temperature": 0,
             "max_tokens": self.max_output_tokens,
         }
+        if self.reasoning_effort:
+            body["reasoning_effort"] = self.reasoning_effort
         if mode == "json_schema":
             body["response_format"] = {
                 "type": "json_schema",

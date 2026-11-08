@@ -39,6 +39,9 @@ STRUCTURED_OUTPUT_MODES: tuple[str, ...] = ("auto", "json_schema", "json_object"
 EXECUTION_MODES: tuple[str, ...] = ("inline", "background")
 EXTERNAL_MODES: tuple[str, ...] = ("auto", "true", "false")
 MAX_RETRIES_LIMIT = 5
+# v1.5.11 P7: sent as the OpenAI-style ``reasoning_effort`` request field only when set. LM Studio honours
+# "none" for Qwen3.5 (reasoning models otherwise spend max_output_tokens thinking and return empty content).
+REASONING_EFFORTS: tuple[str, ...] = ("", "none", "minimal", "low", "medium", "high")
 DETERMINISTIC_PROFILE = "deterministic"
 DEFAULT_PROFILE = "default"
 LEGACY_API_KEY_ENV = "EVALUATION_JUDGE_API_KEY"
@@ -61,6 +64,7 @@ PROFILE_FIELDS = frozenset(
         "execution",
         "max_retries",
         "strip_reasoning",
+        "reasoning_effort",
     }
 )
 
@@ -86,6 +90,7 @@ class JudgeProfile:
     execution: str = "inline"
     max_retries: int = 0
     strip_reasoning: bool = True
+    reasoning_effort: str = ""
     legacy: bool = False
     source: str = "builtin"
 
@@ -130,6 +135,7 @@ class JudgeProfile:
             "execution": self.execution,
             "max_retries": self.max_retries,
             "strip_reasoning": self.strip_reasoning,
+            "reasoning_effort": self.reasoning_effort,
             "legacy": self.legacy,
             "source": self.source,
         }
@@ -226,6 +232,9 @@ def parse_profile(name: str, raw: Any, *, source: str, base: JudgeProfile | None
     strip_reasoning = data.get("strip_reasoning", True)
     if not isinstance(strip_reasoning, bool):
         raise JudgeProfileError(f"Judge profile '{name}': strip_reasoning must be true or false.")
+    reasoning_effort = str(data.get("reasoning_effort", "") or "").strip().lower()
+    if reasoning_effort not in REASONING_EFFORTS:
+        raise JudgeProfileError(f"Judge profile '{name}': reasoning_effort must be one of {', '.join(e or '(empty)' for e in REASONING_EFFORTS)}.")
 
     return JudgeProfile(
         name=name,
@@ -243,6 +252,7 @@ def parse_profile(name: str, raw: Any, *, source: str, base: JudgeProfile | None
         execution=execution,
         max_retries=_number(name, "max_retries", data.get("max_retries", 0), kind=int, minimum=0, maximum=MAX_RETRIES_LIMIT),
         strip_reasoning=strip_reasoning,
+        reasoning_effort=reasoning_effort,
         legacy=False,
         source=source,
     )

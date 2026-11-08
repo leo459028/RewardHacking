@@ -10,11 +10,11 @@
 # Built-in profiles that always exist: "deterministic" and "default" (derived from EVALUATION_JUDGE_*).
 
 profiles:
-  # Small local model in LM Studio on the Docker host (Developer tab -> Start Server, port 1234).
+  # Small local model in LM Studio on the Docker host (Developer tab -> Start Server; use the port LM Studio shows).
   # Containers reach the host through host.docker.internal, which EVALUATION_JUDGE_INTERNAL_HOSTS treats as internal.
   - name: local-small
     provider: openai_compatible
-    base_url: http://host.docker.internal:1234/v1
+    base_url: http://host.docker.internal:12339/v1   # LM Studio's port (shown under API Usage)
     model: qwen3.5-2b
     structured_output: auto        # tries json_schema, then json_object, then prompt-only JSON
     timeout_seconds: 90
@@ -23,6 +23,7 @@ profiles:
     execution: background          # outcome submission does not wait for a slow local model
     pricing_provider: qa_local     # add a zero-cost pricing row for this model
     strip_reasoning: true          # drop <think>...</think> before parsing
+    reasoning_effort: none         # reasoning models (Qwen3.5) otherwise spend max_output_tokens thinking
 
   # Larger local model (14B / 27B) served by Ollama, llama.cpp or vLLM.
   - name: local-large

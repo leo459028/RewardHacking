@@ -1159,3 +1159,20 @@ def test_dashboard_shows_pending_triage_and_assessment_profile(client, session_f
         html = client.get(path).text
         assert "Judging… | 評估中" in html, path
     assert "assesses in the background" in client.get(f"/dashboard/runs/{run_id}").text
+
+
+# ---------------------------------------------------------------------------
+# P7: reasoning_effort (found during real LM Studio testing)
+# ---------------------------------------------------------------------------
+
+
+def test_reasoning_effort_is_sent_only_when_configured():
+    transport, bodies = _backend(lambda body: _content(json.dumps(GOOD)))
+    asyncio.run(_judge(transport, structured_output="json_schema", reasoning_effort="none").assess(_input()))
+    asyncio.run(_judge(transport, structured_output="json_schema").assess(_input()))
+    assert bodies[0]["reasoning_effort"] == "none" and "reasoning_effort" not in bodies[1]
+    with pytest.raises(jp.JudgeProfileError):
+        jp.load_profiles(_settings(evaluation_judge_profiles={"lab": _profile(reasoning_effort="max")}))
+    assert jp.load_profiles(_settings(evaluation_judge_profiles={"lab": _profile(reasoning_effort="LOW")}))["lab"].reasoning_effort == "low"
+    example = jp.load_profiles(_settings(evaluation_judge_profiles_file=str(EXAMPLE_PROFILES)))
+    assert example["local-small"].reasoning_effort == "none" and example["local-small"].base_url.endswith(":12339/v1")
