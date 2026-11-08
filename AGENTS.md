@@ -155,6 +155,12 @@ pytest tests/test_v15x_<new_feature>.py -q -W error::DeprecationWarning
   - **Phase commits**: one local commit per implementation phase, made only after that phase's Stage 1 checks (`ruff check app tests scripts` and the targeted pytest files with `-W error::DeprecationWarning`) pass and the plan's progress log is updated. Message format: `wip(vX.Y.Z): P<n> <phase summary>`.
   - **Release commit**: a final commit once the full Stage 2 gate (secret scan, ruff, `git diff --check`, full pytest, Docker migration check, browser E2E) passes with zero failures and the results are recorded in `docs/test_report.md`. Message format: `feat(vX.Y.Z): <release title>`.
   - Never commit while a required check fails or was skipped, and never stage `docs/plan/*.md`. `git push`, opening pull requests, merging, rebasing/squashing, and `git reset` still require an explicit user command.
+- **Merge PR → Sync Local `main`**: When the user says to merge a PR ("合併PR" / "merge the PR"), merge it only if its required CI checks pass and GitHub reports it mergeable; otherwise stop and report. Use the repository's existing merge style (merge commit). After the PR state is confirmed `MERGED`, sync local `main` without asking again:
+  1. If the working tree has uncommitted changes (git-ignored `docs/plan/*.md` does not count), do not switch branches; report and stop.
+  2. `git fetch origin`, `git checkout main`, `git pull --ff-only origin main`.
+  3. If the fast-forward fails (local `main` has diverged), stop and report; never `reset`, `rebase` or force anything to make it succeed.
+  4. Do not delete the release branch (local or remote) unless the user asks.
+  5. Report the merge commit and confirm `main` matches `origin/main`.
 - **Never Upload `docs/plan/*.md`**: Ensure `docs/plan/` and `docs/plan/*.md` remain in `.gitignore` and are never staged (`git add`) or committed to GitHub.
 - **Pre-Commit Disclosure**: State clearly which files will be staged and verify that unrelated changes are not commingled.
 - **Protect Working Tree**: If the working tree contains pre-existing user changes, preserve them untouched.
