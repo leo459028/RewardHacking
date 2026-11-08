@@ -1095,3 +1095,67 @@ def test_sweep_endpoint_and_status_pending(client, session_factory, monkeypatch)
     client.portal.call(jb.drain_background, 15.0)
     assert _assessments(session_factory, review_id, "bg")
     assert client.get("/v1/evaluations/judge/status").json()["pending_triage"]["pending"] == 0
+
+
+# ---------------------------------------------------------------------------
+# P6: Dashboard
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_judge_profiles_probe_pricing_consent_and_multi_profile_run(client, session_factory, monkeypatch):
+    calls = _use_profiles(monkeypatch, LAB_PROFILES, "lab", lambda body: _content(json.dumps(GOOD)))
+    page = client.get("/dashboard/benchmark?tenant_id=v1511-ui")
+    assert page.status_code == 200 and "0E-8" not in page.text
+    for marker in ('id="judge-profile-table"', 'id="external-judge-consent"', 'id="pending-triage"', 'id="judge-profiles-select"', 'id="probe-lab"', 'id="pricing-lab"'):
+        assert marker in page.text, marker
+    assert 'id="active-judge-profile">lab<' in page.text and "external" in page.text
+    assert "gemini-test-key-placeholder" not in page.text
+
+    probe = client.post("/dashboard/judge/profiles/lab/probe", follow_redirects=False)
+    assert probe.status_code == 303 and "Probe%20lab%3A%20ok" in probe.headers["location"] and len(calls) == 1
+    pricing = client.post("/dashboard/judge/profiles/lab/zero-cost-pricing", follow_redirects=False)
+    assert "created%202%20row" in pricing.headers["location"]
+
+    consent = client.post(
+        "/dashboard/judge/consent",
+        data={"tenant_id": "v1511-ui", "allow_external_judge": "on", "external_judge_profiles": "lab-cloud", "updated_by": "qa"},
+        follow_redirects=False,
+    )
+    assert consent.status_code == 303 and "allowed%20%28lab-cloud%29" in consent.headers["location"]
+    policy = client.get("/v1/tenants/v1511-ui/evaluation-policy").json()
+    assert policy["allow_external_judge"] is True and policy["external_judge_profiles"] == ["lab-cloud"]
+    shown = client.get("/dashboard/benchmark?tenant_id=v1511-ui&consent_tenant_id=v1511-ui").text
+    assert "external judges allowed (lab-cloud)" in shown
+
+    run = client.post(
+        "/dashboard/benchmark/runs",
+        data={"tenant_id": "default", "corpora": "seed-v1.5.9", "split": "all", "judge_profiles": ["deterministic", "lab"], "max_judge_samples": "2"},
+        follow_redirects=False,
+    )
+    location = run.headers["location"]
+    assert run.status_code == 303 and "profiles%3A%20deterministic%2C%20lab" in location
+    bench_page = client.get(location.split("#")[0]).text
+    assert 'id="triage-profile-deterministic"' in bench_page and 'id="triage-profile-lab"' in bench_page
+    assert "invalid output" in bench_page and "Manual switch only" in bench_page and "0E-8" not in bench_page
+
+    sweep = client.post("/dashboard/judge/sweep", follow_redirects=False)
+    assert sweep.status_code == 303 and "No%20stale%20pending" in sweep.headers["location"]
+    governance = client.get("/dashboard/governance").text
+    assert 'href="/dashboard/benchmark#external-judge-consent"' in governance
+
+
+def test_dashboard_shows_pending_triage_and_assessment_profile(client, session_factory, monkeypatch):
+    run_id, review_id = _flagged_review(client, session_factory, "v1511-ui-pending")
+    detail = client.get(f"/dashboard/reviews/{review_id}").text
+    assert "<th>Profile</th>" in detail and ">default<" in detail
+
+    async def mark(session):
+        review = await session.scalar(select(EvaluationReview).where(EvaluationReview.review_id == review_id))
+        review.triage_source = "pending:local-small"
+        await session.commit()
+
+    _db(session_factory, mark)
+    for path in (f"/dashboard/reviews/{review_id}", "/dashboard/reviews?tenant_id=v1511-ui-pending", f"/dashboard/runs/{run_id}"):
+        html = client.get(path).text
+        assert "Judging… | 評估中" in html, path
+    assert "assesses in the background" in client.get(f"/dashboard/runs/{run_id}").text

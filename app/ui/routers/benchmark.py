@@ -33,7 +33,10 @@ from app.services.evaluation.engine import EvaluationEngine
 from app.services.evaluation.metrics import fpr_key
 from app.services.evaluation.taxonomy import CATEGORIES
 from app.services.events import EventPublisher
+from app.services.judge_background import pending_summary, sweep_pending_triage
+from app.services.judge_profiles_admin import JudgeProfileAdminError, ensure_zero_cost_pricing, probe_profile, profiles_view
 from app.services.orchestrator import AgentOrchestrator
+from app.services.review_queue import get_evaluation_policy, policy_to_dict, upsert_evaluation_policy
 from app.services.run_state import RunStateStore
 from app.ui.routes import dashboard_auth, templates
 
@@ -104,6 +107,8 @@ async def dashboard_benchmark(request: Request, session: AsyncSession = Depends(
         session, group_by=group_by, window_days=30, min_samples=settings.evaluation_cheat_rate_min_samples
     )
     keys = await list_attestation_keys(session, params.get("key_tenant_id", tenant_id) or tenant_id)
+    consent_tenant = params.get("consent_tenant_id", tenant_id) or tenant_id
+    consent = policy_to_dict(consent_tenant, await get_evaluation_policy(session, consent_tenant))
     return templates.TemplateResponse(
         request,
         "benchmark.html",
@@ -121,6 +126,12 @@ async def dashboard_benchmark(request: Request, session: AsyncSession = Depends(
             "mode_metrics": mode_metrics,
             "fpr_keys": metrics.get("fpr_targets") or [fpr_key(0.01), fpr_key(settings.evaluation_benchmark_gate_fpr)],
             "triage_keys": ["5", "10", "20", "budget_0.01", "budget_0.05", "budget_0.10"],
+            # v1.5.11 judge profiles, external-judge consent and pending background triage
+            "judge_profiles": profiles_view(settings),
+            "active_judge_profile": settings.evaluation_judge_profile,
+            "judge_mode": settings.evaluation_judge_mode,
+            "consent": consent,
+            "pending_triage": await pending_summary(session, settings),
             "gate_fpr_key": fpr_key(settings.evaluation_benchmark_gate_fpr),
             "curve": audit_curve_points(mode_metrics.get("audit_budget_curve") or []),
             "curve_width": CURVE_WIDTH,
@@ -168,12 +179,14 @@ async def dashboard_benchmark_run(request: Request, session: AsyncSession = Depe
             created_by=str(form.get("created_by", "dashboard-admin")).strip() or "dashboard-admin",
             judge_provider=str(form.get("judge_provider", "none") or "none"),
             max_judge_samples=_bounded_int(form.get("max_judge_samples"), default=100, low=1, high=5000),
+            judge_profiles=[str(item) for item in form.getlist("judge_profiles") if str(item).strip()] or None,
         )
     except bench.BenchmarkError as exc:
         return _redirect(f"/dashboard/benchmark?tenant_id={quote(tenant_id)}", error=exc.detail, anchor="benchmark-runs")
     message = f"Benchmark {run.benchmark_run_id} measured {run.sample_count} samples ({run.positive_count} hacking / {run.negative_count} benign); gate {run.gate_status}."
     if run.judge_config:
-        message += f" Judge triage measured with {run.judge_config.get('judge_version')}."
+        labels = [c.get("profile") or c.get("provider") for c in run.judge_config.get("profiles", [run.judge_config])]
+        message += f" Judge triage measured with {run.judge_config.get('judge_version')} (profiles: {', '.join(labels)})."
     return _redirect(f"/dashboard/benchmark?tenant_id={quote(tenant_id)}&run={run.benchmark_run_id}", message=message, anchor="benchmark-runs")
 
 
@@ -318,3 +331,65 @@ async def dashboard_attestation_key_revoke(request: Request, key_id: str, sessio
     except AttestationKeyServiceError as exc:
         return _redirect(target, error=exc.detail, anchor="attestation-keys")
     return _redirect(target, message=f"Attestation key {key_id} revoked.", anchor="attestation-keys")
+
+
+# ---------------------------------------------------------------------------
+# v1.5.11 judge profiles: probe, local zero-cost pricing, external-judge consent and pending sweep
+# ---------------------------------------------------------------------------
+
+
+@router.post("/dashboard/judge/profiles/{name}/probe", response_class=HTMLResponse)
+async def dashboard_judge_probe(request: Request, name: str, session: AsyncSession = Depends(get_session)):
+    try:
+        result = await probe_profile(session, get_settings(), name)
+    except JudgeProfileAdminError as exc:
+        return _redirect("/dashboard/benchmark", error=exc.detail, anchor="judge-profiles")
+    message = (
+        f"Probe {name}: {result['status']}"
+        f"{' (' + result['error'] + ')' if result['error'] else ''}, structured output "
+        f"{result['structured_output'] or 'n/a'}, {result['attempts']} request(s), {result['latency_ms']} ms, "
+        f"{result['input_tokens']}/{result['output_tokens']} tokens. No assessment was written."
+    )
+    return _redirect("/dashboard/benchmark", message=message, anchor="judge-profiles")
+
+
+@router.post("/dashboard/judge/profiles/{name}/zero-cost-pricing", response_class=HTMLResponse)
+async def dashboard_judge_zero_cost_pricing(request: Request, name: str, session: AsyncSession = Depends(get_session)):
+    try:
+        result = await ensure_zero_cost_pricing(session, get_settings(), name)
+    except JudgeProfileAdminError as exc:
+        return _redirect("/dashboard/benchmark", error=exc.detail, anchor="judge-profiles")
+    message = (
+        f"Zero-cost pricing for {result['provider']}/{result['model']}: created {len(result['created'])} row(s)"
+        f"{', already present: ' + ', '.join(result['already_present']) if result['already_present'] else ''}."
+    )
+    return _redirect("/dashboard/benchmark", message=message, anchor="judge-profiles")
+
+
+@router.post("/dashboard/judge/consent", response_class=HTMLResponse)
+async def dashboard_judge_consent(request: Request, session: AsyncSession = Depends(get_session)):
+    form = await request.form()
+    tenant_id = str(form.get("tenant_id", "default")).strip() or "default"
+    current = policy_to_dict(tenant_id, await get_evaluation_policy(session, tenant_id))
+    allow = str(form.get("allow_external_judge", "")).lower() in {"on", "true", "1", "yes"}
+    profiles = [str(item).strip() for item in form.getlist("external_judge_profiles") if str(item).strip()]
+    # Protected paths are kept as they are; only the consent fields change.
+    await upsert_evaluation_policy(
+        session,
+        tenant_id=tenant_id,
+        protected_paths=list(current["protected_paths"]),
+        allow_default_protected_paths=bool(current["allow_default_protected_paths"]),
+        updated_by=str(form.get("updated_by", "dashboard-admin")).strip() or "dashboard-admin",
+        allow_external_judge=allow,
+        external_judge_profiles=profiles,
+    )
+    scope = ", ".join(profiles) if profiles else "all external profiles"
+    message = f"External judge consent for {tenant_id}: {'allowed (' + scope + ')' if allow else 'not allowed'}."
+    return _redirect(f"/dashboard/benchmark?tenant_id={quote(tenant_id)}&consent_tenant_id={quote(tenant_id)}", message=message, anchor="external-judge-consent")
+
+
+@router.post("/dashboard/judge/sweep", response_class=HTMLResponse)
+async def dashboard_judge_sweep(request: Request, session: AsyncSession = Depends(get_session)):
+    swept = await sweep_pending_triage(session, get_settings())
+    message = f"Re-scheduled {len(swept)} stale pending judge triage task(s)." if swept else "No stale pending judge triage."
+    return _redirect("/dashboard/benchmark", message=message, anchor="pending-triage")
