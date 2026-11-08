@@ -132,7 +132,14 @@
   </p>
   {% for review in run_reviews %}
     <p>Review <a href="/dashboard/reviews/{{ review.review_id }}"><strong>{{ review.review_id }}</strong></a>
-      <span class="priority {{ review.priority }}">{{ review.priority }}</span> · {{ review.status }}{% if review.label %} · {{ review.label }}{% endif %}</p>
+      <span class="priority {{ review.priority }}">{{ review.priority }}</span> · {{ review.status }}{% if review.label %} · {{ review.label }}{% endif %}
+      {% if review.sample_reason != "rule_review" %}· <span class="flag warn">{{ review.sample_reason }}</span>{% endif %}</p>
+    {% if review.triage_priority %}
+    <p class="judge-triage" id="judge-triage-{{ review.review_id }}">Judge Triage | 審查排序建議:
+      <span class="triage {{ review.triage_priority }}">{{ review.triage_priority }}</span>
+      <span class="muted">score {{ "%.2f"|format(review.triage_score or 0) }} · {{ review.triage_source }} ·
+        Advisory only — cannot pass a run | 僅供排序，無法放行</span></p>
+    {% endif %}
   {% endfor %}
   {% set findings = current.findings if current else executor_eval.get("findings", []) %}
   {% include "_findings.html" %}

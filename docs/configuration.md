@@ -79,8 +79,26 @@ Application configuration is loaded from environment variables and local `.env` 
 | `EVALUATION_CHEAT_RATE_MIN_SAMPLES` | `20` | Below this many trials a cheat rate is flagged `insufficient_data` |
 | `EVALUATION_ATTESTATION_MAX_AGE_HOURS` | `24` | Maximum age of a CI attestation timestamp |
 | `EVALUATION_ATTESTATION_MAX_BYTES` | `262144` | Maximum serialized attestation size; larger envelopes are `unsupported_type` |
-| `EVALUATION_SIGSTORE_ENABLED` | `false` | Reserved for optional Sigstore / GitHub keyless verification (not implemented in `v1.5.9`; bundles always stay unverified) |
+| `EVALUATION_SIGSTORE_ENABLED` | `false` | Reserved for optional Sigstore / GitHub keyless verification (not implemented through `v1.5.10`; bundles always stay unverified) |
 | `EVALUATION_INSPECT_IMPORT_MAX_BYTES` | `5242880` | Maximum Inspect JSON log size (`413 inspect_import_too_large`) |
+| `EVALUATION_JUDGE_MODE` | `shadow` | `v1.5.10` judge triage mode: `off` (no assessments), `shadow` (record and show; default order stays `rule`), `triage` (triage order becomes the default). The judge never changes verdicts in any mode |
+| `EVALUATION_JUDGE_PROVIDER` | *(empty → `deterministic`)* | `deterministic` or `openai_compatible`. The deprecated `LLM_JUDGE_ENABLED=true` selects `openai_compatible` when this is empty |
+| `EVALUATION_JUDGE_BASE_URL` | *(empty)* | OpenAI-compatible base URL (for example `http://localhost:11434/v1`); `/chat/completions` is appended |
+| `EVALUATION_JUDGE_MODEL` | *(empty)* | Judge model name; also used for the same-family warning |
+| `EVALUATION_JUDGE_API_KEY` | *(empty)* | Bearer token for the judge endpoint. Secret: read from the environment only, never stored, logged or returned |
+| `EVALUATION_JUDGE_ALLOW_EXTERNAL` | `false` | Allow judge endpoints outside localhost / `MCP_INTERNAL_HOST_SUFFIXES`; otherwise calls are `blocked_external` and fall back |
+| `EVALUATION_JUDGE_TIMEOUT_SECONDS` | `8` | Hard timeout per judge call (`> 0`); timeouts fall back to the deterministic judge |
+| `EVALUATION_JUDGE_MAX_INPUT_CHARS` | `24000` | Evidence budget sent to the judge (truncation order: diff, test report, final message, lint) |
+| `EVALUATION_JUDGE_MAX_OUTPUT_TOKENS` | `600` | `max_tokens` for judge replies |
+| `EVALUATION_JUDGE_DAILY_TOKEN_CAP_PER_TENANT` | `200000` | Judge tokens per tenant per UTC day; above it calls are `budget_exceeded` and fall back (`0` disables LLM calls) |
+| `EVALUATION_JUDGE_BENCHMARK_MAX_SAMPLES` | `500` | Upper bound for `max_judge_samples` on LLM-judged benchmark runs |
+| `EVALUATION_SAMPLING_ENABLED` | `true` | `v1.5.10` quota-capped sampling of rule-passed outcomes |
+| `EVALUATION_SAMPLE_MIN_SCORE` | `0.5` | Threshold slice: `max(shadow-inclusive suspicion_score, risk_score)` at or above this value (`[0, 1]`) |
+| `EVALUATION_SAMPLE_DAILY_CAP_PER_TENANT` | `20` | Threshold-slice samples per tenant per UTC day |
+| `EVALUATION_SAMPLE_MAX_SHARE` | `0.05` | Threshold-slice samples may not exceed `max(1, floor(share × candidates))` per day (`[0, 1]`) |
+| `EVALUATION_SAMPLE_RANDOM_RATE` | `0.02` | Uniform random audit rate (`[0, 1]`) |
+| `EVALUATION_SAMPLE_RANDOM_DAILY_CAP_PER_TENANT` | `5` | Random-audit samples per tenant per UTC day |
+| `EVALUATION_SAMPLE_SECRET` | *(empty)* | HMAC secret for random draws. Set it in production: without it a per-process secret is used and draws are not reproducible across restarts |
 | `TOOL_BREAKER_FAILURE_THRESHOLD` | `3` | Consecutive worker execution failures (`1`–`100`) before a tool's circuit breaker automatically trips to `open` |
 | `TOOL_BREAKER_TTL_SECONDS` | `300` | Default TTL in seconds (`30`–`86400`) for an open tool circuit breaker in Redis |
 

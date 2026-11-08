@@ -4,7 +4,7 @@ from decimal import Decimal
 from functools import lru_cache
 import re
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -99,6 +99,25 @@ class Settings(BaseSettings):
     evaluation_attestation_max_bytes: int = 262144
     evaluation_sigstore_enabled: bool = False
     evaluation_inspect_import_max_bytes: int = 5242880
+    # v1.5.10 LLM-as-judge triage (advisory ordering only) and quota-capped review sampling
+    evaluation_judge_mode: str = "shadow"
+    evaluation_judge_provider: str = ""
+    evaluation_judge_base_url: str = ""
+    evaluation_judge_model: str = ""
+    evaluation_judge_api_key: SecretStr = SecretStr("")
+    evaluation_judge_allow_external: bool = False
+    evaluation_judge_timeout_seconds: float = 8.0
+    evaluation_judge_max_input_chars: int = 24000
+    evaluation_judge_max_output_tokens: int = 600
+    evaluation_judge_daily_token_cap_per_tenant: int = 200000
+    evaluation_judge_benchmark_max_samples: int = 500
+    evaluation_sampling_enabled: bool = True
+    evaluation_sample_min_score: float = 0.5
+    evaluation_sample_daily_cap_per_tenant: int = 20
+    evaluation_sample_max_share: float = 0.05
+    evaluation_sample_random_rate: float = 0.02
+    evaluation_sample_random_daily_cap_per_tenant: int = 5
+    evaluation_sample_secret: SecretStr = SecretStr("")
 
     @model_validator(mode="after")
     def _validate_finops_currency_settings(self) -> Settings:
@@ -175,11 +194,47 @@ class Settings(BaseSettings):
                 raise ValueError("EVALUATION_DETECTOR_MODES values must be 'enforce', 'shadow' or 'disabled'.")
             normalized_modes[str(detector).strip()] = mode_value
         self.evaluation_detector_modes = normalized_modes
+        self.evaluation_judge_mode = (self.evaluation_judge_mode or "").strip().lower()
+        if self.evaluation_judge_mode not in {"off", "shadow", "triage"}:
+            raise ValueError("EVALUATION_JUDGE_MODE must be 'off', 'shadow' or 'triage'.")
+        self.evaluation_judge_provider = (self.evaluation_judge_provider or "").strip().lower()
+        if self.evaluation_judge_provider not in {"", "deterministic", "openai_compatible"}:
+            raise ValueError("EVALUATION_JUDGE_PROVIDER must be 'deterministic' or 'openai_compatible'.")
+        if float(self.evaluation_judge_timeout_seconds) <= 0:
+            raise ValueError("EVALUATION_JUDGE_TIMEOUT_SECONDS must be > 0.")
+        for name in (
+            "evaluation_judge_max_input_chars",
+            "evaluation_judge_max_output_tokens",
+            "evaluation_judge_benchmark_max_samples",
+        ):
+            if int(getattr(self, name)) < 1:
+                raise ValueError(f"{name.upper()} must be >= 1.")
+        for name in (
+            "evaluation_judge_daily_token_cap_per_tenant",
+            "evaluation_sample_daily_cap_per_tenant",
+            "evaluation_sample_random_daily_cap_per_tenant",
+        ):
+            if int(getattr(self, name)) < 0:
+                raise ValueError(f"{name.upper()} must be >= 0.")
+        for name in ("evaluation_sample_min_score", "evaluation_sample_max_share", "evaluation_sample_random_rate"):
+            if not 0.0 <= float(getattr(self, name)) <= 1.0:
+                raise ValueError(f"{name.upper()} must be in [0, 1].")
         return self
 
     @property
     def mcp_internal_host_suffix_list(self) -> list[str]:
         return [item.strip().lower() for item in self.mcp_internal_host_suffixes.split(",") if item.strip()]
+
+    @property
+    def effective_judge_provider(self) -> str:
+        """Configured judge provider; the deprecated ``LLM_JUDGE_ENABLED`` alias selects ``openai_compatible`` (D4)."""
+        if self.evaluation_judge_provider:
+            return self.evaluation_judge_provider
+        return "openai_compatible" if self.llm_judge_enabled else "deterministic"
+
+    @property
+    def judge_uses_legacy_alias(self) -> bool:
+        return not self.evaluation_judge_provider and bool(self.llm_judge_enabled)
 
 
 @lru_cache(maxsize=1)

@@ -168,3 +168,21 @@ def score_block(
         "auroc": auroc(positive_scores, negative_scores),
         "tpr_at_fpr": {fpr_key(target): tpr_at_fpr(positive_scores, negative_scores, target) for target in fpr_targets},
     }
+
+
+def precision_at_k(ranked_labels: Sequence[bool], k: int) -> dict[str, Any]:
+    """Share of true positives among the top ``k`` of an already-ranked list (v1.5.10 triage metric).
+
+    ``k`` larger than the list is capped at its length; the Wilson interval reflects the reviewed count.
+    """
+    reviewed = max(0, min(int(k), len(ranked_labels)))
+    hits = sum(1 for item in ranked_labels[:reviewed] if item)
+    low, high = wilson_interval(hits, reviewed)
+    return {
+        "k": int(k),
+        "reviewed": reviewed,
+        "hits": hits,
+        "precision": (hits / reviewed) if reviewed else None,
+        "ci_low": low,
+        "ci_high": high,
+    }

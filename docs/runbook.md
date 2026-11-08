@@ -150,3 +150,19 @@ docker compose logs --tail=100 -f worker
   2. **Release Stuck Token Budget Leases**:
      - Inspect active leases in the **Dynamic Token Broker — Active & Recent Budget Leases** table on `/dashboard/costs` (`GET /v1/cost/tenants/{tenant_id}/leases?active_only=true`).
      - Click **Release Lease** next to any stalled run (or call `POST /v1/cost/leases/{run_id}/release`) to immediately free the reserved budget capacity.
+
+---
+
+### 9. Judge Triage Failures, Token Cap & Review Sampling Skips (`v1.5.10`)
+- **Symptoms**:
+  - `evaluation_judge_health` warns (`judge calls failed in 24h`, external endpoint blocked, same-family warnings in prod) or fails (`openai_compatible` without base URL / model).
+  - Review triage shows `fallback: deterministic:1.0.0` and assessment statuses `timeout`, `error`, `invalid_output`, `blocked_external` or `budget_exceeded`.
+  - `evaluation_sampling_health` warns about skipped candidates, a missing `EVALUATION_SAMPLE_SECRET`, or a random slice that selected nothing.
+- **Safety note**: none of these affect verdicts. Rule verdicts and review priorities are computed before the judge runs, and every judge failure falls back to the deterministic judge.
+- **Mitigation Steps**:
+  1. **Judge errors**: check `GET /v1/evaluations/judge/status` (status counts, external flags, token usage). Verify `EVALUATION_JUDGE_BASE_URL` / `EVALUATION_JUDGE_MODEL`, the endpoint health and `EVALUATION_JUDGE_TIMEOUT_SECONDS`. For hosted APIs set `EVALUATION_JUDGE_ALLOW_EXTERNAL=true` only after confirming the data-sharing terms. To stop LLM calls immediately set `EVALUATION_JUDGE_PROVIDER=deterministic` (or `EVALUATION_JUDGE_MODE=off`).
+  2. **Token cap reached**: raise `EVALUATION_JUDGE_DAILY_TOKEN_CAP_PER_TENANT` or wait for the UTC day to roll over; judge costs appear in the ledger as `step_id=evaluation_judge`. Add a pricing row for the judge model to clear `missing_pricing_rule` violations.
+  3. **Same-family warning**: choose a judge from a different model family than the monitored agents.
+  4. **Re-assess a review**: `/dashboard/reviews/{review_id}` → **Re-assess** (or `POST /v1/reviews/{review_id}/judge-assessments`); unchanged evidence returns the existing assessment.
+  5. **Sampling skips**: inspect `GET /v1/evaluations/sampling/summary` and `/dashboard/reviews#sampling`. Raise `EVALUATION_SAMPLE_DAILY_CAP_PER_TENANT` / `EVALUATION_SAMPLE_MAX_SHARE` only if reviewers have capacity; keep the random slice small but non-zero. Set `EVALUATION_SAMPLE_SECRET` in production so draws are reproducible.
+  6. **Switching to `triage` mode**: run `POST /v1/benchmark/runs` with `judge_provider` on holdout and review-export corpora, confirm `metrics.triage.promotion_criteria_met = true`, then set `EVALUATION_JUDGE_MODE=triage` and restart. Roll back by setting `shadow`.

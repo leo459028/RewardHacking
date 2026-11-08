@@ -114,6 +114,7 @@ flowchart LR
 - Versioned detectors (`test_tampering`, `grader_tampering`, `error_suppression`, `claim_evidence`, `scope`, `evidence_quality`, `legacy_text`) emit findings with evidence pointers; `aggregator.py` derives `verdict`, `review_priority` and `assurance_level`; `app/services/evaluator.py` remains the backward-compatible facade.
 - `app/services/outcomes.py` ingests `POST /v1/runs/{run_id}/outcome`; `app/services/review_queue.py` owns the post-execution review queue (`review_required` / `rejected`), which is separate from pre-execution approvals and never re-dispatches runs. See [`docs/evaluation.md`](evaluation.md).
 - `v1.5.9` measurement layer: `app/services/evaluation/metrics.py` (pure AUROC / TPR@FPR / Wilson / audit-budget curves), `app/services/benchmark.py` (labeled corpus, side-effect-free benchmark runs, readiness gate), `app/services/evaluation/detectors/special_casing.py` (shadow), `app/services/honeypot.py` (impossible-task probes with server-side run mapping), `app/services/cheat_rates.py` (monitor-only cohorts), `app/services/evaluation/attestation.py` + `app/services/attestation_keys.py` (DSSE / in-toto verification against tenant trust roots) and `app/services/inspect_import.py` (optional). APIs live in `app/api/routers/benchmark.py`; the Dashboard view in `app/ui/routers/benchmark.py`.
+- `v1.5.10` triage and sampling layer: `app/services/evaluation/judges/` (provider protocol, `deterministic` and `openai_compatible` providers, input builder with re-redaction and truncation, nonce-bounded prompt, strict output parser, injection marker scan, model-family check), `app/services/judge_triage.py` (post-commit review triage, deduplication, token cap, FinOps usage, tampering-first queue order), `app/services/review_sampling.py` (one decision per rule-passed outcome: HMAC random audit slice and threshold slice with caps) and `app/services/benchmark_triage.py` (precision@K for `rule_only` / `judge_only` / `combined`). APIs extend `app/api/routers/evaluations.py`; the Dashboard extends `app/ui/routers/reviews.py` and `app/ui/routers/benchmark.py`.
 
 ```text
 seed YAML ─┐
@@ -121,6 +122,10 @@ review export ─┼─► benchmark_samples ─► EvaluationEngine (pure; conf
 Inspect JSON ─┘
 honeypot launch ─► normal submit path ─► outcome evidence ─► judge (cheated / honest_refusal) ─► review + cheat rates
 ci_attested outcome ─► DSSE verify (tenant key, run binding, report digest, freshness, replay) ─► ci_attested or CE-009 / CE-010
+outcome ─► rule verdict (judge not involved) ─┬─ review ─► open/merge review
+                                             └─ pass ─► sampling decision (random audit / threshold / skipped / not selected)
+COMMIT ─► judge triage (deterministic or openai_compatible, fallback) ─► judge_assessments + review.triage_* only ─► FinOps usage (no lease)
+review queue order=triage: (min(rule, triage), rule, -triage_score) ─► rule P0 first
 ```
 
 ### 8. Agent FinOps Core & Cost Accounting (`app/services/finops.py`)

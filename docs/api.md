@@ -227,6 +227,22 @@ Served by `app/api/routers/benchmark.py` and `app/api/routers/evaluations.py`. E
 | `POST` | `/v1/tenants/{tenant_id}/attestation-keys` | Registers a public key (`name`, `algorithm` = `ed25519` \| `ecdsa-p256-sha256`, `public_key_pem`, `allowed_subjects`) → `201`; private keys and invalid PEM return `422 attestation_key_invalid`; duplicates `409 attestation_key_duplicate` | `tenant_admin`, `admin` |
 | `POST` | `/v1/tenants/{tenant_id}/attestation-keys/{key_id}/revoke` | Revokes a key | `tenant_admin`, `admin` |
 
+### Judge Triage & Review Sampling (`v1.5.10`)
+
+Served by `app/api/routers/evaluations.py` (and the judge option on `POST /v1/benchmark/runs`). Every response is monitor-only. The judge only orders review work and never changes verdicts, priorities or review status. Roles that submit agent work (`operator`) cannot read these endpoints, see review triage fields as empty and `sample_reason` values `threshold_sample` / `random_audit` (and `honeypot`) as `rule_review`; `order=triage` falls back to `rule` for them.
+
+| Method | Path | Description | Access Role |
+| --- | --- | --- | --- |
+| `GET` | `/v1/reviews?order=rule\|triage` | `rule` keeps the `v1.5.8` order; `triage` sorts by `(min(rule, triage), rule, -triage_score, opened_at)` (rule `P0` first). Default `rule`, or `triage` when `EVALUATION_JUDGE_MODE=triage`. Records add `triage_priority`, `triage_score`, `triage_source`, `judge_assessment_id`, `effective_priority` | `viewer`, `operator`, `admin` |
+| `GET` | `/v1/reviews/{review_id}/judge-assessments` | Assessments (`jdg_`) with provider, `judge_version`, status, triage, rationale, `injection_suspected`, `same_family_warning`, tokens, `used_for_verdict: false` | `reviewer`, `tenant_admin`, `admin` |
+| `POST` | `/v1/reviews/{review_id}/judge-assessments` | Re-runs triage; `201` new assessment or `200` with `deduplicated: true` for the same evidence and judge version; `409 judge_disabled` when the mode is `off` | `tenant_admin`, `admin` |
+| `GET` | `/v1/evaluations/judge/status` | Mode, provider, model, `judge_version`, external-endpoint flags, token cap and usage, 24h status counts, default order (never the API key) | `reviewer`, `tenant_admin`, `admin` |
+| `GET` | `/v1/evaluations/sampling/summary` | `tenant_id`, `window_days` (1–90): candidates, sampled by slice, skipped by reason, not selected, `conserved`, `random_inclusion_rate`, settings, `policy_version` | `reviewer`, `tenant_admin`, `admin` |
+| `GET` | `/v1/evaluations/sampling/decisions` | Per-run decisions (`smp_`): `tenant_id`, `decision` = `sampled` \| `skipped` \| `not_selected`, `slice` = `threshold` \| `random` \| `none`, `limit` | `reviewer`, `tenant_admin`, `admin` |
+| `POST` | `/v1/benchmark/runs` | Adds `judge_provider` = `none` (default) \| `deterministic` \| `openai_compatible` (admin only) and `max_judge_samples`; the run gains `judge_config` and `metrics.triage` (precision@K, audit-budget curves, `delta_vs_rule_only`, `promotion_criteria_met`, `promotion_blockers`) | `tenant_admin`, `admin` |
+
+`GET /v1/evaluations/cheat-rates` adds `random_audit_decided`, `random_audit_confirmed` and `random_audit_hacking_rate` per cohort; `flag_rate` now counts rule-flagged reviews only. `EvaluationResult.judge_signal` reports `{enabled, provider, mode, used_for_verdict: false, used_for_hard_deny: false}`.
+
 #### `ci_attested` Outcome Example
 ```json
 {

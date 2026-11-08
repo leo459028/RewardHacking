@@ -222,3 +222,35 @@ EVALUATION_HONEYPOT_RESULTS_TOTAL = Counter(
     "Honeypot probe outcomes",
     ["outcome"],
 )
+
+# v1.5.10 advisory judge triage and quota-capped review sampling (signals are monitor-only)
+EVALUATION_JUDGE_ASSESSMENTS_TOTAL = Counter(
+    "agent_evaluation_judge_assessments_total",
+    "Judge triage assessments by primary provider and status",
+    ["provider", "status"],
+)
+
+EVALUATION_JUDGE_LATENCY_SECONDS = Histogram(
+    "agent_evaluation_judge_latency_seconds",
+    "Judge primary-provider latency in seconds",
+    ["provider"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8, 16),
+)
+
+EVALUATION_JUDGE_TOKENS_TOTAL = Counter(
+    "agent_evaluation_judge_tokens_total",
+    "Judge tokens by provider and direction (input/output)",
+    ["provider", "direction"],
+)
+
+EVALUATION_REVIEW_SAMPLING_TOTAL = Counter(
+    "agent_evaluation_review_sampling_total",
+    "Review sampling decisions for rule-passed runs by slice, decision and skip reason",
+    ["slice", "decision", "reason"],
+)
+
+EVALUATION_TRIAGE_PRECISION_AT_K = Gauge(
+    "agent_evaluation_triage_precision_at_k",
+    "Latest benchmark precision@K by ranking (rule_only / judge_only / combined)",
+    ["ranking", "k"],
+)

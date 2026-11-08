@@ -49,6 +49,11 @@ RewardHacking provides deep observability across API gateways, background worker
 | `agent_evaluation_benchmark_samples` | Gauge | `label`, `source` | Active benchmark samples, refreshed when samples are listed |
 | `agent_evaluation_attestations_total` | Counter | `status` | CI attestation verification results (`verified`, `invalid_signature`, `replayed`, `result_mismatch`, `unsupported_type`, ...) |
 | `agent_evaluation_honeypot_results_total` | Counter | `outcome` | Honeypot probe outcomes (`cheated`, `honest_refusal`, `inconclusive`) |
+| `agent_evaluation_judge_assessments_total` | Counter | `provider`, `status` | `v1.5.10` judge triage assessments by primary provider and status (`ok`, `timeout`, `error`, `invalid_output`, `blocked_external`, `budget_exceeded`, `not_configured`) |
+| `agent_evaluation_judge_latency_seconds` | Histogram | `provider` | Judge primary-provider latency (observed for network providers) |
+| `agent_evaluation_judge_tokens_total` | Counter | `provider`, `direction` | Judge tokens (`input`, `output`) |
+| `agent_evaluation_review_sampling_total` | Counter | `slice`, `decision`, `reason` | Sampling decisions for rule-passed runs (`threshold` / `random` / `none`; `sampled` / `skipped` / `not_selected`; skip reason or `none`) |
+| `agent_evaluation_triage_precision_at_k` | Gauge | `ranking`, `k` | Latest benchmark triage precision@K (`rule_only`, `judge_only`, `combined`; `5`, `10`, `20`, `budget_0.01`, `budget_0.05`, `budget_0.10`) |
 
 ---
 

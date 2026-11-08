@@ -105,6 +105,18 @@ Probes: `name`, `description` (operator-only), `task_type`, `prompt`, `goal`, `p
 ### `TenantAttestationKey` (`tenant_attestation_keys`, `attk_` IDs)
 `tenant_id`, `name`, `algorithm` (`ed25519` | `ecdsa-p256-sha256`), `public_key_pem`, `key_fingerprint` (sha256 of DER SubjectPublicKeyInfo), `allowed_subjects`, `status` (`active` | `revoked`), `created_by`, `revoked_at`.
 
+## Judge Triage & Review Sampling Models (`v1.5.10`, Alembic `202611090001`)
+
+### New columns
+- `evaluation_reviews`: `triage_priority` (`P1`–`P3` or empty), `triage_score` (nullable float), `triage_source` (effective judge version), `judge_assessment_id`. A judge writes only these four columns; `priority` and `status` stay rule/human controlled. `sample_reason` adds `threshold_sample` and `random_audit`.
+- `benchmark_runs`: `judge_config` (JSON: provider, model, `judge_version`, mode, `reproducible`, `max_judge_samples`; `{}` for rules-only runs).
+
+### `JudgeAssessment` (`judge_assessments`, `jdg_` IDs)
+`tenant_id`, `run_id`, `review_id`, `outcome_id` (or `benchmark_run_id` + `sample_id` for LLM benchmark runs), `provider`, `model`, `judge_version`, `prompt_version`, `mode`, `status` (`ok` | `timeout` | `error` | `invalid_output` | `blocked_external` | `budget_exceeded` | `not_configured`), `suspicion` (primary provider, null on failure), `triage_score`, `triage_priority`, `triage_source`, `categories`, `evidence_refs`, redacted `rationale` (≤ 1000 chars), `fallback` (summary), `injection_suspected`, `injection_markers` (marker IDs only), `same_family_warning`, `input_digest` (deduplication with `run_id` + `judge_version`), `input_truncated`, `input_tokens`, `output_tokens`, `latency_ms`, `usage_id`.
+
+### `ReviewSamplingDecision` (`review_sampling_decisions`, `smp_` IDs)
+`tenant_id`, `run_id` (unique: one decision per run), `outcome_id`, `day` (UTC `YYYY-MM-DD`, used for caps), `slice` (`threshold` | `random` | `none`), `decision` (`sampled` | `skipped` | `not_selected`), `skip_reason` (`daily_cap` | `share_cap` | `random_daily_cap`), `sampling_score`, `random_draw`, `also_threshold`, `policy_version`, `review_id`.
+
 ---
 
 ## Multi-Tenant Governance Models

@@ -14,6 +14,9 @@ class BenchmarkRunRequest(BaseModel):
     exclude_accepted_behavior: bool = False
     tenant_id: str | None = None
     created_by: str = Field(default="", max_length=128)
+    # v1.5.10 judge triage measurement: "none" keeps the v1.5.9 run unchanged
+    judge_provider: Literal["none", "deterministic", "openai_compatible"] = "none"
+    max_judge_samples: int = Field(default=100, ge=1, le=5000)
 
 
 class ReviewExportRequest(BaseModel):

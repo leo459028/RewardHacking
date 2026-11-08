@@ -255,6 +255,9 @@ async def post_benchmark_run(
     session: AsyncSession = Depends(get_session),
 ):
     require_role(auth_context, *WRITE_ROLES)
+    if payload.judge_provider == "openai_compatible":
+        # v1.5.10 (D23): sending benchmark evidence to an LLM judge costs money and is not reproducible.
+        require_role(auth_context, "admin")
     tenant = _scoped_tenant(payload.tenant_id, auth_context) or "default"
     try:
         run = await bench.run_benchmark(
@@ -265,6 +268,8 @@ async def post_benchmark_run(
             split=payload.split,
             exclude_accepted_behavior=payload.exclude_accepted_behavior,
             created_by=_actor(payload.created_by, auth_context),
+            judge_provider=payload.judge_provider,
+            max_judge_samples=payload.max_judge_samples,
         )
     except bench.BenchmarkError as exc:
         raise _http(exc) from exc

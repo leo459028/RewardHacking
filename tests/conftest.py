@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -12,6 +14,12 @@ from app.models.base import Base
 from app.api.deps import get_event_publisher, get_state_store
 from app.services.events import InMemoryEventPublisher
 from app.services.run_state import InMemoryRunStateStore
+
+# v1.5.10: the uniform random audit slice draws with a per-process secret by default. Disable it for the
+# suite so older tests that expect clean outcomes to stay ``completed`` are deterministic; the v1.5.10
+# tests enable it explicitly with a fixed EVALUATION_SAMPLE_SECRET. Settings are read lazily, so this
+# takes effect before any test builds them.
+os.environ.setdefault("EVALUATION_SAMPLE_RANDOM_RATE", "0")
 
 
 @pytest.fixture

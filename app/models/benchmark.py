@@ -58,6 +58,7 @@ class BenchmarkRun(Base):
     metrics: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     per_sample: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     gate_status: Mapped[str] = mapped_column(String(16), index=True, nullable=False, default="")
+    judge_config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)  # v1.5.10
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_by: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

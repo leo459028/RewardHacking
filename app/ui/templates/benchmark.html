@@ -115,12 +115,20 @@
         <select name="split"><option value="all">all</option><option value="dev">dev</option><option value="holdout">holdout</option></select>
       </label>
       <label class="checkline"><input type="checkbox" name="exclude_accepted_behavior"> Exclude accepted behaviour</label>
+      <label>Judge triage | Judge 排序量測
+        <select name="judge_provider" id="judge-provider">
+          <option value="none">none (rules only)</option>
+          <option value="deterministic">deterministic (reproducible)</option>
+          <option value="openai_compatible">openai_compatible (admin, costs tokens)</option>
+        </select>
+      </label>
+      <label>Max judged samples (LLM) <input name="max_judge_samples" type="number" min="1" max="5000" value="100"></label>
     </div>
     <div style="margin-top:12px;"><button class="button" type="submit" id="run-benchmark">Run Benchmark</button></div>
   </form>
 
   <table style="margin-top:14px;">
-    <thead><tr><th>Run</th><th>Evaluator</th><th>Samples</th><th>Gate</th><th>Created</th></tr></thead>
+    <thead><tr><th>Run</th><th>Evaluator</th><th>Samples</th><th>Gate</th><th>Judge</th><th>Created</th></tr></thead>
     <tbody>
     {% for r in runs %}
       <tr>
@@ -128,10 +136,11 @@
         <td class="muted">{{ r.evaluator_version }}{% if r.evaluator_version != current_version %} <span class="flag">stale</span>{% endif %}</td>
         <td>{{ r.sample_count }} <span class="muted">({{ r.positive_count }} / {{ r.negative_count }})</span></td>
         <td>{{ r.gate_status }}</td>
+        <td class="muted">{{ (r.judge_config or {}).get("judge_version") or "—" }}</td>
         <td class="muted">{{ r.created_at }}</td>
       </tr>
     {% else %}
-      <tr><td colspan="5" class="muted">No benchmark runs yet.</td></tr>
+      <tr><td colspan="6" class="muted">No benchmark runs yet.</td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -203,6 +212,36 @@
     {% endfor %}
     </tbody>
   </table>
+
+  {% set triage = metrics.get("triage") %}
+  <h3 style="margin-top:16px;" id="triage-precision">Triage precision@K <span class="heading-note">Judge 排序精準度（僅排序，不判決）</span></h3>
+  {% if triage %}
+  <p class="muted">Judge {{ triage.judge_version }} · {{ triage.judged_samples }} judged sample(s) · {{ "reproducible" if triage.reproducible else "not reproducible (LLM)" }} · status {{ triage.judge_status_counts }}</p>
+  <table id="triage-precision-table">
+    <thead><tr><th>Ranking</th>{% for key in triage_keys %}<th>{{ key|replace("budget_", "budget ") }}</th>{% endfor %}<th>Tampering catch @5%</th></tr></thead>
+    <tbody>
+    {% for name in ["rule_only", "judge_only", "combined"] %}
+      {% set block = triage.rankings[name] %}
+      <tr><td><strong>{{ name }}</strong></td>
+        {% for key in triage_keys %}
+        {% set cell = block.precision_at_k[key] %}
+        {% set delta = triage.delta_vs_rule_only.get(name, {}).get(key) %}
+        <td>{{ pct(cell.precision) }} <span class="muted">({{ cell.hits }}/{{ cell.reviewed }})</span>
+          {% if delta is not none %}<div class="{{ 'delta-up' if delta > 0 else ('delta-down' if delta < 0 else 'muted') }}">{{ "%+.1f"|format(delta * 100) }} pt</div>{% endif %}</td>
+        {% endfor %}
+        {% set rt = block.reward_tampering_audit_budget_curve | selectattr("budget", "equalto", 0.05) | list %}
+        <td>{{ pct(rt[0].catch_rate if rt else none) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p style="margin-top:8px;" id="triage-promotion">Promotion criteria | 升級條件:
+    <strong>{{ "met" if triage.promotion_criteria_met else "not met" }}</strong>
+    {% for b in triage.promotion_blockers %}<span class="flag">{{ b }}</span>{% endfor %}
+    <span class="muted">Manual switch only | 僅能手動切換 (EVALUATION_JUDGE_MODE=triage).</span></p>
+  {% else %}
+  <p class="muted">This run did not measure judge triage. Choose a judge in Run Benchmark to compare rule_only / judge_only / combined rankings.</p>
+  {% endif %}
 </section>
 {% endif %}
 
@@ -258,19 +297,19 @@
     </label>
     <div><button class="button" type="submit">Apply</button></div>
   </form>
-  <p class="muted">{{ rates.rate_semantics.confirmed_rate_lower_bound }} {{ rates.rate_semantics.identity }}</p>
+  <p class="muted">{{ rates.rate_semantics.confirmed_rate_lower_bound }} {{ rates.rate_semantics.random_audit_hacking_rate }} {{ rates.rate_semantics.identity }}</p>
   <table id="cheat-rate-table">
-    <thead><tr><th>{{ group_by }}</th><th>Evaluated</th><th>Flag rate</th><th>Confirmed (lower bound)</th><th>Review precision</th><th>Honeypot cheat rate</th></tr></thead>
+    <thead><tr><th>{{ group_by }}</th><th>Evaluated</th><th>Flag rate</th><th>Confirmed (lower bound)</th><th>Review precision</th><th>Honeypot cheat rate</th><th>Random audit (unbiased) | 隨機稽核</th></tr></thead>
     <tbody>
     {% for g in rates.groups %}
       <tr><td>{{ g.group }}</td><td>{{ g.runs_evaluated }}</td>
-        {% for key in ["flag_rate", "confirmed_rate_lower_bound", "review_precision", "honeypot_cheat_rate"] %}
+        {% for key in ["flag_rate", "confirmed_rate_lower_bound", "review_precision", "honeypot_cheat_rate", "random_audit_hacking_rate"] %}
         {% set r = g[key] %}
         <td>{{ pct(r.value) }} <span class="muted">({{ r.successes }}/{{ r.trials }})</span>{% if r.insufficient_data %}<div class="muted">insufficient data | 樣本不足</div>{% endif %}</td>
         {% endfor %}
       </tr>
     {% else %}
-      <tr><td colspan="6" class="muted">No evaluated runs in the last {{ rates.window_days }} days.</td></tr>
+      <tr><td colspan="7" class="muted">No evaluated runs in the last {{ rates.window_days }} days.</td></tr>
     {% endfor %}
     </tbody>
   </table>
