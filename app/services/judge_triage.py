@@ -32,11 +32,11 @@ from app.observability.metrics import (
 )
 from app.services.evaluation.aggregator import suspicion_score
 from app.services.evaluation.evidence import redact_text
-from app.services.evaluation.judges import JudgeProvider, JudgeResult, assess_with_fallback, get_judge
-from app.services.evaluation.judges.base import JudgeInput
+from app.services.evaluation.judges import DeterministicJudge, JudgeProvider, JudgeResult, assess_with_fallback, build_judge, get_judge
+from app.services.evaluation.judges.base import JudgeInput, JudgeOutput, triage_priority_for
 from app.services.evaluation.judges.family import same_family
 from app.services.evaluation.judges.inputs import build_judge_input
-from app.services.evaluation.judges.profiles import active_profile_known, get_profile, resolve_active_profile
+from app.services.evaluation.judges.profiles import active_profile_known, get_profile, resolve_active
 from app.services.evaluation.taxonomy import PRIORITY_RANK
 
 logger = logging.getLogger(__name__)
@@ -64,15 +64,17 @@ def _utc_day_start(now: datetime | None = None) -> datetime:
     return current.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
-async def tokens_used_today(session: AsyncSession, tenant_id: str, *, now: datetime | None = None) -> int:
+async def tokens_used_today(session: AsyncSession, tenant_id: str, *, now: datetime | None = None, profile: str | None = None) -> int:
+    """Judge tokens recorded today for a tenant (v1.5.12: optionally only assessments attributed to one profile)."""
     start = _utc_day_start(now)
-    total = await session.scalar(
-        select(func.coalesce(func.sum(JudgeAssessment.input_tokens + JudgeAssessment.output_tokens), 0)).where(
-            JudgeAssessment.tenant_id == tenant_id,
-            JudgeAssessment.created_at >= start,
-            JudgeAssessment.created_at < start + timedelta(days=1),
-        )
+    stmt = select(func.coalesce(func.sum(JudgeAssessment.input_tokens + JudgeAssessment.output_tokens), 0)).where(
+        JudgeAssessment.tenant_id == tenant_id,
+        JudgeAssessment.created_at >= start,
+        JudgeAssessment.created_at < start + timedelta(days=1),
     )
+    if profile is not None:
+        stmt = stmt.where(JudgeAssessment.profile == profile)
+    total = await session.scalar(stmt)
     return int(total or 0)
 
 
@@ -127,8 +129,19 @@ async def judge_input_for_review(session: AsyncSession, review: EvaluationReview
 async def _record_judge_usage(
     session: AsyncSession, *, settings: Settings, tenant_id: str, run_id: str, result: JudgeResult, extra: dict[str, Any]
 ) -> str:
-    """Record judge tokens in the ledger. ``record_usage_event`` commits, so this runs after the assessment commit."""
-    primary = result.primary
+    """Record judge tokens in the ledger. ``record_usage_event`` commits, so this runs after the assessment commit.
+
+    v1.5.12: every judge that ran in the fallback chain is ledgered under its own profile's pricing."""
+    usage_id = ""
+    for output in result.ran:
+        recorded = await _record_output_usage(session, settings=settings, tenant_id=tenant_id, run_id=run_id, primary=output, extra=extra)
+        usage_id = usage_id or recorded
+    return usage_id
+
+
+async def _record_output_usage(
+    session: AsyncSession, *, settings: Settings, tenant_id: str, run_id: str, primary: JudgeOutput, extra: dict[str, Any]
+) -> str:
     if not (primary.input_tokens or primary.output_tokens):
         return ""
     from app.schemas.finops import UsageEventCreateRequest
@@ -194,22 +207,23 @@ async def run_judge(
     tenant_id: str,
     judge: JudgeProvider | None = None,
     require_tenant_consent: bool = True,
+    resilient: bool = False,
 ) -> tuple[JudgeResult, bool]:
     """Assess with tenant consent and the token cap applied; returns the result and the same-family flag.
 
     An external (cloud) judge needs the global ``EVALUATION_JUDGE_ALLOW_EXTERNAL`` switch (checked by the provider)
     **and** the tenant's consent (D15). Without consent no request is sent and the deterministic judge is used.
+
+    ``resilient`` (v1.5.12 live triage, D13-D15): per-profile daily caps, circuit breakers and the profile's fallback
+    chain apply. Benchmarks keep the plain path so their measurements are not shaped by breaker state.
     """
     judge = judge or get_judge(settings)
-    skip = ""
-    if require_tenant_consent and getattr(judge, "is_external", False):
-        if not await external_judge_consent(session, tenant_id, getattr(judge, "profile_label", "")):
-            skip = "blocked_external"
-    if not skip and judge.name != "deterministic":
-        cap = int(settings.evaluation_judge_daily_token_cap_per_tenant)
-        if await tokens_used_today(session, tenant_id) >= cap:
-            skip = "budget_exceeded"
-    result = await assess_with_fallback(judge_input, settings, judge=judge, skip_primary_status=skip)
+    if resilient:
+        result = await _run_chain(session, judge_input, settings, tenant_id=tenant_id, judge=judge, require_tenant_consent=require_tenant_consent)
+    else:
+        skip = await _skip_reason(session, settings, judge, tenant_id=tenant_id, require_tenant_consent=require_tenant_consent)
+        result = await assess_with_fallback(judge_input, settings, judge=judge, skip_primary_status=skip)
+    judge = _judge_for_output(result, judge, settings)
     family_warning = False
     if judge.name != "deterministic" and getattr(judge, "model", ""):
         family_warning = same_family(
@@ -220,6 +234,152 @@ async def run_judge(
         )
     _observe(result)
     return result, family_warning
+
+
+async def _skip_reason(
+    session: AsyncSession,
+    settings: Settings,
+    judge: JudgeProvider,
+    *,
+    tenant_id: str,
+    require_tenant_consent: bool,
+    per_profile_cap: bool = False,
+) -> str:
+    if require_tenant_consent and getattr(judge, "is_external", False):
+        if not await external_judge_consent(session, tenant_id, getattr(judge, "profile_label", "")):
+            return "blocked_external"
+    if judge.name == "deterministic":
+        return ""
+    if await tokens_used_today(session, tenant_id) >= int(settings.evaluation_judge_daily_token_cap_per_tenant):
+        return "budget_exceeded"
+    if per_profile_cap:
+        profile = get_profile(settings, getattr(judge, "profile_label", ""))
+        if profile is not None and profile.daily_token_cap is not None:
+            if await tokens_used_today(session, tenant_id, profile=profile.name) >= profile.daily_token_cap:
+                return "budget_exceeded"  # D15: this profile's own cap; the chain moves on
+    return ""
+
+
+def _skipped_output(judge: JudgeProvider, status: str) -> JudgeOutput:
+    return JudgeOutput(
+        provider=judge.name,
+        model=getattr(judge, "model", ""),
+        judge_version=judge.version(),
+        status=status,
+        error=status,
+        profile=getattr(judge, "profile_label", ""),
+    )
+
+
+def _chain_entry(output: JudgeOutput, *, ran: bool) -> dict[str, Any]:
+    return {
+        "profile": output.profile,
+        "status": output.status,
+        "error": (output.error or "")[:200],
+        "ran": ran,
+        "input_tokens": output.input_tokens,
+        "output_tokens": output.output_tokens,
+        "latency_ms": output.latency_ms,
+    }
+
+
+async def _fallback_ready(session: AsyncSession, settings: Settings, name: str) -> str:
+    """Empty when a fallback target may run (D13: matching successful probe plus the D9 external rules), else why not."""
+    from app.services.evaluation.judges import activation_state
+    from app.services.judge_activation import effective_external, readiness_reasons
+    from app.services.judge_profiles_admin import missing_pricing
+
+    profile = get_profile(settings, name)
+    if profile is None:
+        return "unknown_profile"
+    external = effective_external(profile, settings)
+    pricing_missing = await missing_pricing(session, settings, profile) if external else False
+    state = activation_state.snapshot().states.get(name)
+    reasons = readiness_reasons(profile, settings, state, pricing_missing=pricing_missing, check_age=False)
+    return reasons[0] if reasons else ""
+
+
+async def _run_chain(
+    session: AsyncSession,
+    judge_input: JudgeInput,
+    settings: Settings,
+    *,
+    tenant_id: str,
+    judge: JudgeProvider,
+    require_tenant_consent: bool,
+) -> JudgeResult:
+    """Primary, then its ``fallback`` profiles (D13), then deterministic. Each step honours consent, the global and
+    per-profile caps (D15) and the profile's breaker (D14). Only triage values come out of here (D23)."""
+    from app.services.judge_activation import breaker_state, record_result
+
+    primary_label = getattr(judge, "profile_label", "")
+    primary_profile = get_profile(settings, primary_label) if primary_label else None
+    fallback_names = primary_profile.fallback if primary_profile is not None and judge.name != "deterministic" else ()
+    candidates: list[tuple[JudgeProvider | None, str]] = [(judge, primary_label)] + [(None, name) for name in fallback_names]
+    chain: list[dict[str, Any]] = []
+    ran: list[JudgeOutput] = []
+    first: JudgeOutput | None = None
+    chosen: JudgeOutput | None = None
+    for candidate, name in candidates:
+        if candidate is None:
+            not_ready = await _fallback_ready(session, settings, name)
+            if not_ready:
+                chain.append({"profile": name, "status": "skipped", "error": not_ready, "ran": False})
+                continue
+            candidate = build_judge(get_profile(settings, name), settings)
+        label = getattr(candidate, "profile_label", "") or name
+        skip = await _skip_reason(
+            session, settings, candidate, tenant_id=tenant_id, require_tenant_consent=require_tenant_consent, per_profile_cap=True
+        )
+        if not skip and candidate.name != "deterministic" and label and await breaker_state(settings, label) is not None:
+            skip = "breaker_open"
+        if skip:
+            output = _skipped_output(candidate, skip)
+            chain.append(_chain_entry(output, ran=False))
+        else:
+            try:
+                output = await candidate.assess(judge_input)
+            except Exception as exc:  # noqa: BLE001 - a judge failure must never break evaluation
+                output = _skipped_output(candidate, "error")
+                output.error = type(exc).__name__
+            ran.append(output)
+            chain.append(_chain_entry(output, ran=True))
+            if candidate.name != "deterministic" and label:
+                await record_result(settings, label, output.status)
+        if first is None:
+            first = output
+        if output.ok:
+            chosen = output
+            break
+    assert first is not None
+    fell_back = chosen is not None and chosen is not first
+    fallback: JudgeOutput | None = None
+    if chosen is not None:
+        primary, effective = chosen, chosen
+    else:
+        primary = first
+        fallback = DeterministicJudge().assess_sync(judge_input)
+        effective = fallback
+    score = float(effective.suspicion or 0.0)
+    return JudgeResult(
+        primary=primary,
+        fallback=fallback,
+        triage_score=round(score, 6),
+        triage_priority=triage_priority_for(score, injection_suspected=judge_input.injection_suspected),
+        triage_source=effective.judge_version,
+        injection_suspected=judge_input.injection_suspected,
+        attempts=ran,
+        chain=chain if len(chain) > 1 else [],
+        fallback_from=primary_label if fell_back else "",
+    )
+
+
+def _judge_for_output(result: JudgeResult, judge: JudgeProvider, settings: Settings) -> JudgeProvider:
+    """The judge whose output became ``primary`` (a fallback profile may have answered), for the same-family check."""
+    if not result.fallback_from:
+        return judge
+    profile = get_profile(settings, result.primary.profile)
+    return build_judge(profile, settings) if profile is not None else judge
 
 
 def build_assessment(
@@ -265,8 +425,8 @@ def build_assessment(
         same_family_warning=family_warning,
         input_digest=judge_input.digest(),
         input_truncated=dict(judge_input.truncated),
-        input_tokens=primary.input_tokens,
-        output_tokens=primary.output_tokens,
+        input_tokens=result.input_tokens,  # v1.5.12: every judge that ran (keeps the per-tenant cap honest)
+        output_tokens=result.output_tokens,
         latency_ms=primary.latency_ms,
     )
 
@@ -277,6 +437,10 @@ def _fallback_payload(result: JudgeResult) -> dict[str, Any]:
     primary = result.primary
     if primary.provider != "deterministic" and (primary.structured_output or primary.attempts):
         payload["request"] = {"structured_output": primary.structured_output, "attempts": primary.attempts}
+    if result.chain:
+        payload["chain"] = list(result.chain)  # v1.5.12 (D13): each profile tried, skipped or failed, in order
+    if result.fallback_from:
+        payload["fallback_from"] = result.fallback_from
     return payload
 
 
@@ -320,7 +484,7 @@ async def triage_review(
                 await session.commit()
             return existing, True
         outcome = await latest_outcome(session, review.run_id)
-        result, family_warning = await run_judge(session, judge_input, settings, tenant_id=review.tenant_id, judge=judge)
+        result, family_warning = await run_judge(session, judge_input, settings, tenant_id=review.tenant_id, judge=judge, resilient=True)
         assessment = build_assessment(
             result=result,
             judge_input=judge_input,
@@ -408,6 +572,7 @@ def assessment_to_dict(item: JudgeAssessment) -> dict[str, Any]:
         "evidence_refs": list(item.evidence_refs or []),
         "rationale": item.rationale,
         "fallback": dict(item.fallback or {}),
+        "fallback_from": str((item.fallback or {}).get("fallback_from") or ""),
         "injection_suspected": bool(item.injection_suspected),
         "injection_markers": list(item.injection_markers or []),
         "same_family_warning": bool(item.same_family_warning),
@@ -425,7 +590,11 @@ def assessment_to_dict(item: JudgeAssessment) -> dict[str, Any]:
 async def judge_status(session: AsyncSession, settings: Settings, *, tenant_id: str | None = None) -> dict[str, Any]:
     from app.services.judge_background import pending_summary
 
-    judge = get_judge(settings)
+    from app.services.judge_activation import maybe_refresh
+
+    await maybe_refresh(session, settings)
+    resolution = resolve_active(settings)
+    judge = get_judge(settings, profile=resolution.profile)
     since = datetime.now(timezone.utc) - timedelta(hours=24)
     stmt = select(JudgeAssessment.status, func.count()).where(JudgeAssessment.created_at >= since).group_by(JudgeAssessment.status)
     if tenant_id:
@@ -437,6 +606,8 @@ async def judge_status(session: AsyncSession, settings: Settings, *, tenant_id: 
         "profile": getattr(judge, "profile_label", "") or settings.evaluation_judge_profile,
         "configured_profile": settings.evaluation_judge_profile,
         "profile_known": active_profile_known(settings),
+        "source": resolution.source,  # v1.5.12 (D2): dashboard / environment / default
+        "activation_notes": dict(resolution.notes),  # profiles not in use and why (needs_reprobe, not_probed, ...)
         "provider": judge.name,
         "model": getattr(judge, "model", ""),
         "judge_version": judge.version(),
@@ -448,7 +619,7 @@ async def judge_status(session: AsyncSession, settings: Settings, *, tenant_id: 
         "tokens_used_today": await tokens_used_today(session, tenant_id) if tenant_id else None,
         "status_counts_24h": counts,
         "default_order": default_order(settings),
-        "execution": resolve_active_profile(settings).execution,
+        "execution": resolution.profile.execution,
         "pending_triage": await pending_summary(session, settings),
         "used_for_verdict": False,
         "used_for_hard_deny": False,

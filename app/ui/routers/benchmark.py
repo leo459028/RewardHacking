@@ -34,6 +34,7 @@ from app.services.evaluation.metrics import fpr_key
 from app.services.evaluation.taxonomy import CATEGORIES
 from app.services.events import EventPublisher
 from app.services.judge_background import pending_summary, sweep_pending_triage
+from app.services.evaluation.judges.profiles import resolve_active_profile
 from app.services.judge_profiles_admin import JudgeProfileAdminError, ensure_zero_cost_pricing, probe_profile, profiles_view
 from app.services.orchestrator import AgentOrchestrator
 from app.services.review_queue import get_evaluation_policy, policy_to_dict, upsert_evaluation_policy
@@ -128,7 +129,7 @@ async def dashboard_benchmark(request: Request, session: AsyncSession = Depends(
             "triage_keys": ["5", "10", "20", "budget_0.01", "budget_0.05", "budget_0.10"],
             # v1.5.11 judge profiles, external-judge consent and pending background triage
             "judge_profiles": profiles_view(settings),
-            "active_judge_profile": settings.evaluation_judge_profile,
+            "active_judge_profile": resolve_active_profile(settings).name,  # v1.5.12: what live triage really uses
             "judge_mode": settings.evaluation_judge_mode,
             "consent": consent,
             "pending_triage": await pending_summary(session, settings),

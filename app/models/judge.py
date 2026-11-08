@@ -52,6 +52,42 @@ class JudgeAssessment(Base):
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class JudgeProfileConfig(Base):
+    """v1.5.12 (D4): a Dashboard-managed judge profile. ``config`` holds non-secret fields only."""
+
+    __tablename__ = "judge_profile_configs"
+
+    name: Mapped[str] = mapped_column(String(48), primary_key=True)
+    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    updated_by: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    created_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class JudgeProfileState(Base):
+    """v1.5.12 (D3): last probe and activation of a judge profile from any source.
+
+    Only configuration fingerprints are stored (D5): never an API key or a full hash of one. At most one row has
+    ``active=True`` (the service clears the others in the same transaction).
+    """
+
+    __tablename__ = "judge_profile_states"
+
+    profile_name: Mapped[str] = mapped_column(String(48), primary_key=True)
+    probe_status: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    probe_error: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    probe_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    probed_at = mapped_column(DateTime(timezone=True), nullable=True)
+    probe_result: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    active: Mapped[bool] = mapped_column(Boolean, index=True, nullable=False, default=False)
+    activation_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    activated_by: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    activated_at = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class ReviewSamplingDecision(Base):
     __tablename__ = "review_sampling_decisions"
 

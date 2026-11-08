@@ -7,14 +7,14 @@ decisions (AGENTS.md 2.3). Any primary-provider failure falls back to the determ
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import httpx
 
 from app.core.config import Settings
 from app.services.evaluation.judges.base import JudgeInput, JudgeOutput, JudgeProvider, triage_priority_for
 from app.services.evaluation.judges.deterministic import DETERMINISTIC_VERSION, DeterministicJudge
-from app.services.evaluation.judges.openai_compatible import OpenAICompatibleJudge
+from app.services.evaluation.judges.openai_compatible import HTTP_JUDGES, AnthropicJudge, HttpJudge, OpenAICompatibleJudge
 from app.services.evaluation.judges.profiles import (
     JudgeProfile,
     JudgeProfileError,
@@ -25,6 +25,7 @@ from app.services.evaluation.judges.profiles import (
 )
 
 __all__ = [
+    "AnthropicJudge",
     "DETERMINISTIC_VERSION",
     "DeterministicJudge",
     "JudgeInput",
@@ -33,6 +34,7 @@ __all__ = [
     "JudgeProfileError",
     "JudgeProvider",
     "JudgeResult",
+    "HttpJudge",
     "OpenAICompatibleJudge",
     "assess_with_fallback",
     "build_judge",
@@ -52,8 +54,9 @@ def set_test_transport(transport: httpx.AsyncBaseTransport | None) -> None:
 
 def build_judge(profile: JudgeProfile, settings: Settings) -> JudgeProvider:
     """Instantiate the provider a profile describes. The API key is read from the environment here, per call."""
-    if profile.provider == "openai_compatible":
-        return OpenAICompatibleJudge(
+    judge_class = HTTP_JUDGES.get(profile.provider)
+    if judge_class is not None:  # v1.5.12 (D12): the provider picks the adapter
+        return judge_class(
             base_url=profile.base_url,
             model=profile.model,
             api_key=profile.api_key(settings),
@@ -99,10 +102,27 @@ class JudgeResult:
     triage_priority: str
     triage_source: str
     injection_suspected: bool
+    # v1.5.12 (D13): every judge that actually ran (fallback chain included), what was skipped and why, and the
+    # profile the chain started from when a fallback profile produced ``primary``.
+    attempts: list[JudgeOutput] = field(default_factory=list)
+    chain: list[dict] = field(default_factory=list)
+    fallback_from: str = ""
 
     @property
     def status(self) -> str:
         return self.primary.status
+
+    @property
+    def ran(self) -> list[JudgeOutput]:
+        return self.attempts or [self.primary]
+
+    @property
+    def input_tokens(self) -> int:
+        return sum(item.input_tokens for item in self.ran)
+
+    @property
+    def output_tokens(self) -> int:
+        return sum(item.output_tokens for item in self.ran)
 
 
 async def assess_with_fallback(

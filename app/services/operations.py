@@ -161,21 +161,34 @@ async def _evaluation_judge_health_check(session: AsyncSession, *, settings: Set
     from app.models.judge import JudgeAssessment
     from app.services.evaluation.judges import get_judge
 
-    from app.services.evaluation.judges.profiles import active_profile_known
+    from app.services.evaluation.judges import activation_state
+    from app.services.evaluation.judges.profiles import active_profile_known, resolve_active
+    from app.services.judge_activation import breaker_state, maybe_refresh
 
-    judge = get_judge(settings)
+    await maybe_refresh(session, settings)  # v1.5.12 (D7)
+    resolution = resolve_active(settings)
+    judge = get_judge(settings, profile=resolution.profile)
     issues: list[str] = []
     status = "pass"
+    # v1.5.12 (D2, D6): a configured or activated LLM judge that is not in use (never tested, test failed, or its
+    # configuration / key changed since the test) means triage silently runs on the rule-based judge: warn.
+    for name, note in sorted(resolution.notes.items()):
+        if note == "unknown_profile":
+            continue  # reported below as a configuration failure
+        status = "warn" if status == "pass" else status
+        state = activation_state.snapshot().states.get(name)
+        detail = f": {state.probe_error}" if state is not None and note == "probe_failed" and state.probe_error else ""
+        issues.append(f"judge profile '{name}' is not in use ({note}{detail}); the rule-based judge is used until it passes a connection test")
     if not active_profile_known(settings):
         status = "fail"
         issues.append(f"EVALUATION_JUDGE_PROFILE '{settings.evaluation_judge_profile}' is not defined (falling back to deterministic)")
     if settings.evaluation_judge_mode == "off":
         status = "warn"
         issues.append("judge mode is off")
-    if judge.name == "openai_compatible":
-        if not settings.evaluation_judge_base_url or not settings.evaluation_judge_model:
+    if judge.name in {"openai_compatible", "anthropic"}:
+        if not resolution.profile.base_url or not resolution.profile.model:
             status = "fail"
-            issues.append("openai_compatible needs EVALUATION_JUDGE_BASE_URL and EVALUATION_JUDGE_MODEL")
+            issues.append(f"{judge.name} needs a base URL and a model (EVALUATION_JUDGE_BASE_URL / EVALUATION_JUDGE_MODEL or the profile)")
         elif getattr(judge, "is_external", False) and not settings.evaluation_judge_allow_external:
             status = "warn" if status == "pass" else status
             issues.append("external judge endpoint is blocked (EVALUATION_JUDGE_ALLOW_EXTERNAL=false)")
@@ -205,11 +218,19 @@ async def _evaluation_judge_health_check(session: AsyncSession, *, settings: Set
         issues.append(f"{same_family} assessments used a judge from the monitored agent's model family")
     if settings.judge_uses_legacy_alias:
         issues.append("LLM_JUDGE_ENABLED is deprecated; set EVALUATION_JUDGE_PROVIDER")
-    from app.services.evaluation.judges.profiles import resolve_active_profile
     from app.services.judge_background import pending_summary
     from app.services.judge_profiles_admin import missing_pricing
 
-    active_profile = resolve_active_profile(settings)
+    active_profile = resolution.profile
+    open_breakers: dict[str, Any] = {}
+    if active_profile.provider != "deterministic":
+        for name in (active_profile.name, *active_profile.fallback):
+            breaker = await breaker_state(settings, name)
+            if breaker is not None:
+                open_breakers[name] = {"expires_at": breaker.get("expires_at"), "failures": breaker.get("failures")}
+    if open_breakers:
+        status = "warn" if status == "pass" else status
+        issues.append(f"judge circuit breaker open for {', '.join(sorted(open_breakers))} (fallback chain in use)")
     pricing_missing = await missing_pricing(session, settings, active_profile)
     if pricing_missing:
         status = "warn" if status == "pass" else status
@@ -257,6 +278,9 @@ async def _evaluation_judge_health_check(session: AsyncSession, *, settings: Set
             "pending_triage": pending,
             "pricing_missing": pricing_missing,
             "execution": active_profile.execution,
+            "source": resolution.source,
+            "activation_notes": dict(resolution.notes),
+            "open_breakers": open_breakers,
             "used_for_verdict": False,
         },
     )

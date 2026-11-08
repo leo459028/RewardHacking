@@ -22,6 +22,37 @@ from app.services.run_state import InMemoryRunStateStore
 os.environ.setdefault("EVALUATION_SAMPLE_RANDOM_RATE", "0")
 
 
+@pytest.fixture(autouse=True)
+def _judge_activation_isolation():
+    """v1.5.12: the judge activation snapshot is process-global; start every test from an empty one.
+
+    Pre-v1.5.12 tests select a judge with EVALUATION_JUDGE_PROFILE / EVALUATION_JUDGE_PROVIDER and never probe it,
+    so the D2 probe gate is relaxed for environment-selected profiles here. The v1.5.12 tests re-enable it with the
+    ``activation_gate`` fixture (production always enforces it).
+    """
+    from app.services import judge_activation
+    from app.services.evaluation.judges import activation_state
+
+    judge_activation.RUN_ON_STARTUP = False  # the app lifespan must not reach a real database in tests
+    judge_activation._BREAKER_STORE_OVERRIDE = InMemoryRunStateStore()  # judge breakers never reach Redis in tests
+    activation_state.reset()
+    previous = activation_state.TRUST_ENV_PROFILE_WITHOUT_PROBE
+    activation_state.TRUST_ENV_PROFILE_WITHOUT_PROBE = True
+    yield
+    activation_state.TRUST_ENV_PROFILE_WITHOUT_PROBE = previous
+    judge_activation._BREAKER_STORE_OVERRIDE = None
+    activation_state.reset()
+
+
+@pytest.fixture
+def activation_gate():
+    """Enforce the v1.5.12 D2 rule: an environment-selected judge profile needs a matching successful probe."""
+    from app.services.evaluation.judges import activation_state
+
+    activation_state.TRUST_ENV_PROFILE_WITHOUT_PROBE = False
+    yield activation_state
+
+
 @pytest.fixture
 def session_factory():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)

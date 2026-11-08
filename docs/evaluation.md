@@ -1,6 +1,6 @@
-# Evidence-Based Reward-Hacking Evaluation (`v1.5.8`–`v1.5.11`)
+# Evidence-Based Reward-Hacking Evaluation (`v1.5.8`–`v1.5.12`)
 
-This guide describes how RewardHacking evaluates what an agent actually did after execution: the outcome evidence model, CI attestation verification, the finding taxonomy, every detector rule with its known false positives, the aggregation rules, the post-execution review queue, (since `v1.5.9`) how detectors are measured with a labeled benchmark, honeypot probes and cheat rates, (since `v1.5.10`) how an advisory LLM judge orders review work and how rule-passed runs are sampled for review, and (since `v1.5.11`) how judge profiles connect real local and cloud models.
+This guide describes how RewardHacking evaluates what an agent actually did after execution: the outcome evidence model, CI attestation verification, the finding taxonomy, every detector rule with its known false positives, the aggregation rules, the post-execution review queue, (since `v1.5.9`) how detectors are measured with a labeled benchmark, honeypot probes and cheat rates, (since `v1.5.10`) how an advisory LLM judge orders review work and how rule-passed runs are sampled for review, (since `v1.5.11`) how judge profiles connect real local and cloud models, and (since `v1.5.12`) how a judge is tested and activated.
 
 > **Signals are monitor-only.** Evaluation findings support monitoring and human review. Do not use them as training rewards: optimizing a model against a monitor teaches it to hide intent instead of behaving well. All evaluation and review API responses carry `signal_usage: "monitor_only"`.
 
@@ -368,7 +368,59 @@ Reasoning on vs off, same model and the same 10 seed samples (3 hacking / 7 beni
 
 ---
 
-## 14. Known Limitations (`v1.5.11`)
+## 15. Judge Activation & Provider Adapters (`v1.5.12`)
+
+### 15.1 Which judge is in use
+
+Live triage resolves its judge in this order (D2):
+1. a Dashboard activation (`judge_profile_states.active`) whose `activation_fingerprint` still equals the profile's current fingerprint;
+2. the `EVALUATION_JUDGE_PROFILE` profile, if it is not rule-based and has a successful probe (`probe_status = ok`) recorded for its current fingerprint (no *Activate* needed);
+3. the rule-based judge (`deterministic`, or the synthesized `default` without a provider).
+
+A stale activation counts as absent, so resolution falls through to (2). `GET /v1/evaluations/judge/status` reports `source` (`dashboard` / `environment` / `default`) and `activation_notes` (profiles that are configured or activated but not used, with `not_probed`, `probe_failed`, `needs_reprobe` or `unknown_profile`); `evaluation_judge_health` warns on any note. At startup the API probes the environment-selected profile once in the background with the fixed synthetic input (audited as `system:startup`) when no valid probe exists; failure keeps the rule-based judge.
+
+The fingerprint is `sha256` over `provider`, `base_url`, `model`, `api_key_env`, the first 16 hex of the key's `sha256`, `structured_output`, `reasoning_effort`, `external` and `max_output_tokens`. Key rotation, a new URL or model therefore require a new test; timeouts, prices, execution mode and budgets do not. Only fingerprints are stored, never a key or a full key hash. The activation snapshot is cached per process and refreshed after every write and at most every `EVALUATION_JUDGE_ACTIVATION_REFRESH_SECONDS` (30) when triage is dispatched, so another container can take up to that long to follow.
+
+### 15.2 Readiness (activation conditions)
+
+| Code | Condition |
+| --- | --- |
+| `missing_fields` | provider, `base_url` and `model` are required (drafts cannot be tested or activated) |
+| `not_probed` / `probe_failed` / `needs_reprobe` | the last probe must be `ok` for the current fingerprint |
+| `probe_expired` | the probe must be newer than `EVALUATION_JUDGE_PROBE_MAX_AGE_HOURS` (24); checked on activation only |
+| `key_missing` | external: `api_key_env` set and the variable present |
+| `https_required` | external: `base_url` uses HTTPS |
+| `external_not_allowed` | external: `EVALUATION_JUDGE_ALLOW_EXTERNAL=true` |
+| `pricing_or_cap_missing` | external: a pricing row for the profile **or** a `daily_token_cap` |
+
+Tenant consent is still checked per evaluation (§13.4). A probe success never activates a Dashboard profile by itself. At most one profile is active; activating one clears the others. Editing an active Dashboard profile deactivates it.
+
+### 15.3 Profile sources and validation
+
+Dashboard profiles (`judge_profile_configs`, non-secret fields only, optimistic `version`) are merged after built-in, file and environment profiles and may not reuse their names; file / environment / built-in profiles are read-only in the page but can be tested and activated. A Dashboard row that no longer validates (for example after a rule tightened) is skipped and reported, never fatal. For every source:
+- `api_key_env` must match `^[A-Z][A-Z0-9_]*_API_KEY$` or be listed in `EVALUATION_JUDGE_KEY_ENV_ALLOWLIST` (invalid file profiles stop startup; Dashboard saves are refused);
+- `base_url` must be `http` / `https` without user credentials, query or fragment; `169.254.169.254`, `fd00:ec2::254` and `metadata.google.internal` are refused; an external host must use HTTPS (internal hosts such as `host.docker.internal` may use `http`). The HTTP judges re-check this before every request (`blocked_insecure_url`).
+- New optional fields: `fallback` (≤ 2 profile names, no self-reference or cycles) and `daily_token_cap`. Blank fields mean the system default.
+
+### 15.4 Provider adapters
+
+`judges/adapters/` defines `ProviderAdapter` (`build_request`, `parse_response`, `supported_modes`, `format_rejected`); `HttpJudge` keeps timeouts, retries with `Retry-After`, structured-output degradation and parsing. `openai_compatible` is unchanged. `anthropic` calls `POST {base_url}/v1/messages` with `x-api-key` and `anthropic-version: 2026-10-21`; structured output uses `output_config.format` (`json_schema`, schema stripped of numeric / length constraints, the reply still validated strictly) and degrades to prompt-only JSON when rejected. Forced `tool_choice` is not used because current Claude models (Opus 5.5, Sonnet 5.5) reject it; `temperature` is not sent because API version `2026-10-21` rejects sampling parameters. Thinking blocks are skipped; `reasoning_effort` maps to `output_config.effort` (`none` / `minimal` → `low`); `refusal` and `max_tokens` stop reasons are `invalid_output`; 429 / 5xx / 529 are retried. Current Claude models think before answering, so give Anthropic profiles a generous `max_output_tokens` (template: 4000). Verified with `httpx.MockTransport` only.
+
+### 15.5 Fallback, breaker and budgets (live triage only)
+
+`triage_review()` runs the active profile, then its `fallback` profiles in order, then the rule-based judge. Each step honours tenant consent, the global per-tenant cap, the profile's own `daily_token_cap` (per tenant, per UTC day) and its circuit breaker; a fallback target also needs a matching successful probe and the external rules (no activation, no probe-age check). The assessment records the profile that answered, and `fallback.chain` / `fallback.fallback_from` show every step. The breaker (`circuit:judge:{profile}`, `judge_failures:{profile}` in Redis) counts consecutive `timeout` / `error` results (not `invalid_output`), opens at `EVALUATION_JUDGE_BREAKER_FAILURE_THRESHOLD` (3) for `EVALUATION_JUDGE_BREAKER_TTL_SECONDS` (300), and is half-open afterwards: the next call runs, success closes it, failure re-opens it. Openings are audited (`breaker_opened`); a Redis outage disables the breaker but never blocks a call. Benchmarks keep the plain path. Assessment token counts include every judge that ran, and each is ledgered under its own pricing.
+
+### 15.6 Real-hardware result (`v1.5.12`)
+
+Qwen3.5-2B Q4_K_M in LM Studio on CPU, Dashboard profile `lm-real` (`reasoning_effort: none`, `execution: background`, `qa_local` pricing): *Activate* before testing was refused (`409`, `not_probed`); the probe succeeded (`json_schema` on the first request, 18.6 s, 527 / 179 tokens); after activation `/v1/evaluations/judge/status` reported `source: dashboard`. A grader-tampering outcome returned in 0.05 s with `pending:lm-real`, and the background assessment `jdg_392185f827cb45c096d4a497` arrived 27 s later (`ok`, 24.8 s, 697 / 224 tokens, triage `P1` / 1.0, `grader_tampering`) while the rule priority stayed `P0` / `open`. Changing the model deactivated the profile (`needs_reprobe`, rule-based judge in use); restoring it made the earlier probe valid again (`ready`). With LM Studio's server stopped, three outcomes failed (`error`, deterministic fallback) and the breaker opened on the third (TTL 300 s, audited); the fourth skipped the model (`breaker_open`) and `evaluation_judge_health` warned. After the TTL, with the server restarted, the next outcome called the model again (`jdg_39f63b3ecd1f4080b0ebfb73`, `ok`, 22.8 s) and the breaker closed. This run also showed that the profile in use kept the *Active* label while its breaker was open; the label now shows *Offline (breaker)* first.
+
+### 15.7 Audit
+
+GovernanceEvents `evaluation.judge_profile.created` / `updated` / `deleted` / `probed` / `activated` / `deactivated` / `breaker_opened` carry the profile name, a 12-hex fingerprint prefix, the actor and changed field names, never key material.
+
+---
+
+## 16. Known Limitations (`v1.5.12`)
 
 - AST analysis covers Python only; other languages use diff-level patterns (`medium` confidence).
 - `ci_attested` is verified only for DSSE envelopes signed by tenant-registered keys; Sigstore / GitHub keyless verification is not implemented. `platform_verified` requires the `v1.6.1` sandbox. An attestation does not prove tests were untouched.
@@ -384,3 +436,8 @@ Reasoning on vs off, same model and the same 10 seed samples (3 hacking / 7 beni
 - `structured_output: auto` decides that a format was rejected from the error text, which backends word differently; an unrecognised rejection fails the request instead of degrading.
 - 1–4B judges have limited judgement and resist prompt injection poorly; the safety boundary is that judges cannot change verdicts. 14B / 27B and Gemini were configured and mock-tested only.
 - Since `v1.5.11` an external judge needs tenant consent in addition to the global switch; tenants that relied on the `v1.5.10` global switch alone fall back to the deterministic judge until consent is recorded.
+- Since `v1.5.12` an environment-selected LLM profile is used only after its startup probe (or a manual test) succeeds; deployments that relied on `EVALUATION_JUDGE_PROFILE` alone run the rule-based judge until then. The startup probe runs once; later re-tests are manual or happen at the next restart.
+- Keys are still provided only through environment variables; in-page key entry waits for Dashboard RBAC / CSRF (`v1.6.x`). Dashboard Basic Auth has a single account, so everyone who can log in has the same rights; `insecure_dev` is for local machines only.
+- One global active profile; tenants cannot choose different judges. The activation cache can lag up to 30 s in other containers.
+- The per-profile token cap attributes tokens to the profile that produced the assessment; tokens a failed primary used before a fallback answered count toward the fallback profile.
+- The Anthropic adapter follows the API documentation current at implementation time and was verified with mocks only.

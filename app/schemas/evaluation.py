@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SIGNAL_USAGE = "monitor_only"
 
@@ -193,3 +193,51 @@ class EvaluationPolicyUpdateRequest(BaseModel):
     allow_external_judge: bool | None = None
     external_judge_profiles: list[str] | None = Field(default=None, max_length=20)
     updated_by: str = Field(default="", max_length=128)
+
+
+class JudgeProfileConfigInput(BaseModel):
+    """v1.5.12 Dashboard / API judge profile fields. Unknown fields - including any key, token or secret - are rejected:
+    keys are only ever referenced by environment variable name (``api_key_env``). Blank or omitted optional fields mean
+    "use the system default" (D18)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str | None = Field(default=None, max_length=32)
+    base_url: str | None = Field(default=None, max_length=500)
+    model: str | None = Field(default=None, max_length=128)
+    api_key_env: str | None = Field(default=None, max_length=128)
+    structured_output: str | None = Field(default=None, max_length=16)
+    timeout_seconds: float | None = None
+    max_input_chars: int | None = None
+    max_output_tokens: int | None = None
+    pricing_provider: str | None = Field(default=None, max_length=32)
+    pricing_model: str | None = Field(default=None, max_length=128)
+    external: bool | str | None = None
+    execution: str | None = Field(default=None, max_length=16)
+    max_retries: int | None = None
+    strip_reasoning: bool | None = None
+    reasoning_effort: str | None = Field(default=None, max_length=16)
+    fallback: list[str] | None = Field(default=None, max_length=2)
+    daily_token_cap: int | None = None
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _blank_is_default(cls, value):
+        """D18: an empty form field means "use the system default"."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+
+class JudgeProfileCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=2, max_length=48)
+    config: JudgeProfileConfigInput
+
+
+class JudgeProfileUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: int = Field(ge=1)
+    config: JudgeProfileConfigInput

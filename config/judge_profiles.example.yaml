@@ -1,11 +1,21 @@
-# RewardHacking judge profiles (v1.5.11)
+# RewardHacking judge profiles (v1.5.11; v1.5.12 activation, fallback, budgets, Anthropic)
 #
-# Copy to config/judge_profiles.yaml (git-ignored) and select the live-triage profile with
-# EVALUATION_JUDGE_PROFILE=<name>. A judge only orders human review work: it never changes a verdict,
-# a review priority or a review status, in any profile.
+# Copy to config/judge_profiles.yaml (git-ignored). A judge only orders human review work: it never changes a
+# verdict, a review priority or a review status, in any profile.
 #
-# Never put a key in this file. Reference the environment variable that holds it with api_key_env;
-# a profile containing api_key / token / secret fields is rejected at startup.
+# v1.5.12: no LLM profile is used until it passes a connection test for its exact configuration.
+# - Select one with EVALUATION_JUDGE_PROFILE=<name>: the API probes it once in the background at startup and uses it
+#   only if the probe succeeds; or
+# - test and activate it on /dashboard/judge-profiles (profiles can also be created there).
+# Changing base_url, model, the key, structured_output, reasoning_effort, external or max_output_tokens means it must
+# be tested again; until then the rule-based judge is used.
+#
+# Never put a key in this file. Reference the environment variable that holds it with api_key_env, whose name must
+# end in _API_KEY (or be listed in EVALUATION_JUDGE_KEY_ENV_ALLOWLIST). A profile containing api_key / token /
+# secret fields is rejected at startup. External hosts must use https; cloud metadata addresses are refused.
+#
+# Optional v1.5.12 fields: fallback (up to 2 profile names, tried when this profile fails or its breaker is open;
+# the rule-based judge is always last) and daily_token_cap (tokens per tenant per UTC day for this profile).
 #
 # Built-in profiles that always exist: "deterministic" and "default" (derived from EVALUATION_JUDGE_*).
 
@@ -26,6 +36,7 @@ profiles:
     execution: background          # outcome submission does not wait for a slow local model
     pricing_provider: qa_local     # add a zero-cost pricing row for this model
     strip_reasoning: true          # drop <think>...</think> before parsing
+    fallback: [local-small-fast]   # v1.5.12: used when local-small fails or its breaker is open (must be tested too)
 
   # Same model with reasoning off: ~2.3x faster but much weaker judgement (near chance on the 10-sample test).
   # LM Studio ignores /no_think and enable_thinking=false; only reasoning_effort: none disables reasoning.
@@ -68,3 +79,22 @@ profiles:
     max_retries: 2
     execution: inline
     pricing_provider: google
+    daily_token_cap: 200000        # v1.5.12: per tenant per day for this profile (on top of the global cap)
+
+  # v1.5.12 native Anthropic Messages API (x-api-key, anthropic-version 2026-10-21, output_config.format JSON schema).
+  # Requires ANTHROPIC_API_KEY, EVALUATION_JUDGE_ALLOW_EXTERNAL=true and tenant consent. Current Claude models think
+  # before answering and thinking uses output tokens, so keep max_output_tokens generous. Model name is an example.
+  - name: claude-sonnet
+    provider: anthropic
+    base_url: https://api.anthropic.com
+    model: claude-sonnet-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    external: true
+    structured_output: auto        # json_schema (output_config.format), then prompt-only JSON
+    timeout_seconds: 60
+    max_input_chars: 24000
+    max_output_tokens: 4000
+    max_retries: 2
+    execution: inline
+    pricing_provider: anthropic
+    daily_token_cap: 200000

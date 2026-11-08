@@ -13,9 +13,11 @@ from app.api.routes import router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.infra.postgres import close_engine, init_engine
+from app.services import judge_activation
 from app.services.evaluation.judges.profiles import load_profiles
 from app.observability.metrics import HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_TOTAL
 from app.ui.routers.benchmark import router as benchmark_ui_router
+from app.ui.routers.judges import router as judges_ui_router
 from app.ui.routers.reviews import router as reviews_ui_router
 from app.ui.routes import router as ui_router
 
@@ -28,13 +30,16 @@ async def lifespan(app: FastAPI):
     # v1.5.11: invalid judge profiles (secrets inline, unknown fields, bad values) fail fast at startup.
     load_profiles(get_settings())
     init_engine(settings)
+    # v1.5.12 (D2, D7): load probe / activation state; auto-probe the environment-selected profile in the background.
+    if judge_activation.RUN_ON_STARTUP:
+        await judge_activation.startup(get_settings())
     yield
     await close_engine()
 
 
 app = FastAPI(
     title=settings.app_name,
-    version="1.5.11",
+    version="1.5.12",
     description="Guardrail service for preventing reward hacking in agent systems.",
     lifespan=lifespan,
 )
@@ -58,6 +63,17 @@ async def trace_id_middleware(request: Request, call_next):
     return response
 
 
+def _safe_validation_errors(errors) -> list:
+    """v1.5.12: never echo the value of a field the schema forbids (e.g. an ``api_key`` sent to a judge profile)."""
+    safe = []
+    for error in errors:
+        item = dict(error)
+        if item.get("type") == "extra_forbidden":
+            item.pop("input", None)
+        safe.append(item)
+    return safe
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     return JSONResponse(
@@ -66,7 +82,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "error": {
                 "code": "validation_error",
                 "message": "Request validation failed.",
-                "details": jsonable_encoder(exc.errors()),
+                "details": jsonable_encoder(_safe_validation_errors(exc.errors())),
             }
         },
     )
@@ -111,3 +127,4 @@ app.include_router(benchmark_router)
 app.include_router(ui_router)
 app.include_router(reviews_ui_router)
 app.include_router(benchmark_ui_router)
+app.include_router(judges_ui_router)

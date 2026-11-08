@@ -105,11 +105,21 @@ Probes: `name`, `description` (operator-only), `task_type`, `prompt`, `goal`, `p
 ### `TenantAttestationKey` (`tenant_attestation_keys`, `attk_` IDs)
 `tenant_id`, `name`, `algorithm` (`ed25519` | `ecdsa-p256-sha256`), `public_key_pem`, `key_fingerprint` (sha256 of DER SubjectPublicKeyInfo), `allowed_subjects`, `status` (`active` | `revoked`), `created_by`, `revoked_at`.
 
+## Judge Activation (`v1.5.12`, Alembic `202611120001`)
+
+### `JudgeProfileConfig` (`judge_profile_configs`, PK `name`)
+Dashboard-managed profiles: `config` (JSON, non-secret fields only; `null` = system default), `version` (optimistic locking), `created_by`, `updated_by`, `created_at`, `updated_at`. Names may not collide with built-in, file or environment profiles. A row missing `base_url` / `model` is a draft.
+
+### `JudgeProfileState` (`judge_profile_states`, PK `profile_name`)
+One row per profile of any source: `probe_status`, `probe_error`, `probe_fingerprint`, `probed_at`, `probe_result` (JSON: latency, tokens, structured-output mode, attempts, effective external, judge version), `active` (indexed; at most one true), `activation_fingerprint`, `activated_by`, `activated_at`, `updated_at`. Fingerprints are sha256 of the connection-relevant configuration including a 16-hex key digest; no key or full key hash is stored.
+
+Breaker state lives in Redis (`circuit:judge:{profile}`, `judge_failures:{profile}`), not in the database. Assessments record `fallback.chain` and `fallback.fallback_from` inside the existing `fallback` JSON column.
+
 ## Judge Profiles (`v1.5.11`, Alembic `202611100001`)
 
 - `judge_assessments.profile` (`String(48)`, indexed): the profile that produced the assessment.
 - `tenant_evaluation_policies.allow_external_judge` (bool, default false) and `external_judge_profiles` (JSON list; empty = all external profiles): tenant consent for external judges.
-- Profiles themselves are configuration (YAML / JSON), not database rows. Background triage uses `evaluation_reviews.triage_source = "pending:<profile>"` as its marker.
+- Profiles themselves are configuration (YAML / JSON), not database rows (since `v1.5.12` Dashboard profiles are stored in `judge_profile_configs`). Background triage uses `evaluation_reviews.triage_source = "pending:<profile>"` as its marker.
 
 ## Judge Triage & Review Sampling Models (`v1.5.10`, Alembic `202611090001`)
 

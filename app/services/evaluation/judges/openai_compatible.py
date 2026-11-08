@@ -1,10 +1,16 @@
-"""OpenAI-compatible chat-completions judge (v1.5.10).
+"""HTTP judges: OpenAI-compatible (v1.5.10) and, since v1.5.12, any provider adapter (plan D12).
 
-Works with hosted APIs and local servers that speak ``POST {base_url}/chat/completions``
-(for example vLLM or Ollama). Guardrails:
+:class:`HttpJudge` holds everything provider-independent; the adapter (``judges/adapters/``) builds the request and
+reads the response. Guardrails:
 - external endpoints are refused unless ``EVALUATION_JUDGE_ALLOW_EXTERNAL=true`` (D10, parsed hostnames);
-- a hard timeout (D6); any failure returns a non-``ok`` status so the caller falls back;
-- the API key is sent only as an ``Authorization`` header and never logged or returned.
+- v1.5.12 (D11): the URL is re-checked before every request (no metadata address, credentials, query string, and
+  HTTPS for external hosts), so a profile built outside the validated loaders cannot send evidence in clear text;
+- a hard timeout (D6) with bounded retries honouring ``Retry-After`` (v1.5.11 D9); any failure returns a non-``ok``
+  status so the caller falls back;
+- the API key is sent only in an authentication header and never logged or returned.
+
+``OpenAICompatibleJudge`` keeps its v1.5.10 name, constructor and ``judge_version`` strings; ``AnthropicJudge`` uses the
+native Messages API adapter.
 """
 
 from __future__ import annotations
@@ -17,17 +23,16 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from app.services.evaluation.judges.adapters import ADAPTERS, ProviderAdapter
+from app.services.evaluation.judges.adapters.base import FORMAT_REJECTION_MARKERS, FORMAT_REJECTION_STATUS  # noqa: F401 - re-export
 from app.services.evaluation.judges.base import JudgeInput, JudgeOutput
-from app.services.evaluation.judges.parsing import JudgeOutputError, judge_output_schema, parse_judge_output
-from app.services.evaluation.judges.profiles import JudgeProfile
+from app.services.evaluation.judges.parsing import JudgeOutputError, parse_judge_output
+from app.services.evaluation.judges.profiles import JudgeProfile, base_url_problem
 from app.services.evaluation.judges.prompt import build_messages, prompt_version
 from app.services.mcp_gateway import is_external_endpoint
 
-
 AUTO_MODE_ORDER: tuple[str, ...] = ("json_schema", "json_object", "none")
-FORMAT_REJECTION_STATUS = frozenset({400, 422})
-FORMAT_REJECTION_MARKERS: tuple[str, ...] = ("response_format", "json_schema", "json_object", "structured", "schema", "format")
-RETRYABLE_STATUS = frozenset({429, 502, 503, 504})
+RETRYABLE_STATUS = frozenset({429, 502, 503, 504})  # OpenAI-compatible default; adapters declare their own
 RETRY_BASE_SECONDS = 1.0
 RETRY_MAX_SECONDS = 8.0
 RETRY_AFTER_MAX_SECONDS = 10.0
@@ -35,8 +40,8 @@ RETRY_AFTER_MAX_SECONDS = 10.0
 _MODE_CACHE: dict[tuple[str, str], str] = {}
 
 
-class OpenAICompatibleJudge:
-    name = "openai_compatible"
+class HttpJudge:
+    provider = "openai_compatible"
 
     def __init__(
         self,
@@ -54,7 +59,6 @@ class OpenAICompatibleJudge:
     ):
         self.base_url = (base_url or "").strip().rstrip("/")
         self.model = (model or "").strip()
-        self._api_key = api_key or ""
         self.timeout_seconds = float(timeout_seconds)
         self.max_output_tokens = int(max_output_tokens)
         self.allow_external = bool(allow_external)
@@ -73,6 +77,14 @@ class OpenAICompatibleJudge:
         self.max_retries = profile.max_retries if profile is not None else 0
         self.strip_reasoning = profile.strip_reasoning if profile is not None else True
         self.reasoning_effort = profile.reasoning_effort if profile is not None else ""
+        self.adapter: ProviderAdapter = ADAPTERS[self.provider](
+            base_url=self.base_url,
+            model=self.model,
+            api_key=api_key or "",
+            max_output_tokens=self.max_output_tokens,
+            reasoning_effort=self.reasoning_effort,
+        )
+        self.name = self.adapter.name
 
     def version(self) -> str:
         base = f"{self.name}:{self.model or 'unset'}:{prompt_version()}"
@@ -101,12 +113,10 @@ class OpenAICompatibleJudge:
             **kwargs,
         )
 
-    async def _post(self, body: dict[str, Any]) -> httpx.Response:
-        headers = {"Content-Type": "application/json"}
-        if self._api_key:
-            headers["Authorization"] = f"Bearer {self._api_key}"
+    async def _post(self, request: tuple[str, dict[str, str], dict[str, Any]]) -> httpx.Response:
+        url, headers, body = request
         async with httpx.AsyncClient(timeout=self.timeout_seconds, transport=self._transport) as client:
-            return await client.post(f"{self.base_url}/chat/completions", json=body, headers=headers)
+            return await client.post(url, json=body, headers=headers)
 
     # -- v1.5.11 structured output modes (D7) ------------------------------------------------------------
 
@@ -115,41 +125,27 @@ class OpenAICompatibleJudge:
         return (self.base_url, self.model)
 
     def _mode_sequence(self) -> list[str]:
-        """``auto`` tries json_schema → json_object → none, starting from the mode that worked last time."""
-        if self.structured_output != "auto":
-            return [self.structured_output]
-        cached = _MODE_CACHE.get(self._cache_key)
-        if cached in AUTO_MODE_ORDER:
-            return list(AUTO_MODE_ORDER[AUTO_MODE_ORDER.index(cached):])
-        return list(AUTO_MODE_ORDER)
+        """``auto`` tries the adapter's modes strictest first, starting from the mode that worked last time.
 
-    def _body(self, messages: list[dict[str, str]], mode: str) -> dict[str, Any]:
-        body: dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": 0,
-            "max_tokens": self.max_output_tokens,
-        }
-        if self.reasoning_effort:
-            body["reasoning_effort"] = self.reasoning_effort
-        if mode == "json_schema":
-            body["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {"name": "judge_triage", "strict": True, "schema": judge_output_schema()},
-            }
-        elif mode == "json_object":
-            body["response_format"] = {"type": "json_object"}
-        return body
+        An explicit mode the adapter does not speak (e.g. ``json_object`` on Anthropic) is sent as ``none``."""
+        supported = list(self.adapter.supported_modes())
+        if self.structured_output != "auto":
+            return [self.structured_output if self.structured_output in supported else "none"]
+        cached = _MODE_CACHE.get(self._cache_key)
+        if cached in supported:
+            return supported[supported.index(cached):]
+        return supported
 
     # -- v1.5.11 bounded retries (D9) ------------------------------------------------------------------------
 
-    async def _send(self, body: dict[str, Any], deadline: float) -> tuple[httpx.Response | None, str, int]:
-        """POST with retries on 429 / 502 / 503 / 504 and connection errors, all inside the profile timeout.
+    async def _send(self, request: tuple[str, dict[str, str], dict[str, Any]], deadline: float) -> tuple[httpx.Response | None, str, int]:
+        """POST with retries on the adapter's retryable statuses and connection errors, all inside the profile timeout.
 
         Returns ``(response, error, requests_made)``; ``error`` is ``timeout`` or an exception class name when no
         response was obtained. Timeouts are never retried (a slow local model would only be hit again).
         """
         loop = asyncio.get_running_loop()
+        retryable = self.adapter.retryable_status
         attempt = 0
         requests_made = 0
         while True:
@@ -160,7 +156,7 @@ class OpenAICompatibleJudge:
             last_response: httpx.Response | None = None
             last_error = ""
             try:
-                response = await asyncio.wait_for(self._post(body), timeout=remaining)
+                response = await asyncio.wait_for(self._post(request), timeout=remaining)
             except (asyncio.TimeoutError, httpx.TimeoutException):
                 return None, "timeout", requests_made
             except httpx.HTTPError as exc:
@@ -169,7 +165,7 @@ class OpenAICompatibleJudge:
                     return None, last_error, requests_made
                 delay = min(RETRY_BASE_SECONDS * 2**attempt, RETRY_MAX_SECONDS)
             else:
-                if response.status_code not in RETRYABLE_STATUS or attempt >= self.max_retries:
+                if response.status_code not in retryable or attempt >= self.max_retries:
                     return response, "", requests_made
                 last_response = response
                 delay = _retry_after(response) or min(RETRY_BASE_SECONDS * 2**attempt, RETRY_MAX_SECONDS)
@@ -182,8 +178,12 @@ class OpenAICompatibleJudge:
     async def assess(self, judge_input: JudgeInput) -> JudgeOutput:
         if not self.base_url or not self.model:
             return self._output("not_configured", error="base_url_or_model_missing")
-        if self.is_external and not self.allow_external:
+        external = self.is_external
+        if external and not self.allow_external:
             return self._output("blocked_external", error="external_endpoint_not_allowed")
+        problem = base_url_problem(self.base_url, external=external)
+        if problem:
+            return self._output("blocked_insecure_url", error="insecure_base_url")
         messages = build_messages(judge_input, secrets.token_hex(8))
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.timeout_seconds
@@ -191,19 +191,14 @@ class OpenAICompatibleJudge:
         attempts = 0
         modes = self._mode_sequence()
         for index, mode in enumerate(modes):
-            response, error, made = await self._send(self._body(messages, mode), deadline)
+            response, error, made = await self._send(self.adapter.build_request(messages, mode), deadline)
             attempts += made
             latency_ms = int((time.perf_counter() - started) * 1000)
             meta = {"latency_ms": latency_ms, "structured_output": mode, "attempts": attempts}
             if response is None:
                 return self._output("timeout" if error == "timeout" else "error", error=error, **meta)
-            if (
-                self.structured_output == "auto"
-                and index < len(modes) - 1
-                and response.status_code in FORMAT_REJECTION_STATUS
-                and _format_rejected(response)
-            ):
-                continue  # the backend does not support this response_format; degrade (not counted as a retry)
+            if self.structured_output == "auto" and index < len(modes) - 1 and self.adapter.format_rejected(response):
+                continue  # the backend does not support this structured-output request; degrade (not counted as a retry)
             if response.status_code >= 400:
                 return self._output("error", error=f"http_{response.status_code}", **meta)
             return self._parse_response(response, mode, meta)
@@ -214,18 +209,12 @@ class OpenAICompatibleJudge:
             payload = response.json()
         except ValueError:
             return self._output("invalid_output", error="response_not_json", **meta)
-        usage = payload.get("usage") if isinstance(payload, dict) else None
-        usage = usage if isinstance(usage, dict) else {}
-        tokens = {"input_tokens": int(usage.get("prompt_tokens") or 0), "output_tokens": int(usage.get("completion_tokens") or 0)}
+        parsed_response = self.adapter.parse_response(payload)
+        tokens = {"input_tokens": parsed_response.input_tokens, "output_tokens": parsed_response.output_tokens}
+        if parsed_response.error:
+            return self._output("invalid_output", error=parsed_response.error, **tokens, **meta)
         try:
-            content = payload["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError):
-            return self._output("invalid_output", error="missing_choice_content", **tokens, **meta)
-        if not isinstance(content, str) or not content.strip():
-            # e.g. a reasoning model that spent max_tokens on reasoning_content and never answered
-            return self._output("invalid_output", error="empty_content", **tokens, **meta)
-        try:
-            parsed = parse_judge_output(content, strip_reasoning=self.strip_reasoning)
+            parsed = parse_judge_output(parsed_response.content, strip_reasoning=self.strip_reasoning)
         except JudgeOutputError as exc:
             return self._output("invalid_output", error=str(exc), **tokens, **meta)
         if self.structured_output == "auto":
@@ -241,6 +230,17 @@ class OpenAICompatibleJudge:
         )
 
 
+class OpenAICompatibleJudge(HttpJudge):
+    provider = "openai_compatible"
+
+
+class AnthropicJudge(HttpJudge):
+    provider = "anthropic"
+
+
+HTTP_JUDGES: dict[str, type[HttpJudge]] = {"openai_compatible": OpenAICompatibleJudge, "anthropic": AnthropicJudge}
+
+
 def _retry_after(response: httpx.Response) -> float:
     value = response.headers.get("Retry-After", "")
     try:
@@ -251,12 +251,10 @@ def _retry_after(response: httpx.Response) -> float:
 
 
 def _format_rejected(response: httpx.Response) -> bool:
-    """Heuristic: a 400 / 422 whose error mentions the structured-output request (backends word this differently)."""
-    try:
-        text = response.text.lower()
-    except Exception:  # noqa: BLE001
-        return False
-    return any(marker in text for marker in FORMAT_REJECTION_MARKERS)
+    """v1.5.11 helper kept for compatibility; adapters decide since v1.5.12."""
+    from app.services.evaluation.judges.adapters.base import mentions_format
+
+    return mentions_format(response)
 
 
 def reset_mode_cache() -> None:

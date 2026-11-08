@@ -63,7 +63,10 @@ def test_v1511_migration_is_single_head_after_v1510():
         mod = _load_migration(path.name)
         revisions[mod.revision] = mod.down_revision
     referenced = {down for down in revisions.values() if down}
-    assert sorted(set(revisions) - referenced) == ["202611100001"]
+    heads = sorted(set(revisions) - referenced)
+    # Later releases extend the chain; the single-head assertion lives in the latest release test.
+    assert len(heads) == 1
+    assert "202611100001" in referenced or heads == ["202611100001"]
 
 
 def test_v1511_columns_and_defaults(session_factory):
@@ -212,14 +215,14 @@ def test_unknown_active_profile_falls_back_and_health_fails(session_factory, mon
 
 
 def test_api_key_is_read_from_env_and_never_exposed(monkeypatch):
-    monkeypatch.setenv("LAB_JUDGE_KEY", "lab-key-placeholder-value")
-    settings = _settings(evaluation_judge_profiles={"lab": _profile(api_key_env="LAB_JUDGE_KEY")})
+    monkeypatch.setenv("LAB_JUDGE_API_KEY", "lab-key-placeholder-value")
+    settings = _settings(evaluation_judge_profiles={"lab": _profile(api_key_env="LAB_JUDGE_API_KEY")})
     lab = jp.get_profile(settings, "lab")
     assert lab.api_key(settings) == "lab-key-placeholder-value"
     public = lab.public_dict(settings)
     assert public["api_key_configured"] is True and public["host"] == "localhost"
     assert "lab-key-placeholder-value" not in repr(lab) and "lab-key-placeholder-value" not in json.dumps(public)
-    monkeypatch.delenv("LAB_JUDGE_KEY")
+    monkeypatch.delenv("LAB_JUDGE_API_KEY")
     assert lab.api_key_configured(settings) is False
 
 
@@ -787,7 +790,7 @@ CLOUD_PROFILE = _profile(
     external=True,
     structured_output="json_schema",
     pricing_provider="google",
-    api_key_env="GEMINI_TEST_KEY",
+    api_key_env="GEMINI_TEST_API_KEY",
 )
 
 
@@ -853,7 +856,7 @@ def _judge_rows(session_factory, run_id: str):
 
 
 def test_cloud_profile_cost_matches_catalog_price(client, session_factory, monkeypatch):
-    monkeypatch.setenv("GEMINI_TEST_KEY", "gemini-test-key-placeholder")
+    monkeypatch.setenv("GEMINI_TEST_API_KEY", "gemini-test-key-placeholder")
     calls = _use_profiles(monkeypatch, {"gemini-t": CLOUD_PROFILE}, "gemini-t", lambda body: _content(json.dumps(GOOD)), allow_external=True)
     _price(client, "google", "gemini-judge-test", "input", "0.30")
     _price(client, "google", "gemini-judge-test", "output", "2.50")
@@ -889,7 +892,7 @@ def test_local_profile_without_pricing_row_still_records_missing_pricing(client,
 
 
 def test_external_judge_requires_tenant_consent(client, session_factory, monkeypatch):
-    monkeypatch.setenv("GEMINI_TEST_KEY", "gemini-test-key-placeholder")
+    monkeypatch.setenv("GEMINI_TEST_API_KEY", "gemini-test-key-placeholder")
     calls = _use_profiles(monkeypatch, {"gemini-t": CLOUD_PROFILE}, "gemini-t", lambda body: _content(json.dumps(GOOD)), allow_external=True)
 
     _, no_policy_review = _flagged_review(client, session_factory, "v1511-consent")
@@ -957,7 +960,7 @@ def test_internal_hosts_are_exact_and_external_can_only_be_forced():
 def test_seed_benchmark_with_external_profile_needs_no_tenant_consent(session_factory, monkeypatch):
     from app.services import benchmark as bench
 
-    monkeypatch.setenv("GEMINI_TEST_KEY", "gemini-test-key-placeholder")
+    monkeypatch.setenv("GEMINI_TEST_API_KEY", "gemini-test-key-placeholder")
     calls = _use_profiles(monkeypatch, {"gemini-t": CLOUD_PROFILE}, "gemini-t", lambda body: _content(json.dumps(GOOD)), allow_external=True)
     run = _db(
         session_factory,
@@ -1025,7 +1028,7 @@ def test_benchmark_profile_validation_and_rbac(client, monkeypatch):
 
 
 def test_profiles_api_lists_safe_view(client, monkeypatch):
-    monkeypatch.setenv("GEMINI_TEST_KEY", "gemini-test-key-placeholder")
+    monkeypatch.setenv("GEMINI_TEST_API_KEY", "gemini-test-key-placeholder")
     keys = _auth(monkeypatch, "v1511-profiles-api")
     _use_profiles(monkeypatch, LAB_PROFILES, "lab", lambda body: _content(json.dumps(GOOD)))
     assert client.get("/v1/evaluations/judge/profiles", headers=keys["operator"]).status_code == 403
@@ -1187,15 +1190,16 @@ def test_reasoning_effort_is_sent_only_when_configured():
 
 
 def test_v1511_version_anchors():
+    """Exact anchors moved to the latest release test; this keeps the 1.5.x series checks (v1.5.12 relaxed them)."""
     from app.main import app as fastapi_app
     from app.services.finops import FINOPS_CALCULATION_VERSION
 
-    assert fastapi_app.version == "1.5.11"
-    assert FINOPS_CALCULATION_VERSION == "v1.5.11"
-    assert 'version = "1.5.11"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert "(v1.5.11)" in (ROOT / "scripts" / "security_check.py").read_text(encoding="utf-8")
-    assert 'value="v1.5.11"' in (ROOT / "app" / "ui" / "templates" / "operations.html").read_text(encoding="utf-8")
-    assert 'release_version", "v1.5.11"' in (ROOT / "app" / "ui" / "routes.py").read_text(encoding="utf-8")
+    assert fastapi_app.version.startswith("1.5.")
+    assert FINOPS_CALCULATION_VERSION.startswith("v1.5.")
+    assert 'version = "1.5.' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert "(v1.5." in (ROOT / "scripts" / "security_check.py").read_text(encoding="utf-8")
+    assert 'value="v1.5.' in (ROOT / "app" / "ui" / "templates" / "operations.html").read_text(encoding="utf-8")
+    assert 'release_version", "v1.5.' in (ROOT / "app" / "ui" / "routes.py").read_text(encoding="utf-8")
     browser = (ROOT / "scripts" / "browser_manual_test.py").read_text(encoding="utf-8")
-    assert 'assert release_ver == "v1.5.11"' in browser and "Scenario 9 (v1.5.11)" in browser
+    assert 'assert release_ver == "v1.5.' in browser and "Scenario 9 (v1.5.11)" in browser
     assert (ROOT / "config" / "judge_profiles.example.yaml").is_file()

@@ -227,6 +227,23 @@ Served by `app/api/routers/benchmark.py` and `app/api/routers/evaluations.py`. E
 | `POST` | `/v1/tenants/{tenant_id}/attestation-keys` | Registers a public key (`name`, `algorithm` = `ed25519` \| `ecdsa-p256-sha256`, `public_key_pem`, `allowed_subjects`) → `201`; private keys and invalid PEM return `422 attestation_key_invalid`; duplicates `409 attestation_key_duplicate` | `tenant_admin`, `admin` |
 | `POST` | `/v1/tenants/{tenant_id}/attestation-keys/{key_id}/revoke` | Revokes a key | `tenant_admin`, `admin` |
 
+### Judge Activation & Profile Management (`v1.5.12`)
+
+Writes need the `admin` role (`tenant_admin` cannot change the global judge). Error bodies use `{"error": {"code", "message", "reasons"?}}`. Keys are never accepted: unknown fields such as `api_key` return `422 validation_error` without echoing the value.
+
+| Method | Path | Description | Access Role |
+| --- | --- | --- | --- |
+| `GET` | `/v1/evaluations/judge/profiles` | Adds `resolution` (`profile`, `provider`, `source`, `configured_profile`, `notes`), `editing` (Dashboard gate), `dashboard_errors`, and per row `status` (`draft` \| `invalid` \| `untested` \| `probe_failed` \| `ready` \| `active` \| `needs_reprobe` \| `breaker_open`), `key_status` (`api_key_env`, `configured`, 6-hex `key_fingerprint`), `probe`, `readiness`, `breaker`, `editable`, `version`, `config` (Dashboard rows) | `reviewer`, `tenant_admin`, `admin` |
+| `GET` | `/v1/evaluations/judge/templates` | Form templates (LM Studio, Ollama, OpenAI, Gemini, DeepSeek, Anthropic) | `reviewer`, `tenant_admin`, `admin` |
+| `POST` | `/v1/evaluations/judge/profiles` | `{name, config}` → `201` (`draft: true` when `base_url` / `model` are missing); `409 judge_profile_name_conflict`, `422 judge_profile_invalid` (for example `an external host must use HTTPS`, `api_key_env must end with _API_KEY`) | `admin` |
+| `PUT` | `/v1/evaluations/judge/profiles/{name}` | `{version, config}` full replace; `409 judge_profile_version_conflict`, `409 judge_profile_read_only` (file / environment / built-in); an active profile is deactivated (`deactivated: true`) | `admin` |
+| `DELETE` | `/v1/evaluations/judge/profiles/{name}` | Optional `?version=`; `409 judge_profile_active`, `409 judge_profile_referenced` (used as a fallback), `409 judge_profile_read_only` | `admin` |
+| `POST` | `/v1/evaluations/judge/profiles/{name}/activate` | Activates a ready profile (any source; `deterministic` allowed); otherwise `409 judge_profile_not_ready` with `reasons` (`not_probed`, `probe_failed`, `needs_reprobe`, `probe_expired`, `key_missing`, `https_required`, `external_not_allowed`, `pricing_or_cap_missing`, `missing_fields`) | `admin` |
+| `POST` | `/v1/evaluations/judge/deactivate` | Clears Dashboard activations; returns the new `resolution` and a `note` when `EVALUATION_JUDGE_PROFILE` still selects a profile | `admin` |
+| `POST` | `/v1/evaluations/judge/profiles/{name}/probe` | Since `v1.5.12` also records the result and fingerprint in `judge_profile_states` and audits it; drafts return `409 judge_profile_not_ready` | `admin` |
+
+`GET /v1/evaluations/judge/status` adds `source` and `activation_notes`. Assessments add `fallback_from` (and `fallback.chain`) when a fallback profile answered. Judge statuses add `blocked_insecure_url` and `breaker_open`.
+
 ### Judge Profiles (`v1.5.11`)
 
 | Method | Path | Description | Access Role |

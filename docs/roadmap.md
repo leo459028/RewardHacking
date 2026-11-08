@@ -1,6 +1,6 @@
 # Project Roadmap: Evolutionary Milestones
 
-> **Roadmap Baseline**: `v1.5.11`
+> **Roadmap Baseline**: `v1.5.12`
 > **Status**: Active Open-Source Track (`v1.5.x` Governance, FinOps & Evaluation Series)
 > **Next Target**: `v1.6.0` (Runtime Foundations)
 
@@ -35,14 +35,24 @@ This roadmap outlines the past development trajectory, the `v1.5.x` evaluation s
 | `v1.5.8` | Completed | Outcome Ingestion, Evidence Detectors & Review Queue | Agent outcome evidence ingestion (diff, test/lint reports, final message) with provenance levels, evidence-based reward-hacking detectors (test/grader/CI tampering, claim–evidence mismatch, error suppression, scope), and a post-execution review queue separated from pre-execution approval. |
 | `v1.5.9` | Completed | Labeled Benchmark & Detector Measurement | Review labels exported as benchmark samples, TPR at low FPR / AUROC / audit-budget curves, shadow `special_casing` detector, honeypot (impossible-task) probes, per-agent cheat rates, and CI attestation verification. |
 | `v1.5.10` | Completed | LLM-as-Judge Triage (Shadow) & Review Sampling | Pluggable trusted judge providers that only prioritize review work and never turn `review` into `pass`, plus quota-capped `sample_for_review` with a uniform random audit slice and triage precision@K measurement. |
-| `v1.5.11` | **Current** | **Real Local & Cloud Judges** | Named judge profiles, backend compatibility (structured-output fallback, reasoning control, retries), background triage, profile cost attribution, tenant consent for external judges and multi-profile benchmarks; verified with a local model in LM Studio. |
+| `v1.5.11` | Completed | Real Local & Cloud Judges | Named judge profiles, backend compatibility (structured-output fallback, reasoning control, retries), background triage, profile cost attribution, tenant consent for external judges and multi-profile benchmarks; verified with a local model in LM Studio. |
+| `v1.5.12` | **Current** | **Judge Activation & Provider Adapters** | Test-then-activate gate with configuration fingerprints (rule-based judge by default), Dashboard judge profile management with templates and an editing gate, key-variable allowlist and HTTPS / metadata hardening, native Anthropic adapter, fallback chains, circuit breakers and per-profile budgets. |
 | `v1.6.0` | **Next** | Runtime Foundations | OTLP / W3C trace export, audit retention purge with legal hold (FinOps ledger excluded), FinOps module split, and a `SandboxBackend` interface. |
 | `v1.6.1` | Planned | Isolated Sandbox Runtime MVP | Hardened Docker backend with a configurable OCI runtime (`runc` locally, `runsc`/gVisor on Linux), limited to low-risk tools behind a feature flag; sandbox re-runs upgrade evidence to `platform_verified`. |
 | `v1.6.2+` | Long-Term | Remote MCP, MicroVM & Graph Replay | Real remote MCP transports behind an egress proxy, K8s Job and microVM backends, hidden held-out tests, mutation testing, resampling, and stateful graph time-travel replay. |
 
 ---
 
-## Current Release: `v1.5.11` Real Local & Cloud Judges
+## Current Release: `v1.5.12` Judge Activation & Provider Adapters
+
+The `v1.5.12` milestone makes choosing a judge an explicit, tested operator decision:
+- **Activation Gate**: rule-based by default; an LLM profile is used only after a successful probe whose configuration fingerprint still matches (Dashboard profiles also need *Activate*; `EVALUATION_JUDGE_PROFILE` profiles are probed at startup). Configuration or key changes fall back to the rule-based judge until re-tested.
+- **Dashboard Management**: `/dashboard/judge-profiles` with provider templates, drafts, status labels, key status without key material, test / activate / deactivate / edit / delete, an editing gate and same-origin checks. In-page key entry is deferred until Dashboard RBAC and CSRF land.
+- **Hardening**: `*_API_KEY` allowlist for `api_key_env`, HTTPS for external hosts, cloud metadata addresses and URL credentials refused at load time and before each request.
+- **Provider Adapters**: adapter interface with the unchanged OpenAI-compatible adapter and a native Anthropic Messages API adapter (structured output through `output_config.format`).
+- **Resilience**: per-profile fallback chains, Redis circuit breakers with half-open retry, and per-profile daily token caps.
+
+## Previous Release: `v1.5.11` Real Local & Cloud Judges
 
 The `v1.5.11` milestone turns the `v1.5.10` judge framework into something that runs against real models while keeping every safety property:
 - **Judge Profiles**: named, validated profiles (YAML file and/or JSON setting) with provider, endpoint, model, API-key environment-variable *name*, structured-output mode, timeout, input budget, pricing provider / model, external policy, execution mode, retries, reasoning stripping and `reasoning_effort`. Keys inside a profile fail startup. Without profiles, behaviour and `judge_version` strings equal `v1.5.10`; named profiles prefix `judge_version` so results stay comparable across models.
@@ -51,7 +61,7 @@ The `v1.5.11` milestone turns the `v1.5.10` judge framework into something that 
 - **Cost & Consent**: profile-based pricing attribution, one-click zero-cost rows for local models, exact-match internal hosts (`host.docker.internal`), forced-external only (never downgraded), and tenant consent for external judges (a stricter change from `v1.5.10`, where the global switch alone sufficed).
 - **Real-hardware result**: Qwen3.5-2B (Q4_K_M) in LM Studio, CPU only: with a 300-token output budget reasoning consumed everything; `reasoning_effort: none` gives 11–25 s but near-chance judgement (AUROC 0.60 on 10 samples), while reasoning with a 2000-token budget gives ~46 s and AUROC 0.95, so background triage keeps reasoning on. Seed benchmark (30 judged samples): 0% invalid output, ~20 s average; the 2B judge alone ranks worse than the rules, combined ordering slightly better; far too few positives to promote.
 
-## Previous Release: `v1.5.10` LLM-as-Judge Triage (Shadow) & Quota-Capped Review Sampling
+## Earlier Release: `v1.5.10` LLM-as-Judge Triage (Shadow) & Quota-Capped Review Sampling
 
 The `v1.5.10` milestone adds the first LLM component under the monotonic-safety rule and starts estimating the miss rate:
 - **Pluggable Trusted Judges**: `deterministic` (default, reproducible, fallback) and `openai_compatible` (hosted or local) providers in `app/services/evaluation/judges/`. Evidence is re-redacted and bounded, wrapped in a per-call nonce boundary, and scanned for judge-directed text (which can only raise triage). Replies are parsed against a strict schema; extra fields such as `verdict` are dropped. External endpoints need an explicit opt-in; timeouts, errors, invalid output and the per-tenant daily token cap fall back to the deterministic judge. A same-model-family warning is recorded and shown. Judge tokens are recorded in the FinOps ledger without touching token leases.
@@ -95,10 +105,15 @@ The pre-execution perimeter (prompt guards, policy engine, Safe MCP Gateway, Fin
 - **Quota-Capped `sample_for_review`**: Rule-passed runs can be pulled into review only above a suspicion or risk threshold, within a per-tenant daily cap and a maximum share of passed volume, plus a small uniform random slice for unbiased miss-rate estimation. Skipped samples are counted and shown, never silently dropped.
 - **Trusted, Hardened Judges**: Pluggable `deterministic` and `openai-compatible` providers (hosted or local), warnings when the judge shares a model family with the monitored agent, redaction before external calls, judge prompt-injection regression tests, judge token costs recorded in the FinOps ledger, and deterministic fallback on timeout.
 
-### `v1.5.11` (Current): Real Local & Cloud Judges
+### `v1.5.11`: Real Local & Cloud Judges
 - **Judge Profiles**: switching local / larger local / cloud models is configuration; results stay comparable through profile-prefixed `judge_version`.
 - **Compatibility & Background Execution**: structured-output fallback, reasoning control, bounded retries, and background triage so slow local models never block outcome submission.
 - **Cost & Consent**: real-provider cost attribution and tenant consent before evidence leaves for an external judge.
+
+### `v1.5.12` (Current): Judge Activation & Provider Adapters
+- **Test, then activate**: no LLM judge without a matching successful probe; rule-based by default.
+- **Operator UI**: Dashboard profile management with templates and an editing gate; keys stay in environment variables.
+- **Adapters & Resilience**: native Anthropic adapter, fallback chains, circuit breakers and per-profile budgets.
 
 ---
 
@@ -123,5 +138,5 @@ The pre-execution perimeter (prompt guards, policy engine, Safe MCP Gateway, Fin
 - **Additional Sandbox Backends**: Kubernetes Job backend (with gVisor `RuntimeClass`) and optional Firecracker microVMs for Linux deployments.
 - **Stronger Verification**: Hidden held-out tests, mutation testing to detect weakened tests, and resampling of suspicious steps.
 - **Closed-Loop Risk Scoring**: Feed confirmed per-agent cheat rates back into pre-execution risk scoring once false-positive rates are stable.
-- **Judge Extensions** (deferred from `v1.5.10` / `v1.5.11`): native (non-OpenAI-compatible) judge providers, multi-judge voting, a cross-process (Kafka) judge queue, real 14B / 27B and Gemini measurements once hardware or keys are available, and evidence-based `TT-001` tuning / `special_casing` promotion once enough sampled, non-seed labels exist.
+- **Judge Extensions** (deferred from `v1.5.10`–`v1.5.12`): further native adapters (Azure OpenAI, Gemini native, Bedrock / Vertex identity), per-tenant judge selection, in-page encrypted key entry after Dashboard RBAC / CSRF, multi-judge voting, a cross-process (Kafka) judge queue, real 14B / 27B and Gemini measurements once hardware or keys are available, and evidence-based `TT-001` tuning / `special_casing` promotion once enough sampled, non-seed labels exist.
 - **Stateful Graph Time-Travel & Live Replay**: Full workflow graph checkpointing with isolated sandbox re-execution.
