@@ -1,10 +1,10 @@
 # Project Roadmap: Evolutionary Milestones
 
 > **Roadmap Baseline**: `v1.5.10`
-> **Status**: Active Open-Source Track (`v1.5.x` Governance, FinOps & Evaluation Series complete)
+> **Status**: Active Open-Source Track (`v1.5.x` Governance, FinOps & Evaluation Series)
 > **Next Target**: `v1.6.0` (Runtime Foundations)
 
-This roadmap outlines the past development trajectory, the completed `v1.5.x` evaluation series, the `v1.6.x` runtime execution series, and long-term architectural milestones for the **RewardHacking** platform.
+This roadmap outlines the past development trajectory, the `v1.5.x` evaluation series, the `v1.6.x` runtime execution series, and long-term architectural milestones for the **RewardHacking** platform.
 
 ---
 
