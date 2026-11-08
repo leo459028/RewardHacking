@@ -235,7 +235,7 @@ Optional API checks: `GET /v1/control-plane/mcp-servers`; `POST /v1/control-plan
 
 ## 5.8 Scenario 8: Advisory Judge Triage (Shadow) & Quota-Capped Review Sampling (`v1.5.10`)
 
-> Uses the Scenario 6 runs and tenant `sampling-qa-tenant`. The default stack uses the deterministic judge (no external LLM calls). `scripts/browser_manual_test.py` automates steps 1–7.
+> Uses the Scenario 6 runs and tenant `sampling-qa-tenant`. The default stack uses the deterministic judge (no external LLM calls). `scripts/browser_manual_test.py` automates steps 1–7 and uses a fresh `sampling-qa-<timestamp>` tenant per run: sampling caps are per tenant per UTC day, so repeating step 5 with the same tenant on the same day is correctly recorded as `skipped` (`share_cap`) instead of sampled.
 
 1. **Readiness** — `/dashboard/operations` lists `evaluation_judge_health` (advisory, provider `deterministic`, mode `shadow`) and `evaluation_sampling_health` (advisory; warns until `EVALUATION_SAMPLE_SECRET` is set). Overall readiness is unaffected.
 2. **Run Detail triage** — open the Scenario 6 grader-tampering run. Under *Outcome Evidence & Findings* the review line is followed by *Judge Triage \| 審查排序建議* with a triage chip (`P1`), the score, `deterministic:1.0.0` and *Advisory only — cannot pass a run*.
@@ -247,6 +247,19 @@ Optional API checks: `GET /v1/control-plane/mcp-servers`; `POST /v1/control-plan
 8. **Random audit (API / pytest)** — with `EVALUATION_SAMPLE_RANDOM_RATE=1.0` a clean rule-passed outcome becomes `review_required` with `sample_reason=random_audit`; deciding it updates *Random audit (unbiased)* on *Cheat Rates*. This needs a restart with a different setting, so it is covered by `tests/test_v1510_judge_triage_sampling.py` instead of the browser script.
 9. **Concealment (API)** — with `AUTH_ENABLED=true`, an `operator` key sees `sample_reason: rule_review` and empty triage fields; a `reviewer` key sees `threshold_sample` and the triage (covered by pytest).
 10. **Metrics** — `/v1/metrics` exposes `agent_evaluation_judge_assessments_total`, `agent_evaluation_review_sampling_total` and `agent_evaluation_triage_precision_at_k`.
+
+## 5.9 Scenario 9: Judge Profiles, External-Judge Consent & Background Triage (`v1.5.11`)
+
+> Steps 1–5 are automated by `scripts/browser_manual_test.py` and call no real LLM. Steps 6–8 are manual and need a local OpenAI-compatible server (for example LM Studio).
+
+1. **Profiles** — `/dashboard/benchmark#judge-profiles` lists at least `deterministic` and `default` (plus any profiles from `config/judge_profiles.yaml`), with provider, host, external flag, execution, structured output, key status (never the key) and pricing.
+2. **Consent** — *External judge consent*: `Tenant ID=consent-qa-tenant`, tick *Allow external judge*, **Save consent**. Expect `External judge consent for consent-qa-tenant: allowed (all external profiles).`; `GET /v1/tenants/consent-qa-tenant/evaluation-policy` shows `allow_external_judge: true`.
+3. **Sweep** — **Sweep stale pending** reports the number of re-scheduled tasks (usually none).
+4. **Benchmark** — *Run Benchmark*, select `deterministic` in *Judge profiles* → **Run Benchmark**. The banner lists `profiles: deterministic`; the triage section has a `Profile deterministic` block with invalid-output, fallback and latency figures.
+5. **Assessment profile** — open the Scenario 6 review: *Judge Assessments* has a *Profile* column. Governance links to *Manage External Judge Consent*.
+6. **(Manual) Local model** — copy `config/judge_profiles.example.yaml` to `config/judge_profiles.yaml`, set `local-small`'s port and model, start LM Studio's server, set `EVALUATION_JUDGE_PROFILE=local-small`, restart `api` / `worker`. Click **Zero-cost pricing** and **Probe** for `local-small`: expect `ok`, `json_schema`, latency and tokens, and no assessment written.
+7. **(Manual) Background triage** — submit flagged outcome evidence on a completed run: the page returns immediately and shows *Judging… \| 評估中*; after the model answers, refresh to see the `local-small` assessment (priority and status unchanged).
+8. **(Manual) Compare profiles** — run a benchmark with `deterministic` and `local-small` and a small *Max judged samples*; compare precision, invalid-output rate and latency.
 
 ## 6. Browser QA Sign-Off Checklist
 

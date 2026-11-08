@@ -36,6 +36,7 @@ from app.services.evaluation.judges import JudgeProvider, JudgeResult, assess_wi
 from app.services.evaluation.judges.base import JudgeInput
 from app.services.evaluation.judges.family import same_family
 from app.services.evaluation.judges.inputs import build_judge_input
+from app.services.evaluation.judges.profiles import active_profile_known, get_profile, resolve_active_profile
 from app.services.evaluation.taxonomy import PRIORITY_RANK
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,17 @@ async def catalog_family(session: AsyncSession, model_name: str) -> str:
     return str(family or "")
 
 
+async def external_judge_consent(session: AsyncSession, tenant_id: str, profile_name: str) -> bool:
+    """v1.5.11 (D15): has this tenant agreed to send (redacted) evidence to this external judge profile?"""
+    from app.models.evaluation_review import TenantEvaluationPolicy
+
+    policy = await session.scalar(select(TenantEvaluationPolicy).where(TenantEvaluationPolicy.tenant_id == (tenant_id or "default")))
+    if policy is None or not policy.allow_external_judge:
+        return False
+    allowed = [str(item) for item in list(policy.external_judge_profiles or [])]
+    return not allowed or profile_name in allowed
+
+
 async def latest_outcome(session: AsyncSession, run_id: str) -> RunOutcome | None:
     return await session.scalar(select(RunOutcome).where(RunOutcome.run_id == run_id).order_by(RunOutcome.submission_seq.desc()).limit(1))
 
@@ -123,7 +135,18 @@ async def _record_judge_usage(
     from app.services.finops import record_usage_event
 
     status = {"ok": "success", "timeout": "timeout"}.get(primary.status, "failed")
-    metadata = {"cost_kind": "evaluation_judge", "judge_version": primary.judge_version, "source": "evaluation_judge", **extra}
+    # v1.5.11 (D13): attribute cost to the profile's real provider / model so catalog prices match
+    # (e.g. provider "google" for Gemini, a zero-cost "qa_local" row for a local model).
+    profile = get_profile(settings, primary.profile) if primary.profile else None
+    pricing_provider = profile.pricing_provider if profile is not None else "custom"
+    pricing_model = (profile.effective_pricing_model if profile is not None else "") or primary.model
+    metadata = {
+        "cost_kind": "evaluation_judge",
+        "judge_version": primary.judge_version,
+        "judge_profile": primary.profile,
+        "source": "evaluation_judge",
+        **extra,
+    }
     usage_id = ""
     for unit, quantity in (("input_tokens", primary.input_tokens), ("output_tokens", primary.output_tokens)):
         if not quantity:
@@ -134,8 +157,8 @@ async def _record_judge_usage(
                 tenant_id=tenant_id,
                 run_id=run_id,
                 step_id=JUDGE_STEP_ID,
-                provider="custom",
-                model_name=primary.model,
+                provider=pricing_provider,
+                model_name=pricing_model,
                 resource_type="model",
                 resource_subtype="chat_completion",
                 usage_unit=unit,
@@ -170,11 +193,19 @@ async def run_judge(
     *,
     tenant_id: str,
     judge: JudgeProvider | None = None,
+    require_tenant_consent: bool = True,
 ) -> tuple[JudgeResult, bool]:
-    """Assess with the token cap applied; returns the result and the same-family flag."""
+    """Assess with tenant consent and the token cap applied; returns the result and the same-family flag.
+
+    An external (cloud) judge needs the global ``EVALUATION_JUDGE_ALLOW_EXTERNAL`` switch (checked by the provider)
+    **and** the tenant's consent (D15). Without consent no request is sent and the deterministic judge is used.
+    """
     judge = judge or get_judge(settings)
     skip = ""
-    if judge.name != "deterministic":
+    if require_tenant_consent and getattr(judge, "is_external", False):
+        if not await external_judge_consent(session, tenant_id, getattr(judge, "profile_label", "")):
+            skip = "blocked_external"
+    if not skip and judge.name != "deterministic":
         cap = int(settings.evaluation_judge_daily_token_cap_per_tenant)
         if await tokens_used_today(session, tenant_id) >= cap:
             skip = "budget_exceeded"
@@ -215,6 +246,7 @@ def build_assessment(
         benchmark_run_id=benchmark_run_id,
         sample_id=sample_id,
         provider=primary.provider,
+        profile=primary.profile,
         model=primary.model,
         judge_version=primary.judge_version,
         prompt_version=primary.prompt_version,
@@ -227,7 +259,7 @@ def build_assessment(
         categories=list(effective.categories),
         evidence_refs=[redact_text(item) for item in effective.evidence_refs],
         rationale=redact_text(effective.rationale)[:1000],
-        fallback=result.fallback.summary() if result.fallback is not None else {},
+        fallback=_fallback_payload(result),
         injection_suspected=result.injection_suspected,
         injection_markers=list(judge_input.injection_markers),
         same_family_warning=family_warning,
@@ -237,6 +269,15 @@ def build_assessment(
         output_tokens=primary.output_tokens,
         latency_ms=primary.latency_ms,
     )
+
+
+def _fallback_payload(result: JudgeResult) -> dict[str, Any]:
+    """Fallback summary plus (v1.5.11) how the primary request was made: format actually used and HTTP attempts."""
+    payload: dict[str, Any] = result.fallback.summary() if result.fallback is not None else {}
+    primary = result.primary
+    if primary.provider != "deterministic" and (primary.structured_output or primary.attempts):
+        payload["request"] = {"structured_output": primary.structured_output, "attempts": primary.attempts}
+    return payload
 
 
 def _apply_to_review(review: EvaluationReview, assessment: JudgeAssessment) -> None:
@@ -273,7 +314,8 @@ async def triage_review(
             .limit(1)
         )
         if existing is not None:
-            if review.judge_assessment_id != existing.assessment_id:
+            # Re-apply when the review points elsewhere or still carries a v1.5.11 "pending:" marker.
+            if review.judge_assessment_id != existing.assessment_id or review.triage_source != existing.triage_source:
                 _apply_to_review(review, existing)
                 await session.commit()
             return existing, True
@@ -352,6 +394,7 @@ def assessment_to_dict(item: JudgeAssessment) -> dict[str, Any]:
         "benchmark_run_id": item.benchmark_run_id,
         "sample_id": item.sample_id,
         "provider": item.provider,
+        "profile": item.profile,
         "model": item.model,
         "judge_version": item.judge_version,
         "prompt_version": item.prompt_version,
@@ -380,6 +423,8 @@ def assessment_to_dict(item: JudgeAssessment) -> dict[str, Any]:
 
 
 async def judge_status(session: AsyncSession, settings: Settings, *, tenant_id: str | None = None) -> dict[str, Any]:
+    from app.services.judge_background import pending_summary
+
     judge = get_judge(settings)
     since = datetime.now(timezone.utc) - timedelta(hours=24)
     stmt = select(JudgeAssessment.status, func.count()).where(JudgeAssessment.created_at >= since).group_by(JudgeAssessment.status)
@@ -389,6 +434,9 @@ async def judge_status(session: AsyncSession, settings: Settings, *, tenant_id: 
     external = bool(getattr(judge, "is_external", False))
     return {
         "mode": settings.evaluation_judge_mode,
+        "profile": getattr(judge, "profile_label", "") or settings.evaluation_judge_profile,
+        "configured_profile": settings.evaluation_judge_profile,
+        "profile_known": active_profile_known(settings),
         "provider": judge.name,
         "model": getattr(judge, "model", ""),
         "judge_version": judge.version(),
@@ -400,6 +448,8 @@ async def judge_status(session: AsyncSession, settings: Settings, *, tenant_id: 
         "tokens_used_today": await tokens_used_today(session, tenant_id) if tenant_id else None,
         "status_counts_24h": counts,
         "default_order": default_order(settings),
+        "execution": resolve_active_profile(settings).execution,
+        "pending_triage": await pending_summary(session, settings),
         "used_for_verdict": False,
         "used_for_hard_deny": False,
     }

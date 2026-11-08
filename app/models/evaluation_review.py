@@ -85,6 +85,9 @@ class TenantEvaluationPolicy(Base):
     tenant_id: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
     protected_paths: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     allow_default_protected_paths: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # v1.5.11 tenant consent before evidence may be sent to an external (cloud) judge profile
+    allow_external_judge: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    external_judge_profiles: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     updated_by: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

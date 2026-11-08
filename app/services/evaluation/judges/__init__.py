@@ -1,4 +1,4 @@
-"""Pluggable, advisory LLM-as-judge providers (v1.5.10).
+"""Pluggable, advisory LLM-as-judge providers (v1.5.10; named profiles since v1.5.11).
 
 A judge only orders review work (``triage_priority`` P1–P3, ``triage_score``). It never writes a
 verdict, a review priority, a review status or a run status, and never takes part in hard-deny
@@ -7,7 +7,7 @@ decisions (AGENTS.md 2.3). Any primary-provider failure falls back to the determ
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import httpx
 
@@ -15,17 +15,29 @@ from app.core.config import Settings
 from app.services.evaluation.judges.base import JudgeInput, JudgeOutput, JudgeProvider, triage_priority_for
 from app.services.evaluation.judges.deterministic import DETERMINISTIC_VERSION, DeterministicJudge
 from app.services.evaluation.judges.openai_compatible import OpenAICompatibleJudge
+from app.services.evaluation.judges.profiles import (
+    JudgeProfile,
+    JudgeProfileError,
+    get_profile,
+    legacy_default_profile,
+    load_profiles,
+    resolve_active_profile,
+)
 
 __all__ = [
     "DETERMINISTIC_VERSION",
     "DeterministicJudge",
     "JudgeInput",
     "JudgeOutput",
+    "JudgeProfile",
+    "JudgeProfileError",
     "JudgeProvider",
     "JudgeResult",
     "OpenAICompatibleJudge",
     "assess_with_fallback",
+    "build_judge",
     "get_judge",
+    "load_profiles",
     "triage_priority_for",
 ]
 
@@ -38,20 +50,43 @@ def set_test_transport(transport: httpx.AsyncBaseTransport | None) -> None:
     _TEST_TRANSPORT = transport
 
 
-def get_judge(settings: Settings, *, provider: str | None = None) -> JudgeProvider:
-    name = provider or settings.effective_judge_provider
-    if name == "openai_compatible":
+def build_judge(profile: JudgeProfile, settings: Settings) -> JudgeProvider:
+    """Instantiate the provider a profile describes. The API key is read from the environment here, per call."""
+    if profile.provider == "openai_compatible":
         return OpenAICompatibleJudge(
-            base_url=settings.evaluation_judge_base_url,
-            model=settings.evaluation_judge_model,
-            api_key=settings.evaluation_judge_api_key.get_secret_value(),
-            timeout_seconds=settings.evaluation_judge_timeout_seconds,
-            max_output_tokens=settings.evaluation_judge_max_output_tokens,
+            base_url=profile.base_url,
+            model=profile.model,
+            api_key=profile.api_key(settings),
+            timeout_seconds=profile.timeout_seconds,
+            max_output_tokens=profile.max_output_tokens,
             allow_external=settings.evaluation_judge_allow_external,
             internal_suffixes=settings.mcp_internal_host_suffix_list,
             transport=_TEST_TRANSPORT,
+            profile=profile,
+            internal_hosts=settings.judge_internal_host_list,
         )
-    return DeterministicJudge()
+    return DeterministicJudge(profile_label=profile.name)
+
+
+def get_judge(settings: Settings, *, provider: str | None = None, profile: JudgeProfile | str | None = None) -> JudgeProvider:
+    """Resolve a judge.
+
+    - ``profile``: a :class:`JudgeProfile` or a profile name (unknown names raise :class:`JudgeProfileError`).
+    - ``provider`` (v1.5.10 compatibility): ``deterministic`` or ``openai_compatible`` (the active profile when it is
+      OpenAI-compatible, otherwise the settings-derived ``default`` forced to OpenAI-compatible).
+    - neither: the active live-triage profile (``EVALUATION_JUDGE_PROFILE``).
+    """
+    if profile is not None:
+        resolved = profile if isinstance(profile, JudgeProfile) else get_profile(settings, profile)
+        if resolved is None:
+            raise JudgeProfileError(f"Unknown judge profile {profile!r}.")
+        return build_judge(resolved, settings)
+    if provider == "deterministic":
+        return DeterministicJudge()
+    active = resolve_active_profile(settings)
+    if provider == "openai_compatible" and active.provider != "openai_compatible":
+        active = replace(legacy_default_profile(settings), provider="openai_compatible")
+    return build_judge(active, settings)
 
 
 @dataclass
@@ -80,6 +115,7 @@ async def assess_with_fallback(
     """Run the configured judge; on any failure (or when skipped, e.g. ``budget_exceeded``) use the deterministic one."""
     deterministic = DeterministicJudge()
     primary_judge = judge or get_judge(settings)
+    label = getattr(primary_judge, "profile_label", "")
     if skip_primary_status:
         primary = JudgeOutput(
             provider=primary_judge.name,
@@ -87,6 +123,7 @@ async def assess_with_fallback(
             judge_version=primary_judge.version(),
             status=skip_primary_status,
             error=skip_primary_status,
+            profile=label,
         )
     else:
         try:
@@ -98,6 +135,7 @@ async def assess_with_fallback(
                 judge_version=primary_judge.version(),
                 status="error",
                 error=type(exc).__name__,
+                profile=label,
             )
     fallback: JudgeOutput | None = None
     if primary.ok:

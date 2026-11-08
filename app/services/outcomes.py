@@ -33,7 +33,8 @@ from app.services.attestation_keys import trusted_keys_for
 from app.services.cheat_rates import agent_identity
 from app.services.evaluation.taxonomy import higher_priority
 from app.services.honeypot import get_launch, judge_honeypot
-from app.services.judge_triage import judge_signal, triage_review
+from app.services.judge_background import dispatch_triage
+from app.services.judge_triage import judge_signal
 from app.services.review_sampling import decide_sampling
 from app.services.evaluation.attestation import AttestationResult, verify_attestation
 from app.services.evaluation.evidence import (
@@ -330,8 +331,9 @@ async def submit_outcome(
     await session.refresh(run)
     if review is not None:
         await session.refresh(review)
-        # v1.5.10: advisory judge triage runs only after the verdict and review are committed (D6).
-        await triage_review(session, review, settings)
+        # Advisory judge triage runs only after the verdict and review are committed (v1.5.10 D6); since v1.5.11 a
+        # background profile marks the review pending and assesses it off the request path.
+        await dispatch_triage(session, review, settings)
         await session.refresh(review)
         await session.refresh(run)
     EVALUATION_OUTCOMES_TOTAL.labels(provenance=outcome.provenance, verdict=evaluation.verdict).inc()

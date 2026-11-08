@@ -45,3 +45,8 @@ Bak/
 # Local version planning documents (do not upload to GitHub)
 docs/plan/
 docs/plan/*.md
+# Local session handoff file (read first by every session; see AGENTS.md)
+docs/handoff.md
+
+# Local judge profiles (v1.5.11); config/judge_profiles.example.yaml is the committed template
+config/judge_profiles.yaml

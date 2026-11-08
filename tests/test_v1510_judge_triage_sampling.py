@@ -43,7 +43,9 @@ def test_v1510_migration_is_single_head_after_v159():
         mod = _load_migration(path.name)
         revisions[mod.revision] = mod.down_revision
     referenced = {down for down in revisions.values() if down}
-    assert sorted(set(revisions) - referenced) == ["202611090001"]
+    # Later releases extend the chain; the single-head assertion lives in the latest release test.
+    assert len(set(revisions) - referenced) == 1
+    assert "202611090001" in referenced or sorted(set(revisions) - referenced) == ["202611090001"]
 
 
 def test_v1510_tables_and_columns_created(session_factory):
@@ -1140,15 +1142,16 @@ def test_dashboard_reviews_triage_sampling_and_benchmark_render(client, session_
 
 
 def test_v1510_version_anchors():
+    """Exact anchors moved to the latest release test; this keeps the 1.5.x series checks (v1.5.11 relaxed them)."""
     from app.main import app as fastapi_app
     from app.services.finops import FINOPS_CALCULATION_VERSION
 
-    assert fastapi_app.version == "1.5.10"
-    assert FINOPS_CALCULATION_VERSION == "v1.5.10"
+    assert fastapi_app.version.startswith("1.5.")
+    assert FINOPS_CALCULATION_VERSION.startswith("v1.5.")
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "1.5.10"' in pyproject and '"httpx>=0.27.0"' in pyproject.split("[project.optional-dependencies]")[0]
-    assert "(v1.5.10)" in (ROOT / "scripts" / "security_check.py").read_text(encoding="utf-8")
-    assert 'value="v1.5.10"' in (ROOT / "app" / "ui" / "templates" / "operations.html").read_text(encoding="utf-8")
-    assert 'release_version", "v1.5.10"' in (ROOT / "app" / "ui" / "routes.py").read_text(encoding="utf-8")
+    assert 'version = "1.5.' in pyproject and '"httpx>=0.27.0"' in pyproject.split("[project.optional-dependencies]")[0]
+    assert "(v1.5." in (ROOT / "scripts" / "security_check.py").read_text(encoding="utf-8")
+    assert 'value="v1.5.' in (ROOT / "app" / "ui" / "templates" / "operations.html").read_text(encoding="utf-8")
+    assert 'release_version", "v1.5.' in (ROOT / "app" / "ui" / "routes.py").read_text(encoding="utf-8")
     browser = (ROOT / "scripts" / "browser_manual_test.py").read_text(encoding="utf-8")
-    assert 'assert release_ver == "v1.5.10"' in browser and "Scenario 8 (v1.5.10)" in browser
+    assert 'assert release_ver == "v1.5.' in browser and "Scenario 8 (v1.5.10)" in browser

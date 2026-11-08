@@ -105,6 +105,12 @@ Probes: `name`, `description` (operator-only), `task_type`, `prompt`, `goal`, `p
 ### `TenantAttestationKey` (`tenant_attestation_keys`, `attk_` IDs)
 `tenant_id`, `name`, `algorithm` (`ed25519` | `ecdsa-p256-sha256`), `public_key_pem`, `key_fingerprint` (sha256 of DER SubjectPublicKeyInfo), `allowed_subjects`, `status` (`active` | `revoked`), `created_by`, `revoked_at`.
 
+## Judge Profiles (`v1.5.11`, Alembic `202611100001`)
+
+- `judge_assessments.profile` (`String(48)`, indexed): the profile that produced the assessment.
+- `tenant_evaluation_policies.allow_external_judge` (bool, default false) and `external_judge_profiles` (JSON list; empty = all external profiles): tenant consent for external judges.
+- Profiles themselves are configuration (YAML / JSON), not database rows. Background triage uses `evaluation_reviews.triage_source = "pending:<profile>"` as its marker.
+
 ## Judge Triage & Review Sampling Models (`v1.5.10`, Alembic `202611090001`)
 
 ### New columns

@@ -303,13 +303,13 @@ async def persist_evaluation_result(
 
 
 async def _triage_after_commit(session: AsyncSession, review: EvaluationReview | None) -> None:
-    """v1.5.10: advisory judge triage of a worker-path review, after the run transaction committed (D6)."""
+    """Advisory judge triage of a worker-path review after the run transaction committed (inline or background)."""
     if review is None:
         return
     from app.core.config import get_settings
-    from app.services.judge_triage import triage_review
+    from app.services.judge_background import dispatch_triage
 
-    await triage_review(session, review, get_settings())
+    await dispatch_triage(session, review, get_settings())
 
 
 async def list_evaluation_results(

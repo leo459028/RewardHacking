@@ -99,6 +99,53 @@
   </form>
 </section>
 
+<section class="panel" id="judge-profiles">
+  <h2>Judge Profiles <span class="heading-note">Judge 設定組（僅排序，不判決）</span></h2>
+  <p class="muted">Live triage profile: <strong id="active-judge-profile">{{ active_judge_profile }}</strong> · mode {{ judge_mode }}. Keys are never shown; profiles reference an environment variable. A judge only orders review work and never changes a verdict, a review priority or a review status.</p>
+  <table id="judge-profile-table">
+    <thead><tr><th>Profile</th><th>Provider / model</th><th>Host</th><th>External</th><th>Execution</th><th>Structured output</th><th>Key</th><th>Pricing</th><th>Actions</th></tr></thead>
+    <tbody>
+    {% for p in judge_profiles %}
+      <tr>
+        <td><strong>{{ p.name }}</strong>{% if p.active %} <span class="flag">active</span>{% endif %}<div class="muted">{{ p.source }}{{ " · legacy" if p.legacy else "" }}</div></td>
+        <td>{{ p.provider }}{% if p.model %}<div class="muted">{{ p.model }}</div>{% endif %}</td>
+        <td class="muted">{{ p.host or "—" }}</td>
+        <td>{% if p.effective_external %}<span class="flag warn">external</span>{% else %}internal{% endif %}</td>
+        <td>{{ p.execution }}<div class="muted">timeout {{ p.timeout_seconds }}s · retries {{ p.max_retries }}</div></td>
+        <td>{{ p.structured_output }}{% if p.accepted_structured_output %}<div class="muted">accepted: {{ p.accepted_structured_output }}</div>{% endif %}</td>
+        <td>{% if p.api_key_env %}{{ p.api_key_env }} <span class="muted">({{ "set" if p.api_key_configured else "missing" }})</span>{% else %}<span class="muted">none</span>{% endif %}</td>
+        <td class="muted">{{ p.pricing_provider }}{% if p.pricing_model %} / {{ p.pricing_model }}{% endif %}</td>
+        <td>{% if p.provider != "deterministic" %}
+          <form method="post" action="/dashboard/judge/profiles/{{ p.name }}/probe" style="display:inline;"><button class="button secondary" type="submit" id="probe-{{ p.name }}">Probe | 連線測試</button></form>
+          {% if p.pricing_provider == "qa_local" %}<form method="post" action="/dashboard/judge/profiles/{{ p.name }}/zero-cost-pricing" style="display:inline;"><button class="button secondary" type="submit" id="pricing-{{ p.name }}">Zero-cost pricing</button></form>{% endif %}
+        {% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <h3 style="margin-top:16px;" id="external-judge-consent">External judge consent | 外部 Judge 同意</h3>
+  <p class="muted">Sending redacted evidence to an external (cloud) judge needs <code>EVALUATION_JUDGE_ALLOW_EXTERNAL=true</code> <strong>and</strong> the tenant's consent. Without consent the deterministic judge is used and nothing is sent.</p>
+  <form method="post" action="/dashboard/judge/consent">
+    <div class="form-grid">
+      <label>Tenant ID <input name="tenant_id" value="{{ consent.tenant_id }}"></label>
+      <label class="checkline"><input type="checkbox" name="allow_external_judge" {{ "checked" if consent.allow_external_judge else "" }}> Allow external judge | 允許外部 Judge</label>
+      <label>Allowed external profiles (none = all)
+        <select name="external_judge_profiles" multiple size="3">
+          {% for p in judge_profiles if p.effective_external %}<option value="{{ p.name }}" {{ "selected" if p.name in consent.external_judge_profiles else "" }}>{{ p.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Updated by <input name="updated_by" value="dashboard-admin"></label>
+    </div>
+    <div style="margin-top:12px;"><button class="button" type="submit" id="save-judge-consent">Save consent</button></div>
+  </form>
+  <p class="muted" style="margin-top:8px;">Tenant <strong>{{ consent.tenant_id }}</strong>: {{ "external judges allowed" if consent.allow_external_judge else "external judges not allowed" }}{% if consent.allow_external_judge %} ({{ consent.external_judge_profiles|join(", ") if consent.external_judge_profiles else "all external profiles" }}){% endif %}.</p>
+
+  <h3 style="margin-top:16px;" id="pending-triage">Pending triage | 評估中</h3>
+  <p>Pending {{ pending_triage.pending }} · stale {{ pending_triage.stale }} (older than {{ pending_triage.sweep_threshold_seconds|int }}s) · oldest {{ pending_triage.oldest_pending_seconds|int }}s · in flight {{ pending_triage.in_flight_tasks }}</p>
+  <form method="post" action="/dashboard/judge/sweep"><button class="button secondary" type="submit" id="sweep-pending">Sweep stale pending | 補做逾時評估</button></form>
+</section>
+
 <section class="panel" id="benchmark-runs">
   <h2>Run Benchmark <span class="heading-note">執行量測（純量測，無副作用）</span></h2>
   <form method="post" action="/dashboard/benchmark/runs">
@@ -121,6 +168,12 @@
           <option value="deterministic">deterministic (reproducible)</option>
           <option value="openai_compatible">openai_compatible (admin, costs tokens)</option>
         </select>
+      </label>
+      <label>Judge profiles (up to 3) | Judge 設定組
+        <select name="judge_profiles" id="judge-profiles-select" multiple size="4">
+          {% for p in judge_profiles %}<option value="{{ p.name }}">{{ p.name }} — {{ p.provider }}{{ " / " ~ p.model if p.model else "" }}{{ " (external)" if p.effective_external else "" }}</option>{% endfor %}
+        </select>
+        <span class="muted">Overrides the Judge triage choice; LLM profiles need admin and cost tokens.</span>
       </label>
       <label>Max judged samples (LLM) <input name="max_judge_samples" type="number" min="1" max="5000" value="100"></label>
     </div>
@@ -213,11 +266,15 @@
     </tbody>
   </table>
 
-  {% set triage = metrics.get("triage") %}
+  {% set triage_sets = metrics.get("triage_by_profile") or ({(metrics.triage.profile or metrics.triage.provider or "judge"): metrics.triage} if metrics.get("triage") else {}) %}
   <h3 style="margin-top:16px;" id="triage-precision">Triage precision@K <span class="heading-note">Judge 排序精準度（僅排序，不判決）</span></h3>
-  {% if triage %}
-  <p class="muted">Judge {{ triage.judge_version }} · {{ triage.judged_samples }} judged sample(s) · {{ "reproducible" if triage.reproducible else "not reproducible (LLM)" }} · status {{ triage.judge_status_counts }}</p>
-  <table id="triage-precision-table">
+  {% if triage_sets %}
+  {% for profile_name, triage in triage_sets.items() %}
+  <div class="triage-profile" id="triage-profile-{{ profile_name }}">
+  <h4 style="margin:14px 0 6px;">Profile <code>{{ profile_name }}</code></h4>
+  <p class="muted">Judge {{ triage.judge_version }} · {{ triage.judged_samples }} judged sample(s) · {{ "reproducible" if triage.reproducible else "not reproducible (LLM)" }} · status {{ triage.judge_status_counts }}
+    {% if triage.invalid_output_rate is defined %}· invalid output {{ pct(triage.invalid_output_rate) }} · fallback {{ pct(triage.fallback_rate) }} · avg {{ triage.avg_latency_ms }} ms · p95 {{ triage.p95_latency_ms }} ms{% endif %}</p>
+  <table {% if loop.first %}id="triage-precision-table"{% endif %}>
     <thead><tr><th>Ranking</th>{% for key in triage_keys %}<th>{{ key|replace("budget_", "budget ") }}</th>{% endfor %}<th>Tampering catch @5%</th></tr></thead>
     <tbody>
     {% for name in ["rule_only", "judge_only", "combined"] %}
@@ -235,12 +292,14 @@
     {% endfor %}
     </tbody>
   </table>
-  <p style="margin-top:8px;" id="triage-promotion">Promotion criteria | 升級條件:
+  <p style="margin-top:8px;" {% if loop.first %}id="triage-promotion"{% endif %}>Promotion criteria | 升級條件:
     <strong>{{ "met" if triage.promotion_criteria_met else "not met" }}</strong>
     {% for b in triage.promotion_blockers %}<span class="flag">{{ b }}</span>{% endfor %}
     <span class="muted">Manual switch only | 僅能手動切換 (EVALUATION_JUDGE_MODE=triage).</span></p>
+  </div>
+  {% endfor %}
   {% else %}
-  <p class="muted">This run did not measure judge triage. Choose a judge in Run Benchmark to compare rule_only / judge_only / combined rankings.</p>
+  <p class="muted">This run did not measure judge triage. Choose judge profiles in Run Benchmark to compare rule_only / judge_only / combined rankings.</p>
   {% endif %}
 </section>
 {% endif %}

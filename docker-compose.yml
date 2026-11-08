@@ -73,6 +73,12 @@ services:
       POSTGRES_DSN: postgresql+asyncpg://app:app@postgres:5432/app
       REDIS_URL: redis://redis:6379/0
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    # v1.5.11: judge profiles are read from ./config without a rebuild; host.docker.internal reaches
+    # local LLM servers (LM Studio / Ollama) on the Docker host on Linux as well as Docker Desktop.
+    volumes:
+      - ./config:/app/config:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8000:8000"
 
@@ -93,4 +99,10 @@ services:
       POSTGRES_DSN: postgresql+asyncpg://app:app@postgres:5432/app
       REDIS_URL: redis://redis:6379/0
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    # v1.5.11: judge profiles are read from ./config without a rebuild; host.docker.internal reaches
+    # local LLM servers (LM Studio / Ollama) on the Docker host on Linux as well as Docker Desktop.
+    volumes:
+      - ./config:/app/config:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: ["sh", "-c", "python -m app.workers.consumer"]

@@ -161,9 +161,14 @@ async def _evaluation_judge_health_check(session: AsyncSession, *, settings: Set
     from app.models.judge import JudgeAssessment
     from app.services.evaluation.judges import get_judge
 
+    from app.services.evaluation.judges.profiles import active_profile_known
+
     judge = get_judge(settings)
     issues: list[str] = []
     status = "pass"
+    if not active_profile_known(settings):
+        status = "fail"
+        issues.append(f"EVALUATION_JUDGE_PROFILE '{settings.evaluation_judge_profile}' is not defined (falling back to deterministic)")
     if settings.evaluation_judge_mode == "off":
         status = "warn"
         issues.append("judge mode is off")
@@ -200,6 +205,25 @@ async def _evaluation_judge_health_check(session: AsyncSession, *, settings: Set
         issues.append(f"{same_family} assessments used a judge from the monitored agent's model family")
     if settings.judge_uses_legacy_alias:
         issues.append("LLM_JUDGE_ENABLED is deprecated; set EVALUATION_JUDGE_PROVIDER")
+    from app.services.evaluation.judges.profiles import resolve_active_profile
+    from app.services.judge_background import pending_summary
+    from app.services.judge_profiles_admin import missing_pricing
+
+    active_profile = resolve_active_profile(settings)
+    pricing_missing = await missing_pricing(session, settings, active_profile)
+    if pricing_missing:
+        status = "warn" if status == "pass" else status
+        issues.append(
+            f"profile '{active_profile.name}' has no pricing rows for {active_profile.pricing_provider}/{active_profile.effective_pricing_model} "
+            "(judge costs record missing_pricing_rule violations)"
+        )
+    pending = await pending_summary(session, settings, now=now)
+    if pending["stale"]:
+        status = "warn" if status == "pass" else status
+        issues.append(
+            f"{pending['stale']} review(s) pending judge triage longer than {int(pending['sweep_threshold_seconds'])}s "
+            "(run POST /v1/evaluations/judge/sweep)"
+        )
     latest = None
     for candidate in (await session.scalars(select(BenchmarkRun).order_by(BenchmarkRun.id.desc()).limit(20))).all():
         if (candidate.metrics or {}).get("triage"):
@@ -217,6 +241,9 @@ async def _evaluation_judge_health_check(session: AsyncSession, *, settings: Set
         metadata={
             "advisory": True,
             "mode": settings.evaluation_judge_mode,
+            "profile": getattr(judge, "profile_label", ""),
+            "configured_profile": settings.evaluation_judge_profile,
+            "profile_known": active_profile_known(settings),
             "provider": judge.name,
             "judge_version": judge.version(),
             "status_counts_24h": counts,
@@ -227,6 +254,9 @@ async def _evaluation_judge_health_check(session: AsyncSession, *, settings: Set
             "delta_vs_rule_only": triage.get("delta_vs_rule_only", {}),
             "promotion_criteria_met": triage.get("promotion_criteria_met"),
             "promotion_blockers": triage.get("promotion_blockers", []),
+            "pending_triage": pending,
+            "pricing_missing": pricing_missing,
+            "execution": active_profile.execution,
             "used_for_verdict": False,
         },
     )

@@ -8,6 +8,10 @@ This document details the architectural design, database schemas, burn-rate fore
 
 ---
 
+## Judge Profile Cost Attribution (`v1.5.11`)
+
+Judge usage events use the profile's `pricing_provider` and `pricing_model` (default `custom` / the model) instead of a fixed `custom` provider, and carry `metadata.judge_profile`. A Gemini profile with `pricing_provider: google` matches the catalog's Gemini rows; a local profile with `pricing_provider: qa_local` can get zero-cost input / output rows from `POST /v1/evaluations/judge/profiles/{name}/zero-cost-pricing` (refused for any other provider). Probes are ledgered with `metadata.purpose = "probe"`. Leases are still never touched.
+
 ## Evaluation Judge Cost Attribution (`v1.5.10`)
 
 LLM judge calls (review triage and LLM-judged benchmark runs) record actual usage through `record_usage_event()`: one event each for `input_tokens` and `output_tokens`, `resource_type="model"`, `resource_subtype="chat_completion"`, `provider="custom"`, `step_id="evaluation_judge"`, `phase="actual"`, `status` `success` / `timeout` / `failed`, and `metadata.cost_kind="evaluation_judge"` with `judge_version` and `review_id` or `benchmark_run_id` / `sample_id`. Review triage events carry the reviewed `run_id`; benchmark events have an empty `run_id`. Judge usage never acquires, settles or releases a run token lease and never re-evaluates run budgets. A judge model without a pricing row records a `missing_pricing_rule` violation (add a catalog row for the judge model). The per-tenant daily judge token cap (`EVALUATION_JUDGE_DAILY_TOKEN_CAP_PER_TENANT`) is enforced from `judge_assessments` before each call.

@@ -17,6 +17,8 @@ class BenchmarkRunRequest(BaseModel):
     # v1.5.10 judge triage measurement: "none" keeps the v1.5.9 run unchanged
     judge_provider: Literal["none", "deterministic", "openai_compatible"] = "none"
     max_judge_samples: int = Field(default=100, ge=1, le=5000)
+    # v1.5.11: up to three named judge profiles measured side by side (takes precedence over judge_provider)
+    judge_profiles: list[str] | None = Field(default=None, max_length=3)
 
 
 class ReviewExportRequest(BaseModel):

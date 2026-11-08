@@ -71,7 +71,8 @@
       <tr>
         <td><span class="priority {{ review.priority }}">{{ review.priority }}</span></td>
         <td>{% if review.triage_priority %}<span class="triage {{ review.triage_priority }}" title="{{ review.triage_source }}">{{ review.triage_priority }}</span>
-          <span class="muted">{{ "%.2f"|format(review.triage_score or 0) }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+          <span class="muted">{{ "%.2f"|format(review.triage_score or 0) }}</span>{% endif %}
+          {% if (review.triage_source or "").startswith("pending:") %}<span class="triage pending" title="{{ review.triage_source }}">Judging… | 評估中</span>{% elif not review.triage_priority %}<span class="muted">—</span>{% endif %}</td>
         <td><a href="/dashboard/reviews/{{ review.review_id }}">{{ review.review_id }}</a></td>
         <td><a href="/dashboard/runs/{{ review.run_id }}">{{ review.run_id[:8] }}</a></td>
         <td>{{ review.tenant_id }}</td>

@@ -59,6 +59,8 @@ from app.services.review_queue import (
     upsert_evaluation_policy,
 )
 from app.services.review_sampling import decision_to_dict, list_decisions, sampling_summary
+from app.services.judge_background import pending_summary, sweep_pending_triage
+from app.services.judge_profiles_admin import JudgeProfileAdminError, ensure_zero_cost_pricing, probe_profile, profiles_view
 
 router = APIRouter(prefix="/v1", tags=["evaluation"])
 
@@ -270,6 +272,8 @@ async def put_tenant_evaluation_policy(
         protected_paths=payload.protected_paths,
         allow_default_protected_paths=payload.allow_default_protected_paths,
         updated_by=payload.updated_by,
+        allow_external_judge=payload.allow_external_judge,
+        external_judge_profiles=payload.external_judge_profiles,
     )
     return policy_to_dict(tenant_id, policy)
 
@@ -443,3 +447,64 @@ async def get_sampling_decisions(
     tenant_id = _scoped_tenant(tenant_id, auth_context)
     rows = await list_decisions(session, tenant_id=tenant_id, decision=decision, slice_name=slice_name, limit=limit)
     return {"decisions": [decision_to_dict(row) for row in rows], "signal_usage": "monitor_only"}
+
+
+# ---------------------------------------------------------------------------
+# v1.5.11 judge profiles, connectivity probe, local zero-cost pricing and pending-triage sweep
+# ---------------------------------------------------------------------------
+
+
+def _profile_admin_error(exc: JudgeProfileAdminError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.detail})
+
+
+@router.get("/evaluations/judge/profiles")
+async def get_judge_profiles(auth_context: AuthContext = Depends(get_auth_context)):
+    _require_reviewer_view(auth_context)
+    settings = get_settings()
+    return {
+        "active_profile": settings.evaluation_judge_profile,
+        "profiles": profiles_view(settings),
+        "safety_statement": JUDGE_SAFETY_STATEMENT,
+        "signal_usage": "monitor_only",
+    }
+
+
+@router.post("/evaluations/judge/profiles/{name}/probe")
+async def post_judge_profile_probe(
+    name: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin")
+    tenant_id = (auth_context.tenant_id if auth_context.enabled else "") or "default"
+    try:
+        result = await probe_profile(session, get_settings(), name, tenant_id=tenant_id)
+    except JudgeProfileAdminError as exc:
+        raise _profile_admin_error(exc) from exc
+    return {**result, "signal_usage": "monitor_only"}
+
+
+@router.post("/evaluations/judge/profiles/{name}/zero-cost-pricing")
+async def post_judge_profile_zero_cost_pricing(
+    name: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin")
+    try:
+        return await ensure_zero_cost_pricing(session, get_settings(), name)
+    except JudgeProfileAdminError as exc:
+        raise _profile_admin_error(exc) from exc
+
+
+@router.post("/evaluations/judge/sweep")
+async def post_judge_sweep(
+    older_than_seconds: float | None = Query(default=None, ge=0, le=86400),
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "tenant_admin", "admin")
+    settings = get_settings()
+    swept = await sweep_pending_triage(session, settings, older_than_seconds=older_than_seconds)
+    return {"swept": swept, "count": len(swept), "pending_triage": await pending_summary(session, settings), "signal_usage": "monitor_only"}

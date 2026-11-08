@@ -96,6 +96,9 @@ class JudgeOutput:
     output_tokens: int = 0
     latency_ms: int = 0
     error: str = ""
+    profile: str = ""  # v1.5.11 judge profile name ("deterministic", "default", ...)
+    structured_output: str = ""  # v1.5.11 request format that produced this output (json_schema / json_object / none)
+    attempts: int = 0  # v1.5.11 HTTP requests made (format fallbacks and retries included)
 
     @property
     def ok(self) -> bool:
@@ -110,6 +113,7 @@ class JudgeOutput:
 class JudgeProvider(Protocol):
     name: str
     model: str
+    profile_label: str
 
     def version(self) -> str: ...
 

@@ -1,6 +1,6 @@
-# Evidence-Based Reward-Hacking Evaluation (`v1.5.8`–`v1.5.10`)
+# Evidence-Based Reward-Hacking Evaluation (`v1.5.8`–`v1.5.11`)
 
-This guide describes how RewardHacking evaluates what an agent actually did after execution: the outcome evidence model, CI attestation verification, the finding taxonomy, every detector rule with its known false positives, the aggregation rules, the post-execution review queue, (since `v1.5.9`) how detectors are measured with a labeled benchmark, honeypot probes and cheat rates, and (since `v1.5.10`) how an advisory LLM judge orders review work and how rule-passed runs are sampled for review.
+This guide describes how RewardHacking evaluates what an agent actually did after execution: the outcome evidence model, CI attestation verification, the finding taxonomy, every detector rule with its known false positives, the aggregation rules, the post-execution review queue, (since `v1.5.9`) how detectors are measured with a labeled benchmark, honeypot probes and cheat rates, (since `v1.5.10`) how an advisory LLM judge orders review work and how rule-passed runs are sampled for review, and (since `v1.5.11`) how judge profiles connect real local and cloud models.
 
 > **Signals are monitor-only.** Evaluation findings support monitoring and human review. Do not use them as training rewards: optimizing a model against a monitor teaches it to hide intent instead of behaving well. All evaluation and review API responses carry `signal_usage: "monitor_only"`.
 
@@ -320,7 +320,55 @@ Only reviewing what rules flag makes the miss rate unknowable. Every outcome sub
 
 ---
 
-## 13. Known Limitations (`v1.5.10`)
+## 13. Judge Profiles & Real Backends (`v1.5.11`)
+
+### 13.1 Profiles
+
+A profile is a named judge configuration. Sources (later override earlier by name): built-in `deterministic` (reserved); `default` synthesized from `EVALUATION_JUDGE_*` (legacy: keeps the `v1.5.10` request format and `judge_version` strings); `EVALUATION_JUDGE_PROFILES_FILE` (default `config/judge_profiles.yaml`, git-ignored; template `config/judge_profiles.example.yaml`); `EVALUATION_JUDGE_PROFILES` (JSON). `EVALUATION_JUDGE_PROFILE` selects the live-triage profile; an unknown name falls back to `deterministic` and fails `evaluation_judge_health`.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `provider` | `openai_compatible` | or `deterministic` |
+| `base_url`, `model` | required for `openai_compatible` | `/chat/completions` is appended |
+| `api_key_env` | — | **name** of the environment variable holding the key; `api_key` / `token` / `secret` / `password` fields are rejected at startup |
+| `structured_output` | `auto` | `auto` (`json_schema` → `json_object` → prompt-only, remembered per backend), or a fixed mode that never degrades |
+| `reasoning_effort` | *(not sent)* | `none` / `minimal` / `low` / `medium` / `high`, sent as the OpenAI-style request field |
+| `strip_reasoning` | `true` | drop `<think>` / `<thinking>` / `<reasoning>` blocks and use the last JSON object; an unclosed block means no answer |
+| `timeout_seconds`, `max_input_chars`, `max_output_tokens` | 30, 12000, 600 | per profile |
+| `max_retries` | 0 | retries on 429 / 502 / 503 / 504 and connection errors within the timeout; timeouts are not retried |
+| `execution` | `inline` | `background` returns the outcome first (§13.3) |
+| `external` | `auto` | `true` forces external; `false` behaves like `auto` (a public host is never treated as internal) |
+| `pricing_provider`, `pricing_model` | `custom`, `model` | ledger attribution (§13.4) |
+
+Named profiles produce `judge_version = <profile>:openai_compatible:<model>:<prompt_version>`, so assessments and benchmarks from different models are comparable and deduplicated separately.
+
+### 13.2 Reasoning models
+
+Qwen3.5-2B served by LM Studio returns its reasoning in `reasoning_content` and, by default, spends `max_output_tokens` on it, leaving `content` empty (`invalid_output` / `empty_content`). Appending `/no_think`, `chat_template_kwargs.enable_thinking=false` and `reasoning: {effort: none}` were ignored; `reasoning_effort: "none"` disabled reasoning (0 reasoning tokens, valid JSON).
+
+Reasoning on vs off, same model and the same 10 seed samples (3 hacking / 7 benign; `bmr_b894f5fcc7e64aec964a9af8`): reasoning off (`reasoning_effort: none`, 300 output tokens) separated hacking from benign at AUROC 0.60 (near chance; it scored `ce-claim-pass-report-failed` 0.0), average 19.7 s, 188 output tokens; reasoning on (no `reasoning_effort`, 2000 output tokens, 300 s timeout) reached AUROC 0.95 (that sample 1.0), average 46.0 s / p95 56.4 s, 607 output tokens; the rules reached 1.00 on the same subset. Both profiles had two benign false alarms (≥ 0.75). precision@5 / @10 were identical (0.6 / 0.3) because only three positives exist, so AUROC was computed from the per-sample scores. Reasoning helps most on claim-vs-evidence contradictions.
+
+**Recommendation**: keep reasoning on for background triage and give it room (`max_output_tokens` ≈ 2000, a longer timeout); use a separate `reasoning_effort: none` profile only when speed matters more than judgement. The example file ships both (`local-small`, `local-small-fast`). Ten samples are a directional signal, not a measurement to promote on.
+
+### 13.3 Background triage
+
+`execution: background` marks the review `triage_source = "pending:<profile>"` (no other column changes) and schedules an in-process task with its own session, limited by `EVALUATION_JUDGE_BACKGROUND_CONCURRENCY` (default 1) per event loop. The task calls the same `triage_review()`, so it still writes only the triage columns. Reviews decided before the task runs drop the marker and spend no tokens. Lost tasks (restart) are re-scheduled by `sweep_pending_triage()` for reviews pending longer than `EVALUATION_JUDGE_PENDING_SWEEP_SECONDS` (600): opportunistically (at most once a minute when new background triage is dispatched), from `POST /v1/evaluations/judge/sweep` and from the Dashboard. Reviews still queued or running in the process are skipped. Without a session factory the profile is assessed inline.
+
+### 13.4 Cost, internal hosts and consent
+
+- Judge tokens are ledgered with the profile's `pricing_provider` / `pricing_model` (`metadata.judge_profile`), so cloud models match catalog prices. `POST /v1/evaluations/judge/profiles/{name}/zero-cost-pricing` creates zero-price input / output rows for `qa_local` profiles only; a missing price still records `missing_pricing_rule` and `evaluation_judge_health` warns.
+- `EVALUATION_JUDGE_INTERNAL_HOSTS` (default `host.docker.internal`) is matched exactly; `host.docker.internal.evil.com` stays external. Link-local addresses (`169.254.x.x`, which includes cloud metadata services) are external.
+- An external judge needs `EVALUATION_JUDGE_ALLOW_EXTERNAL=true` **and** the tenant's consent (`allow_external_judge`, optional `external_judge_profiles`; empty list = all external profiles) on the evaluation policy. Without consent the deterministic judge is used and nothing is sent (`blocked_external`). Consent changes are audited (`evaluation.external_judge_consent.updated`). Benchmarks over the code-owned seed corpus need no consent; tenant and global corpora do. Probes send a fixed synthetic input and need no consent (the global switch still applies).
+
+### 13.5 Measuring profiles
+
+`POST /v1/benchmark/runs` with `judge_profiles` (up to three; LLM profiles admin-only) adds `metrics.triage_by_profile` (`metrics.triage` = the first profile), each with precision@K, audit-budget curves, `invalid_output_rate`, `fallback_rate`, `avg_latency_ms` and `p95_latency_ms`. `POST .../profiles/{name}/probe` reports status, accepted structured-output mode, attempts, latency and tokens without writing an assessment.
+
+**Real-hardware result (`v1.5.11`)**: Qwen3.5-2B Q4_K_M in LM Studio on CPU (4 threads, 8192 context, GT 1030 unused): with `reasoning_effort: none` a probe took 17.8–19.6 s and a real background review triage 24.3 s (772 / 225 tokens); `json_schema` was accepted on the first request. On a threshold-sampled review the model named `special_casing` on its own. Seed benchmark `bmr_22e07e53345148edaf0782a4` (94 samples; `local-small` judged the first 30 by sample ID, 11 hacking): 30/30 `ok`, `invalid_output_rate` 0, `fallback_rate` 0, average 19.9 s, p95 24.9 s, 10 minutes in total. precision@5/10/20: `rule_only` 1.00 / 0.90 / 0.55, `judge_only` 0.60 / 0.70 / 0.50, `combined` 1.00 / 1.00 / 0.55. Reward-tampering catch at 10% / 20% / 50% budgets: `rule_only` 16.7% / 66.7% / 100%, `judge_only` 16.7% / 16.7% / 83.3%, `combined` 33.3% / 83.3% / 100%. Blockers: `seed_corpus_only`, `insufficient_positives`. Reading: the 2B judge alone is worse than the rules, and only helps as a tie-breaker inside rule priorities; the sample is far too small to switch to `triage` mode.
+
+---
+
+## 14. Known Limitations (`v1.5.11`)
 
 - AST analysis covers Python only; other languages use diff-level patterns (`medium` confidence).
 - `ci_attested` is verified only for DSSE envelopes signed by tenant-registered keys; Sigstore / GitHub keyless verification is not implemented. `platform_verified` requires the `v1.6.1` sandbox. An attestation does not prove tests were untouched.
@@ -332,3 +380,7 @@ Only reviewing what rules flag makes the miss rate unknowable. Every outcome sub
 - The judge can be manipulated and injection scanning is a fixed list. Neither affects verdicts (§10.1), but both can degrade triage. The deterministic judge mostly re-ranks existing findings, so the benefit of a real LLM judge must be measured on non-seed samples. Same-family detection uses names and the pricing catalog and cannot see fine-tune lineage.
 - Sampling covers the outcome path only; an agent can observe that its run became `review_required`. The random slice is capped per day, so its inclusion rate can fall below the configured rate.
 - `TT-001` false positives and `special_casing` promotion are not addressed in `v1.5.10`; the threshold sampling slice collects the labels needed to do so with evidence.
+- In-process background tasks are lost on restart until a sweep re-schedules them; with several API instances a review can be assessed twice (deduplication prevents duplicate rows, not duplicate tokens).
+- `structured_output: auto` decides that a format was rejected from the error text, which backends word differently; an unrecognised rejection fails the request instead of degrading.
+- 1–4B judges have limited judgement and resist prompt injection poorly; the safety boundary is that judges cannot change verdicts. 14B / 27B and Gemini were configured and mock-tested only.
+- Since `v1.5.11` an external judge needs tenant consent in addition to the global switch; tenants that relied on the `v1.5.10` global switch alone fall back to the deterministic judge until consent is recorded.

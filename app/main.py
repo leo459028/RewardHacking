@@ -13,6 +13,7 @@ from app.api.routes import router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.infra.postgres import close_engine, init_engine
+from app.services.evaluation.judges.profiles import load_profiles
 from app.observability.metrics import HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_TOTAL
 from app.ui.routers.benchmark import router as benchmark_ui_router
 from app.ui.routers.reviews import router as reviews_ui_router
@@ -24,6 +25,8 @@ configure_logging(settings.log_level)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # v1.5.11: invalid judge profiles (secrets inline, unknown fields, bad values) fail fast at startup.
+    load_profiles(get_settings())
     init_engine(settings)
     yield
     await close_engine()
@@ -31,7 +34,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="1.5.10",
+    version="1.5.11",
     description="Guardrail service for preventing reward hacking in agent systems.",
     lifespan=lifespan,
 )

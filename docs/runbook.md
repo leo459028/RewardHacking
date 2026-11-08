@@ -166,3 +166,12 @@ docker compose logs --tail=100 -f worker
   4. **Re-assess a review**: `/dashboard/reviews/{review_id}` → **Re-assess** (or `POST /v1/reviews/{review_id}/judge-assessments`); unchanged evidence returns the existing assessment.
   5. **Sampling skips**: inspect `GET /v1/evaluations/sampling/summary` and `/dashboard/reviews#sampling`. Raise `EVALUATION_SAMPLE_DAILY_CAP_PER_TENANT` / `EVALUATION_SAMPLE_MAX_SHARE` only if reviewers have capacity; keep the random slice small but non-zero. Set `EVALUATION_SAMPLE_SECRET` in production so draws are reproducible.
   6. **Switching to `triage` mode**: run `POST /v1/benchmark/runs` with `judge_provider` on holdout and review-export corpora, confirm `metrics.triage.promotion_criteria_met = true`, then set `EVALUATION_JUDGE_MODE=triage` and restart. Roll back by setting `shadow`.
+
+---
+
+### 10. Local / Cloud Judge Profiles (`v1.5.11`)
+- **Local server unreachable from containers** (assessments `error` / `timeout`, probe fails): check `curl http://localhost:<port>/v1/models` on the host, then `docker compose exec -T api python -c "import httpx;print(httpx.get('http://host.docker.internal:<port>/v1/models').status_code)"`. Use `host.docker.internal`, not the `169.254.x.x` address LM Studio may display. Make sure the model is loaded.
+- **`invalid_output` / `empty_content` with a reasoning model**: the model spent `max_output_tokens` thinking. Prefer raising `max_output_tokens` (≈ 2000) and `timeout_seconds` so it can reason and answer (measured AUROC 0.95 vs 0.60 without reasoning); set `reasoning_effort: none` (LM Studio honours it; prompt tags are ignored) only when speed matters more than judgement.
+- **Pending triage piling up** (`evaluation_judge_health` warns): the background tasks were lost or the model is too slow. Run **Sweep** on `/dashboard/benchmark#pending-triage` (or `POST /v1/evaluations/judge/sweep`), raise `timeout_seconds`, or switch `EVALUATION_JUDGE_PROFILE` back to `deterministic`.
+- **External judge returns `blocked_external`**: set `EVALUATION_JUDGE_ALLOW_EXTERNAL=true` and record the tenant's consent in *External judge consent*; check `api_key_configured` on the profiles table.
+- **Switching profiles**: edit `config/judge_profiles.yaml` (no rebuild; it is mounted) and set `EVALUATION_JUDGE_PROFILE`, then restart `api` and `worker`. Invalid profiles stop startup with a message naming the field.
