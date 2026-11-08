@@ -319,6 +319,8 @@ def policy_to_dict(tenant_id: str, policy: TenantEvaluationPolicy | None) -> dic
     paths = list(policy.protected_paths or []) if policy is not None else []
     allow_defaults = bool(policy.allow_default_protected_paths) if policy is not None else True
     return {
+        "allow_external_judge": bool(policy.allow_external_judge) if policy is not None else False,
+        "external_judge_profiles": list(policy.external_judge_profiles or []) if policy is not None else [],
         "tenant_id": tenant_id,
         "protected_paths": paths,
         "allow_default_protected_paths": allow_defaults,
@@ -335,15 +337,33 @@ async def upsert_evaluation_policy(
     protected_paths: list[str],
     allow_default_protected_paths: bool,
     updated_by: str = "",
+    allow_external_judge: bool | None = None,
+    external_judge_profiles: list[str] | None = None,
 ) -> TenantEvaluationPolicy:
     cleaned = list(dict.fromkeys(normalize_path(item) for item in protected_paths if normalize_path(item)))
     policy = await get_evaluation_policy(session, tenant_id)
     if policy is None:
-        policy = TenantEvaluationPolicy(tenant_id=tenant_id)
+        policy = TenantEvaluationPolicy(tenant_id=tenant_id, allow_external_judge=False, external_judge_profiles=[])
         session.add(policy)
+    previous_consent = (bool(policy.allow_external_judge), list(policy.external_judge_profiles or []))
     policy.protected_paths = cleaned
     policy.allow_default_protected_paths = bool(allow_default_protected_paths)
     policy.updated_by = updated_by
+    if allow_external_judge is not None:
+        policy.allow_external_judge = bool(allow_external_judge)
+    if external_judge_profiles is not None:
+        policy.external_judge_profiles = list(dict.fromkeys(str(item).strip().lower() for item in external_judge_profiles if str(item).strip()))
+    consent = (bool(policy.allow_external_judge), list(policy.external_judge_profiles or []))
+    if consent != previous_consent:
+        session.add(
+            GovernanceEvent(
+                tenant_id=tenant_id,
+                event_type="evaluation.external_judge_consent.updated",
+                decision="allowed" if consent[0] else "denied",
+                reason=f"External judge consent updated by {updated_by or 'unknown'}",
+                details={"allow_external_judge": consent[0], "external_judge_profiles": consent[1], "previous": {"allow_external_judge": previous_consent[0], "external_judge_profiles": previous_consent[1]}},
+            )
+        )
     session.add(
         GovernanceEvent(
             tenant_id=tenant_id,

@@ -36,7 +36,7 @@ from app.services.evaluation.judges import JudgeProvider, JudgeResult, assess_wi
 from app.services.evaluation.judges.base import JudgeInput
 from app.services.evaluation.judges.family import same_family
 from app.services.evaluation.judges.inputs import build_judge_input
-from app.services.evaluation.judges.profiles import active_profile_known
+from app.services.evaluation.judges.profiles import active_profile_known, get_profile
 from app.services.evaluation.taxonomy import PRIORITY_RANK
 
 logger = logging.getLogger(__name__)
@@ -85,6 +85,17 @@ async def catalog_family(session: AsyncSession, model_name: str) -> str:
     return str(family or "")
 
 
+async def external_judge_consent(session: AsyncSession, tenant_id: str, profile_name: str) -> bool:
+    """v1.5.11 (D15): has this tenant agreed to send (redacted) evidence to this external judge profile?"""
+    from app.models.evaluation_review import TenantEvaluationPolicy
+
+    policy = await session.scalar(select(TenantEvaluationPolicy).where(TenantEvaluationPolicy.tenant_id == (tenant_id or "default")))
+    if policy is None or not policy.allow_external_judge:
+        return False
+    allowed = [str(item) for item in list(policy.external_judge_profiles or [])]
+    return not allowed or profile_name in allowed
+
+
 async def latest_outcome(session: AsyncSession, run_id: str) -> RunOutcome | None:
     return await session.scalar(select(RunOutcome).where(RunOutcome.run_id == run_id).order_by(RunOutcome.submission_seq.desc()).limit(1))
 
@@ -124,7 +135,18 @@ async def _record_judge_usage(
     from app.services.finops import record_usage_event
 
     status = {"ok": "success", "timeout": "timeout"}.get(primary.status, "failed")
-    metadata = {"cost_kind": "evaluation_judge", "judge_version": primary.judge_version, "source": "evaluation_judge", **extra}
+    # v1.5.11 (D13): attribute cost to the profile's real provider / model so catalog prices match
+    # (e.g. provider "google" for Gemini, a zero-cost "qa_local" row for a local model).
+    profile = get_profile(settings, primary.profile) if primary.profile else None
+    pricing_provider = profile.pricing_provider if profile is not None else "custom"
+    pricing_model = (profile.effective_pricing_model if profile is not None else "") or primary.model
+    metadata = {
+        "cost_kind": "evaluation_judge",
+        "judge_version": primary.judge_version,
+        "judge_profile": primary.profile,
+        "source": "evaluation_judge",
+        **extra,
+    }
     usage_id = ""
     for unit, quantity in (("input_tokens", primary.input_tokens), ("output_tokens", primary.output_tokens)):
         if not quantity:
@@ -135,8 +157,8 @@ async def _record_judge_usage(
                 tenant_id=tenant_id,
                 run_id=run_id,
                 step_id=JUDGE_STEP_ID,
-                provider="custom",
-                model_name=primary.model,
+                provider=pricing_provider,
+                model_name=pricing_model,
                 resource_type="model",
                 resource_subtype="chat_completion",
                 usage_unit=unit,
@@ -171,11 +193,19 @@ async def run_judge(
     *,
     tenant_id: str,
     judge: JudgeProvider | None = None,
+    require_tenant_consent: bool = True,
 ) -> tuple[JudgeResult, bool]:
-    """Assess with the token cap applied; returns the result and the same-family flag."""
+    """Assess with tenant consent and the token cap applied; returns the result and the same-family flag.
+
+    An external (cloud) judge needs the global ``EVALUATION_JUDGE_ALLOW_EXTERNAL`` switch (checked by the provider)
+    **and** the tenant's consent (D15). Without consent no request is sent and the deterministic judge is used.
+    """
     judge = judge or get_judge(settings)
     skip = ""
-    if judge.name != "deterministic":
+    if require_tenant_consent and getattr(judge, "is_external", False):
+        if not await external_judge_consent(session, tenant_id, getattr(judge, "profile_label", "")):
+            skip = "blocked_external"
+    if not skip and judge.name != "deterministic":
         cap = int(settings.evaluation_judge_daily_token_cap_per_tenant)
         if await tokens_used_today(session, tenant_id) >= cap:
             skip = "budget_exceeded"

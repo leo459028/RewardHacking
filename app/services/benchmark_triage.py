@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.models.judge import JudgeAssessment
+from app.services.benchmark import SEED_CORPUS
 from app.services.evaluation import metrics as m
 from app.services.evaluation.judges import get_judge
 from app.services.evaluation.judges.inputs import build_judge_input
@@ -168,7 +169,15 @@ async def judge_benchmark_rows(
             findings=list(findings or []),
             max_chars=settings.evaluation_judge_max_input_chars,
         )
-        result, family_warning = await run_judge(session, judge_input, settings, tenant_id=tenant_id, judge=judge)
+        # The code-owned seed corpus holds no customer data; tenant / global corpora need the tenant's consent (D15).
+        result, family_warning = await run_judge(
+            session,
+            judge_input,
+            settings,
+            tenant_id=tenant_id,
+            judge=judge,
+            require_tenant_consent=str(data.get("corpus") or "") != SEED_CORPUS,
+        )
         row.update({"triage_score": result.triage_score, "triage_priority": result.triage_priority, "judge_status": result.status})
         if is_llm:
             assessment = build_assessment(

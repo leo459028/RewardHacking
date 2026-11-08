@@ -270,6 +270,8 @@ async def put_tenant_evaluation_policy(
         protected_paths=payload.protected_paths,
         allow_default_protected_paths=payload.allow_default_protected_paths,
         updated_by=payload.updated_by,
+        allow_external_judge=payload.allow_external_judge,
+        external_judge_profiles=payload.external_judge_profiles,
     )
     return policy_to_dict(tenant_id, policy)
 

@@ -770,3 +770,198 @@ def test_judge_health_reports_stale_pending(client, session_factory, monkeypatch
     health = checks["evaluation_judge_health"]
     assert health.status == "warn" and health.metadata["pending_triage"]["stale"] == 1
     assert "pending judge triage" in health.detail
+
+
+# ---------------------------------------------------------------------------
+# P4: cost attribution, internal hosts and tenant consent for external judges
+# ---------------------------------------------------------------------------
+
+from decimal import Decimal  # noqa: E402
+
+from app.models.finops import BudgetViolation, CostEvent, UsageEvent  # noqa: E402
+from app.models.governance_event import GovernanceEvent  # noqa: E402
+
+CLOUD_PROFILE = _profile(
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+    model="gemini-judge-test",
+    external=True,
+    structured_output="json_schema",
+    pricing_provider="google",
+    api_key_env="GEMINI_TEST_KEY",
+)
+
+
+def _use_profiles(monkeypatch, profiles: dict, active: str, handler, *, allow_external: bool = False):
+    calls: list[dict] = []
+
+    async def transport_handler(request: httpx.Request):
+        calls.append({"url": str(request.url), "auth": request.headers.get("Authorization", "")})
+        result = handler(json.loads(request.content))
+        if asyncio.iscoroutine(result):
+            result = await result
+        return result
+
+    monkeypatch.setattr(judges_pkg, "_TEST_TRANSPORT", httpx.MockTransport(transport_handler))
+    monkeypatch.setenv("EVALUATION_JUDGE_PROFILES", json.dumps(profiles))
+    monkeypatch.setenv("EVALUATION_JUDGE_PROFILES_FILE", "")
+    monkeypatch.setenv("EVALUATION_JUDGE_PROFILE", active)
+    monkeypatch.setenv("EVALUATION_JUDGE_ALLOW_EXTERNAL", "true" if allow_external else "false")
+    get_settings.cache_clear()
+    return calls
+
+
+def _price(client, provider: str, model: str, token_type: str, unit_price: str):
+    response = client.post(
+        "/v1/pricing",
+        json={
+            "provider": provider,
+            "resource_type": "model",
+            "model_name": model,
+            "token_type": token_type,
+            "price_unit": "per_1m_tokens",
+            "unit_price": unit_price,
+            "currency": "USD",
+            "scope_type": "system_default",
+        },
+    )
+    assert response.status_code == 200, response.text
+
+
+def _consent(client, tenant: str, allow: bool, profiles: list[str] | None = None):
+    body = {"protected_paths": [], "allow_default_protected_paths": True, "updated_by": "qa-admin", "allow_external_judge": allow}
+    if profiles is not None:
+        body["external_judge_profiles"] = profiles
+    response = client.put(f"/v1/tenants/{tenant}/evaluation-policy", json=body)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _judge_rows(session_factory, run_id: str):
+    async def scenario(session):
+        usage = list((await session.scalars(select(UsageEvent).where(UsageEvent.run_id == run_id, UsageEvent.step_id == "evaluation_judge"))).all())
+        costs = list((await session.scalars(select(CostEvent).where(CostEvent.run_id == run_id, CostEvent.step_id == "evaluation_judge"))).all())
+        violations = list(
+            (
+                await session.scalars(
+                    select(BudgetViolation).where(BudgetViolation.run_id == run_id, BudgetViolation.violation_type == "missing_pricing_rule")
+                )
+            ).all()
+        )
+        return usage, costs, violations
+
+    return _db(session_factory, scenario)
+
+
+def test_cloud_profile_cost_matches_catalog_price(client, session_factory, monkeypatch):
+    monkeypatch.setenv("GEMINI_TEST_KEY", "gemini-test-key-placeholder")
+    calls = _use_profiles(monkeypatch, {"gemini-t": CLOUD_PROFILE}, "gemini-t", lambda body: _content(json.dumps(GOOD)), allow_external=True)
+    _price(client, "google", "gemini-judge-test", "input", "0.30")
+    _price(client, "google", "gemini-judge-test", "output", "2.50")
+    _consent(client, "v1511-cloud", True, ["gemini-t"])
+    run_id, review_id = _flagged_review(client, session_factory, "v1511-cloud")
+    assert len(calls) == 1 and calls[0]["auth"] == "Bearer gemini-test-key-placeholder"
+    assessment = _assessments(session_factory, review_id, "gemini-t")[0]
+    assert assessment.status == "ok" and assessment.provider == "openai_compatible"
+    usage, costs, violations = _judge_rows(session_factory, run_id)
+    assert {row.provider for row in usage} == {"google"} and {row.model_name for row in usage} == {"gemini-judge-test"}
+    assert all(row.metadata_payload.get("judge_profile") == "gemini-t" for row in usage)
+    assert costs and all(cost.pricing_catalog_id for cost in costs) and sum(Decimal(str(c.net_cost)) for c in costs) > 0
+    assert violations == []
+
+
+def test_local_profile_with_zero_cost_row_records_no_violation(client, session_factory, monkeypatch):
+    local = _profile(model="qwen3.5-2b", pricing_provider="qa_local", structured_output="json_schema")
+    _use_profiles(monkeypatch, {"local-small": local}, "local-small", lambda body: _content(json.dumps(GOOD)))
+    _price(client, "qa_local", "qwen3.5-2b", "input", "0")
+    _price(client, "qa_local", "qwen3.5-2b", "output", "0")
+    run_id, _ = _flagged_review(client, session_factory, "v1511-local-cost")
+    usage, costs, violations = _judge_rows(session_factory, run_id)
+    assert {row.provider for row in usage} == {"qa_local"} and violations == []
+    assert costs and sum(Decimal(str(c.net_cost)) for c in costs) == 0
+
+
+def test_local_profile_without_pricing_row_still_records_missing_pricing(client, session_factory, monkeypatch):
+    local = _profile(model="unpriced-model", pricing_provider="qa_local", structured_output="json_schema")
+    _use_profiles(monkeypatch, {"local-x": local}, "local-x", lambda body: _content(json.dumps(GOOD)))
+    run_id, _ = _flagged_review(client, session_factory, "v1511-unpriced")
+    _, _, violations = _judge_rows(session_factory, run_id)
+    assert violations  # behaviour unchanged: missing prices stay visible
+
+
+def test_external_judge_requires_tenant_consent(client, session_factory, monkeypatch):
+    monkeypatch.setenv("GEMINI_TEST_KEY", "gemini-test-key-placeholder")
+    calls = _use_profiles(monkeypatch, {"gemini-t": CLOUD_PROFILE}, "gemini-t", lambda body: _content(json.dumps(GOOD)), allow_external=True)
+
+    _, no_policy_review = _flagged_review(client, session_factory, "v1511-consent")
+    blocked = _assessments(session_factory, no_policy_review, "gemini-t")[0]
+    assert blocked.status == "blocked_external" and blocked.triage_source == "deterministic:1.0.0" and calls == []
+
+    _consent(client, "v1511-consent", True, ["some-other-profile"])
+    _, wrong_profile_review = _flagged_review(client, session_factory, "v1511-consent")
+    assert _assessments(session_factory, wrong_profile_review, "gemini-t")[0].status == "blocked_external" and calls == []
+
+    policy = _consent(client, "v1511-consent", True, ["gemini-t"])
+    assert policy["allow_external_judge"] is True and policy["external_judge_profiles"] == ["gemini-t"]
+    _, allowed_review = _flagged_review(client, session_factory, "v1511-consent")
+    assert _assessments(session_factory, allowed_review, "gemini-t")[0].status == "ok" and len(calls) == 1
+
+    # An empty profile list means "all external profiles" once consent is given.
+    _consent(client, "v1511-consent", True, [])
+    _, any_profile_review = _flagged_review(client, session_factory, "v1511-consent")
+    assert _assessments(session_factory, any_profile_review, "gemini-t")[0].status == "ok" and len(calls) == 2
+
+    events = _db(
+        session_factory,
+        lambda s: _all(s, select(GovernanceEvent).where(GovernanceEvent.event_type == "evaluation.external_judge_consent.updated", GovernanceEvent.tenant_id == "v1511-consent")),
+    )
+    assert len(events) == 3  # one per actual change
+
+
+def test_global_switch_still_blocks_even_with_consent(client, session_factory, monkeypatch):
+    calls = _use_profiles(monkeypatch, {"gemini-t": CLOUD_PROFILE}, "gemini-t", lambda body: _content(json.dumps(GOOD)), allow_external=False)
+    _consent(client, "v1511-global-off", True, [])
+    _, review_id = _flagged_review(client, session_factory, "v1511-global-off")
+    assert _assessments(session_factory, review_id, "gemini-t")[0].status == "blocked_external" and calls == []
+
+
+def test_policy_update_without_consent_fields_keeps_consent(client):
+    _consent(client, "v1511-keep", True, ["gemini-t"])
+    response = client.put("/v1/tenants/v1511-keep/evaluation-policy", json={"protected_paths": ["scoring/**"], "allow_default_protected_paths": True})
+    body = response.json()
+    assert body["allow_external_judge"] is True and body["external_judge_profiles"] == ["gemini-t"]
+    assert "scoring/**" in body["protected_paths"]
+
+
+def test_internal_hosts_are_exact_and_external_can_only_be_forced():
+    settings = _settings()
+
+    def judge_for(**overrides):
+        profile = jp.parse_profile("lab", _profile(**overrides), source="env")
+        return OpenAICompatibleJudge(
+            base_url=profile.base_url,
+            model=profile.model,
+            internal_suffixes=settings.mcp_internal_host_suffix_list,
+            internal_hosts=settings.judge_internal_host_list,
+            profile=profile,
+        )
+
+    assert judge_for(base_url="http://host.docker.internal:12339/v1").is_external is False
+    assert judge_for(base_url="http://host.docker.internal.evil.com/v1").is_external is True
+    assert judge_for(base_url="http://169.254.123.229:12339/v1").is_external is True  # link-local is never assumed internal
+    assert judge_for(base_url="http://localhost:1234/v1", external=True).is_external is True
+    assert judge_for(base_url="https://api.example.com/v1", external=False).is_external is True  # cannot downgrade
+    built = get_judge(settings, profile=jp.parse_profile("lab", _profile(base_url="http://host.docker.internal:12339/v1"), source="env"))
+    assert built.is_external is False
+
+
+def test_seed_benchmark_with_external_profile_needs_no_tenant_consent(session_factory, monkeypatch):
+    from app.services import benchmark as bench
+
+    monkeypatch.setenv("GEMINI_TEST_KEY", "gemini-test-key-placeholder")
+    calls = _use_profiles(monkeypatch, {"gemini-t": CLOUD_PROFILE}, "gemini-t", lambda body: _content(json.dumps(GOOD)), allow_external=True)
+    run = _db(
+        session_factory,
+        lambda s: bench.run_benchmark(s, tenant_id="default", settings=get_settings(), judge_provider="openai_compatible", max_judge_samples=2),
+    )
+    assert len(calls) == 2 and run.metrics["triage"]["judge_status_counts"] == {"ok": 2}
+    assert run.judge_config["profile"] == "gemini-t"

@@ -180,10 +180,16 @@ class EvaluationPolicyRecord(BaseModel):
     allow_default_protected_paths: bool = True
     default_protected_paths: list[str] = Field(default_factory=list)
     effective_protected_paths: list[str] = Field(default_factory=list)
+    # v1.5.11 consent to send redacted evidence to external (cloud) judge profiles
+    allow_external_judge: bool = False
+    external_judge_profiles: list[str] = Field(default_factory=list)
     updated_by: str = ""
 
 
 class EvaluationPolicyUpdateRequest(BaseModel):
     protected_paths: list[str] = Field(default_factory=list, max_length=200)
     allow_default_protected_paths: bool = True
+    # v1.5.11: omitted (None) keeps the stored value, so v1.5.10 clients never reset a tenant's consent.
+    allow_external_judge: bool | None = None
+    external_judge_profiles: list[str] | None = Field(default=None, max_length=20)
     updated_by: str = Field(default="", max_length=128)

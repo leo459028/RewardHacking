@@ -13,6 +13,7 @@ import asyncio
 import secrets
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -49,6 +50,7 @@ class OpenAICompatibleJudge:
         internal_suffixes: list[str] | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         profile: JudgeProfile | None = None,
+        internal_hosts: list[str] | None = None,
     ):
         self.base_url = (base_url or "").strip().rstrip("/")
         self.model = (model or "").strip()
@@ -57,6 +59,11 @@ class OpenAICompatibleJudge:
         self.max_output_tokens = int(max_output_tokens)
         self.allow_external = bool(allow_external)
         self.internal_suffixes = list(internal_suffixes or [])
+        # v1.5.11 (D14): exact host names treated as internal (default host.docker.internal). Exact match only, so
+        # host.docker.internal.evil.com stays external. A profile can force "external" but never downgrade a
+        # public host name to internal (external: false behaves like auto).
+        self.internal_hosts = {host.strip().lower().rstrip(".") for host in (internal_hosts or []) if host.strip()}
+        self.force_external = bool(profile is not None and profile.external == "true")
         self._transport = transport
         # v1.5.11: named profiles prefix judge_version; the synthesized legacy ``default`` keeps v1.5.10 strings (D3, D6).
         self.profile = profile
@@ -72,6 +79,14 @@ class OpenAICompatibleJudge:
 
     @property
     def is_external(self) -> bool:
+        if self.force_external:
+            return True
+        try:
+            host = (urlsplit(self.base_url).hostname or "").lower().rstrip(".")
+        except ValueError:
+            host = ""
+        if host and host in self.internal_hosts:
+            return False
         return is_external_endpoint("streamable_http", self.base_url, self.internal_suffixes)
 
     def _output(self, status: str, **kwargs: Any) -> JudgeOutput:

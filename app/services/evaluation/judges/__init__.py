@@ -63,6 +63,7 @@ def build_judge(profile: JudgeProfile, settings: Settings) -> JudgeProvider:
             internal_suffixes=settings.mcp_internal_host_suffix_list,
             transport=_TEST_TRANSPORT,
             profile=profile,
+            internal_hosts=settings.judge_internal_host_list,
         )
     return DeterministicJudge(profile_label=profile.name)
 
