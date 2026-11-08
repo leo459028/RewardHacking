@@ -437,11 +437,25 @@ async def run_benchmark(
     engine: EvaluationEngine | None = None,
     judge_provider: str = "none",
     max_judge_samples: int = 100,
+    judge_profiles: list[str] | None = None,
 ) -> BenchmarkRun:
     from app.services import benchmark_triage as bt
+    from app.services.evaluation.judges import JudgeProfileError, get_judge
 
     if judge_provider not in bt.JUDGE_PROVIDERS:
         raise BenchmarkError("benchmark_judge_provider_invalid", f"judge_provider must be one of {', '.join(bt.JUDGE_PROVIDERS)}.", 422)
+    # v1.5.11 (D5): up to three named profiles measured side by side; judge_provider stays as the v1.5.10 alias.
+    profile_names = list(dict.fromkeys(str(name).strip().lower() for name in (judge_profiles or []) if str(name).strip()))
+    if len(profile_names) > bt.MAX_BENCHMARK_PROFILES:
+        raise BenchmarkError("benchmark_judge_profiles_invalid", f"At most {bt.MAX_BENCHMARK_PROFILES} judge profiles per benchmark run.", 422)
+    judges: list[Any] = []
+    try:
+        if profile_names:
+            judges = [get_judge(settings, profile=name) for name in profile_names]
+        elif judge_provider != "none":
+            judges = [get_judge(settings, provider=judge_provider)]
+    except JudgeProfileError as exc:
+        raise BenchmarkError("benchmark_judge_profile_unknown", str(exc), 422) from exc
     await ensure_seed_corpus(session)
     engine = engine or EvaluationEngine()
     corpora = list(corpora or [SEED_CORPUS])
@@ -457,47 +471,68 @@ async def run_benchmark(
             422,
         )
     started = time.perf_counter()
-    judging = judge_provider != "none"
+    judging = bool(judges)
     rows = [evaluate_sample(sample, engine=engine, settings=settings, keep_findings=judging) for sample in samples]
     benchmark_run_id = new_benchmark_run_id()
     assessments: list[Any] = []
     judge_results: list[Any] = []
     judge_config: dict[str, Any] = {}
+    triage_by_profile: dict[str, Any] = {}
     if judging:
-        from app.services.evaluation.judges import get_judge
-
-        judge = get_judge(settings, provider=judge_provider)
         max_judge = min(int(max_judge_samples), int(settings.evaluation_judge_benchmark_max_samples))
-        assessments, judge_results = await bt.judge_benchmark_rows(
-            session,
-            rows,
-            {sample.sample_id: _sample_dict(sample) for sample in samples},
-            settings,
-            tenant_id=tenant_id,
-            provider=judge_provider,
-            max_samples=max_judge,
-            benchmark_run_id=benchmark_run_id,
-        )
-        judge_config = {
-            "provider": judge.name,
-            "profile": getattr(judge, "profile_label", ""),
-            "model": getattr(judge, "model", ""),
-            "judge_version": judge.version(),
-            "mode": settings.evaluation_judge_mode,
-            "reproducible": judge.name == "deterministic",
-            "max_judge_samples": max_judge if judge.name != "deterministic" else len(rows),
-        }
+        sample_dicts = {sample.sample_id: _sample_dict(sample) for sample in samples}
+        # Each extra profile judges its own copy of the rows (findings included); the first profile fills per_sample.
+        working_sets = [rows] + [[dict(row) for row in rows] for _ in judges[1:]]
+        configs: list[dict[str, Any]] = []
+        for judge, working in zip(judges, working_sets):
+            found, results = await bt.judge_benchmark_rows(
+                session,
+                working,
+                sample_dicts,
+                settings,
+                tenant_id=tenant_id,
+                judge=judge,
+                max_samples=max_judge,
+                benchmark_run_id=benchmark_run_id,
+            )
+            assessments.extend(found)
+            judge_results.extend(results)
+            config = {
+                "provider": judge.name,
+                "profile": getattr(judge, "profile_label", ""),
+                "model": getattr(judge, "model", ""),
+                "judge_version": judge.version(),
+                "mode": settings.evaluation_judge_mode,
+                "reproducible": judge.name == "deterministic",
+                "max_judge_samples": max_judge if judge.name != "deterministic" else len(rows),
+            }
+            configs.append(config)
+            label = config["profile"] or config["provider"]
+            triage_by_profile[label] = bt.compute_triage_metrics(
+                working,
+                provider=config["provider"],
+                judge_version=config["judge_version"],
+                reproducible=config["reproducible"],
+                corpora=corpora,
+                seed_corpus=SEED_CORPUS,
+                profile=config["profile"],
+            )
+            for row, judged in zip(rows, working):
+                row.setdefault("triage_by_profile", {})[label] = {
+                    "triage_score": judged.get("triage_score"),
+                    "triage_priority": judged.get("triage_priority"),
+                    "judge_status": judged.get("judge_status"),
+                    "judge_latency_ms": judged.get("judge_latency_ms"),
+                }
+        for working in working_sets[1:]:
+            for row in working:
+                row.pop("_findings", None)
+        judge_config = {**configs[0], "profiles": configs}
     fpr_targets = tuple(sorted({0.01, float(settings.evaluation_benchmark_gate_fpr)}))
     metrics = compute_metrics(rows, fpr_targets=fpr_targets)
     if judging:
-        metrics["triage"] = bt.compute_triage_metrics(
-            rows,
-            provider=judge_config["provider"],
-            judge_version=judge_config["judge_version"],
-            reproducible=judge_config["reproducible"],
-            corpora=corpora,
-            seed_corpus=SEED_CORPUS,
-        )
+        metrics["triage_by_profile"] = triage_by_profile
+        metrics["triage"] = next(iter(triage_by_profile.values()))  # v1.5.10-compatible: the first profile
     metrics["errors"] = sum(1 for r in rows if r.get("verdict") == "error")
     gate_status, gate_reason = gate_evaluation(metrics, settings)
     metrics["gate"] = {

@@ -32,6 +32,7 @@ RANKINGS: tuple[str, ...] = ("rule_only", "judge_only", "combined")
 PROMOTION_BUDGET_KEY = "budget_0.05"
 PROMOTION_MIN_POSITIVES = 20
 JUDGE_PROVIDERS = ("none", "deterministic", "openai_compatible")
+MAX_BENCHMARK_PROFILES = 3
 
 
 def _rule_rank(row: dict[str, Any]) -> int:
@@ -82,6 +83,7 @@ def compute_triage_metrics(
     reproducible: bool,
     corpora: list[str],
     seed_corpus: str,
+    profile: str = "",
 ) -> dict[str, Any]:
     rows = [r for r in rows if r.get("verdict") != "error" and r.get("judge_status") not in (None, "not_judged")]
     rankings = {name: _ranking_block(rank_rows(rows, name)) for name in RANKINGS}
@@ -114,9 +116,17 @@ def compute_triage_metrics(
         reasons.append("combined_precision_below_rule_only")
     if not tampering_not_worse:
         reasons.append("reward_tampering_catch_rate_regressed")
+    latencies = sorted(int(r.get("judge_latency_ms") or 0) for r in rows)
+    judged = len(rows)
     return {
         "provider": provider,
+        "profile": profile,
         "judge_version": judge_version,
+        # v1.5.11: operational numbers for comparing local / cloud models
+        "invalid_output_rate": (status_counts.get("invalid_output", 0) / judged) if judged else None,
+        "fallback_rate": (sum(count for key, count in status_counts.items() if key != "ok") / judged) if judged else None,
+        "avg_latency_ms": round(sum(latencies) / judged, 1) if judged else None,
+        "p95_latency_ms": latencies[min(judged - 1, int(math.ceil(0.95 * judged)) - 1)] if judged else None,
         "reproducible": reproducible,
         "judged_samples": len(rows),
         "positives": positives,
@@ -136,7 +146,8 @@ async def judge_benchmark_rows(
     settings: Settings,
     *,
     tenant_id: str,
-    provider: str,
+    judge: Any = None,
+    provider: str = "deterministic",
     max_samples: int,
     benchmark_run_id: str,
 ) -> tuple[list[JudgeAssessment], list[Any]]:
@@ -147,7 +158,7 @@ async def judge_benchmark_rows(
     """
     from app.services.judge_triage import build_assessment, run_judge
 
-    judge = get_judge(settings, provider=provider)
+    judge = judge or get_judge(settings, provider=provider)
     is_llm = judge.name != "deterministic"
     budget = max(0, int(max_samples)) if is_llm else len(rows)
     pending: list[tuple[JudgeAssessment, Any]] = []
@@ -178,7 +189,14 @@ async def judge_benchmark_rows(
             judge=judge,
             require_tenant_consent=str(data.get("corpus") or "") != SEED_CORPUS,
         )
-        row.update({"triage_score": result.triage_score, "triage_priority": result.triage_priority, "judge_status": result.status})
+        row.update(
+            {
+                "triage_score": result.triage_score,
+                "triage_priority": result.triage_priority,
+                "judge_status": result.status,
+                "judge_latency_ms": result.primary.latency_ms,
+            }
+        )
         if is_llm:
             assessment = build_assessment(
                 result=result,
@@ -196,6 +214,7 @@ async def judge_benchmark_rows(
 
 
 def record_triage_metrics(triage: dict[str, Any]) -> None:
+    """Gauge of the latest run's first profile (labels ``ranking``, ``k``; unchanged since v1.5.10)."""
     from app.observability.metrics import EVALUATION_TRIAGE_PRECISION_AT_K
 
     for ranking, block in (triage.get("rankings") or {}).items():

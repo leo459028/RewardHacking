@@ -248,6 +248,18 @@ async def post_inspect_import(
 # ---------------------------------------------------------------------------
 
 
+def _uses_llm_profile(names: list[str] | None) -> bool:
+    """Unknown names count as LLM profiles here (admin required); the service then rejects them with 422."""
+    from app.services.evaluation.judges.profiles import get_profile
+
+    settings = get_settings()
+    for name in names or []:
+        profile = get_profile(settings, name)
+        if profile is None or profile.provider != "deterministic":
+            return True
+    return False
+
+
 @router.post("/benchmark/runs", status_code=201)
 async def post_benchmark_run(
     payload: BenchmarkRunRequest,
@@ -255,7 +267,7 @@ async def post_benchmark_run(
     session: AsyncSession = Depends(get_session),
 ):
     require_role(auth_context, *WRITE_ROLES)
-    if payload.judge_provider == "openai_compatible":
+    if payload.judge_provider == "openai_compatible" or _uses_llm_profile(payload.judge_profiles):
         # v1.5.10 (D23): sending benchmark evidence to an LLM judge costs money and is not reproducible.
         require_role(auth_context, "admin")
     tenant = _scoped_tenant(payload.tenant_id, auth_context) or "default"
@@ -270,6 +282,7 @@ async def post_benchmark_run(
             created_by=_actor(payload.created_by, auth_context),
             judge_provider=payload.judge_provider,
             max_judge_samples=payload.max_judge_samples,
+            judge_profiles=payload.judge_profiles,
         )
     except bench.BenchmarkError as exc:
         raise _http(exc) from exc

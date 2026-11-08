@@ -36,7 +36,7 @@ from app.services.evaluation.judges import JudgeProvider, JudgeResult, assess_wi
 from app.services.evaluation.judges.base import JudgeInput
 from app.services.evaluation.judges.family import same_family
 from app.services.evaluation.judges.inputs import build_judge_input
-from app.services.evaluation.judges.profiles import active_profile_known, get_profile
+from app.services.evaluation.judges.profiles import active_profile_known, get_profile, resolve_active_profile
 from app.services.evaluation.taxonomy import PRIORITY_RANK
 
 logger = logging.getLogger(__name__)
@@ -423,6 +423,8 @@ def assessment_to_dict(item: JudgeAssessment) -> dict[str, Any]:
 
 
 async def judge_status(session: AsyncSession, settings: Settings, *, tenant_id: str | None = None) -> dict[str, Any]:
+    from app.services.judge_background import pending_summary
+
     judge = get_judge(settings)
     since = datetime.now(timezone.utc) - timedelta(hours=24)
     stmt = select(JudgeAssessment.status, func.count()).where(JudgeAssessment.created_at >= since).group_by(JudgeAssessment.status)
@@ -446,6 +448,8 @@ async def judge_status(session: AsyncSession, settings: Settings, *, tenant_id: 
         "tokens_used_today": await tokens_used_today(session, tenant_id) if tenant_id else None,
         "status_counts_24h": counts,
         "default_order": default_order(settings),
+        "execution": resolve_active_profile(settings).execution,
+        "pending_triage": await pending_summary(session, settings),
         "used_for_verdict": False,
         "used_for_hard_deny": False,
     }

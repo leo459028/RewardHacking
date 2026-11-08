@@ -205,8 +205,18 @@ async def _evaluation_judge_health_check(session: AsyncSession, *, settings: Set
         issues.append(f"{same_family} assessments used a judge from the monitored agent's model family")
     if settings.judge_uses_legacy_alias:
         issues.append("LLM_JUDGE_ENABLED is deprecated; set EVALUATION_JUDGE_PROVIDER")
+    from app.services.evaluation.judges.profiles import resolve_active_profile
     from app.services.judge_background import pending_summary
+    from app.services.judge_profiles_admin import missing_pricing
 
+    active_profile = resolve_active_profile(settings)
+    pricing_missing = await missing_pricing(session, settings, active_profile)
+    if pricing_missing:
+        status = "warn" if status == "pass" else status
+        issues.append(
+            f"profile '{active_profile.name}' has no pricing rows for {active_profile.pricing_provider}/{active_profile.effective_pricing_model} "
+            "(judge costs record missing_pricing_rule violations)"
+        )
     pending = await pending_summary(session, settings, now=now)
     if pending["stale"]:
         status = "warn" if status == "pass" else status
@@ -245,6 +255,8 @@ async def _evaluation_judge_health_check(session: AsyncSession, *, settings: Set
             "promotion_criteria_met": triage.get("promotion_criteria_met"),
             "promotion_blockers": triage.get("promotion_blockers", []),
             "pending_triage": pending,
+            "pricing_missing": pricing_missing,
+            "execution": active_profile.execution,
             "used_for_verdict": False,
         },
     )

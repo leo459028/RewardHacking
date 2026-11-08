@@ -965,3 +965,133 @@ def test_seed_benchmark_with_external_profile_needs_no_tenant_consent(session_fa
     )
     assert len(calls) == 2 and run.metrics["triage"]["judge_status_counts"] == {"ok": 2}
     assert run.judge_config["profile"] == "gemini-t"
+
+
+# ---------------------------------------------------------------------------
+# P5: multi-profile benchmark, profiles / probe / pricing / sweep API, health
+# ---------------------------------------------------------------------------
+
+
+def _auth(monkeypatch, tenant: str) -> dict[str, dict[str, str]]:
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv(
+        "API_KEYS",
+        f"op-key-1511:{tenant}:operator,rev-key-1511:{tenant}:reviewer,ta-key-1511:{tenant}:tenant_admin,adm-key-1511:{tenant}:admin",
+    )
+    monkeypatch.setenv("QUOTA_ENABLED", "false")
+    get_settings.cache_clear()
+    return {role: {"X-API-Key": key} for role, key in (("operator", "op-key-1511"), ("reviewer", "rev-key-1511"), ("tenant_admin", "ta-key-1511"), ("admin", "adm-key-1511"))}
+
+
+LAB_PROFILES = {
+    "lab": _profile(model="lab-model", structured_output="json_schema", pricing_provider="qa_local"),
+    "lab-cloud": CLOUD_PROFILE,
+}
+
+
+def test_benchmark_measures_several_profiles_side_by_side(session_factory, monkeypatch):
+    from app.services import benchmark as bench
+
+    calls = _use_profiles(monkeypatch, LAB_PROFILES, "default", lambda body: _content(json.dumps(GOOD)))
+    run = _db(
+        session_factory,
+        lambda s: bench.run_benchmark(s, tenant_id="default", settings=get_settings(), judge_profiles=["deterministic", "lab"], max_judge_samples=3),
+    )
+    by_profile = run.metrics["triage_by_profile"]
+    assert list(by_profile) == ["deterministic", "lab"] and len(calls) == 3
+    assert run.metrics["triage"] == by_profile["deterministic"]
+    assert by_profile["deterministic"]["judged_samples"] == run.sample_count and by_profile["lab"]["judged_samples"] == 3
+    lab = by_profile["lab"]
+    assert lab["profile"] == "lab" and lab["reproducible"] is False and lab["invalid_output_rate"] == 0.0
+    assert lab["avg_latency_ms"] is not None and lab["p95_latency_ms"] is not None
+    assert [c["profile"] for c in run.judge_config["profiles"]] == ["deterministic", "lab"]
+    row = run.per_sample[0]
+    assert set(row["triage_by_profile"]) == {"deterministic", "lab"} and "_findings" not in row
+    stored = _db(session_factory, lambda s: _all(s, select(JudgeAssessment).where(JudgeAssessment.benchmark_run_id == run.benchmark_run_id)))
+    assert len(stored) == 3 and {item.profile for item in stored} == {"lab"}
+
+
+def test_benchmark_profile_validation_and_rbac(client, monkeypatch):
+    keys = _auth(monkeypatch, "v1511-bench")
+    _use_profiles(monkeypatch, LAB_PROFILES, "default", lambda body: _content(json.dumps(GOOD)))
+    too_many = client.post("/v1/benchmark/runs", json={"judge_profiles": ["deterministic", "lab", "lab-cloud", "default"]}, headers=keys["admin"])
+    assert too_many.status_code == 422
+    unknown = client.post("/v1/benchmark/runs", json={"judge_profiles": ["nope"]}, headers=keys["admin"])
+    assert unknown.status_code == 422 and "benchmark_judge_profile_unknown" in unknown.text
+    llm_as_tenant_admin = client.post("/v1/benchmark/runs", json={"judge_profiles": ["lab"]}, headers=keys["tenant_admin"])
+    assert llm_as_tenant_admin.status_code == 403
+    deterministic = client.post("/v1/benchmark/runs", json={"judge_profiles": ["deterministic"]}, headers=keys["tenant_admin"])
+    assert deterministic.status_code == 201 and deterministic.json()["judge_config"]["profile"] == "deterministic"
+
+
+def test_profiles_api_lists_safe_view(client, monkeypatch):
+    monkeypatch.setenv("GEMINI_TEST_KEY", "gemini-test-key-placeholder")
+    keys = _auth(monkeypatch, "v1511-profiles-api")
+    _use_profiles(monkeypatch, LAB_PROFILES, "lab", lambda body: _content(json.dumps(GOOD)))
+    assert client.get("/v1/evaluations/judge/profiles", headers=keys["operator"]).status_code == 403
+    body = client.get("/v1/evaluations/judge/profiles", headers=keys["reviewer"]).json()
+    rows = {row["name"]: row for row in body["profiles"]}
+    assert body["active_profile"] == "lab" and rows["lab"]["active"] is True and body["profiles"][0]["name"] == "lab"
+    assert {"deterministic", "default", "lab", "lab-cloud"} <= set(rows)
+    assert rows["lab-cloud"]["effective_external"] is True and rows["lab-cloud"]["api_key_configured"] is True
+    assert rows["lab"]["effective_external"] is False and rows["lab"]["host"] == "localhost"
+    assert "gemini-test-key-placeholder" not in json.dumps(body) and body["signal_usage"] == "monitor_only"
+
+
+def test_probe_reports_backend_behaviour_without_writing_assessments(client, session_factory, monkeypatch):
+    keys = _auth(monkeypatch, "v1511-probe")
+    calls = _use_profiles(monkeypatch, LAB_PROFILES, "default", lambda body: _content(json.dumps(GOOD)))
+    assert client.post("/v1/evaluations/judge/profiles/lab/probe", headers=keys["tenant_admin"]).status_code == 403
+    response = client.post("/v1/evaluations/judge/profiles/lab/probe", headers=keys["admin"])
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "ok" and body["structured_output"] == "json_schema" and body["attempts"] == 1
+    assert body["assessment_written"] is False and body["usage_id"].startswith("usage_") and len(calls) == 1
+    assert _db(session_factory, lambda s: _all(s, select(JudgeAssessment))) == []
+    usage = _db(session_factory, lambda s: _all(s, select(UsageEvent).where(UsageEvent.step_id == "evaluation_judge")))
+    assert usage and all(row.metadata_payload.get("purpose") == "probe" for row in usage)
+    # A cloud profile is still subject to the global external switch (off here): blocked, no request sent.
+    cloud = client.post("/v1/evaluations/judge/profiles/lab-cloud/probe", headers=keys["admin"]).json()
+    assert cloud["status"] == "blocked_external" and len(calls) == 1
+    assert client.post("/v1/evaluations/judge/profiles/nope/probe", headers=keys["admin"]).status_code == 404
+
+
+def test_zero_cost_pricing_for_local_profile_and_health(client, session_factory, monkeypatch):
+    keys = _auth(monkeypatch, "v1511-pricing")
+    _use_profiles(monkeypatch, LAB_PROFILES, "lab", lambda body: _content(json.dumps(GOOD)))
+    from app.services.operations import compute_operations_readiness
+
+    def health():
+        checks = _db(session_factory, lambda s: compute_operations_readiness(s, settings=get_settings())).checks
+        return {c.check_key: c for c in checks}["evaluation_judge_health"]
+
+    before = health()
+    assert before.metadata["pricing_missing"] is True and "no pricing rows" in before.detail
+    assert client.post("/v1/evaluations/judge/profiles/lab/zero-cost-pricing", headers=keys["tenant_admin"]).status_code == 403
+    created = client.post("/v1/evaluations/judge/profiles/lab/zero-cost-pricing", headers=keys["admin"]).json()
+    assert created["provider"] == "qa_local" and created["model"] == "lab-model" and len(created["created"]) == 2
+    again = client.post("/v1/evaluations/judge/profiles/lab/zero-cost-pricing", headers=keys["admin"]).json()
+    assert again["created"] == [] and again["already_present"] == ["input", "output"]
+    assert health().metadata["pricing_missing"] is False
+    cloud = client.post("/v1/evaluations/judge/profiles/lab-cloud/zero-cost-pricing", headers=keys["admin"])
+    assert cloud.status_code == 409 and "judge_profile_not_local" in cloud.text
+
+
+def test_sweep_endpoint_and_status_pending(client, session_factory, monkeypatch):
+    _, review_id = _flagged_review(client, session_factory, "v1511-sweep-api")
+    _use_background_profile(monkeypatch, lambda body: _content(json.dumps(GOOD)))
+
+    async def make_stale(session):
+        review = await session.scalar(select(EvaluationReview).where(EvaluationReview.review_id == review_id))
+        review.triage_source = "pending:bg"
+        review.updated_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        await session.commit()
+
+    _db(session_factory, make_stale)
+    status = client.get("/v1/evaluations/judge/status").json()
+    assert status["execution"] == "background" and status["pending_triage"]["stale"] == 1
+    swept = client.post("/v1/evaluations/judge/sweep").json()
+    assert swept["swept"] == [review_id] and swept["signal_usage"] == "monitor_only"
+    client.portal.call(jb.drain_background, 15.0)
+    assert _assessments(session_factory, review_id, "bg")
+    assert client.get("/v1/evaluations/judge/status").json()["pending_triage"]["pending"] == 0
