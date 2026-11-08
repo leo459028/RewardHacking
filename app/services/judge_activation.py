@@ -45,6 +45,10 @@ logger = logging.getLogger(__name__)
 STARTUP_ACTOR = "system:startup"
 AUDIT_TENANT = "default"
 STARTUP_REFRESH_TIMEOUT_SECONDS = 5.0
+# Tests inject an ``InMemoryRunStateStore`` here (tests/conftest.py); production uses Redis (D14).
+_BREAKER_STORE_OVERRIDE: Any = None
+# Availability failures only: a reachable model that answers badly (invalid_output) does not open the breaker.
+BREAKER_FAILURE_STATUSES = frozenset({"timeout", "error"})
 # Test-suite switch (tests/conftest.py sets it False): the app lifespan must not reach a real database in tests.
 # The v1.5.12 tests call ``startup()`` directly with the test session factory.
 RUN_ON_STARTUP = True
@@ -289,3 +293,76 @@ async def startup(settings: Settings, factory: Callable[[], Any] | None = None) 
     _STARTUP_TASKS.add(task)
     task.add_done_callback(_STARTUP_TASKS.discard)
     return task
+
+
+# ---------------------------------------------------------------------------
+# Circuit breaker per judge profile (D14)
+# ---------------------------------------------------------------------------
+
+
+def breaker_store(settings: Settings) -> Any:
+    if _BREAKER_STORE_OVERRIDE is not None:
+        return _BREAKER_STORE_OVERRIDE
+    from app.infra.redis import get_redis
+    from app.services.run_state import RedisRunStateStore
+
+    return RedisRunStateStore(get_redis(settings))
+
+
+async def breaker_state(settings: Settings, profile: str) -> dict[str, Any] | None:
+    """The open breaker record, or ``None`` (closed, expired = half-open, or Redis unavailable: never block on it)."""
+    try:
+        return await breaker_store(settings).get_judge_breaker(profile)
+    except Exception:  # noqa: BLE001
+        logger.warning("judge breaker state unavailable for %s; calling the judge normally", profile, exc_info=True)
+        return None
+
+
+async def record_result(settings: Settings, profile: str, status: str) -> dict[str, Any] | None:
+    """Count consecutive availability failures; open the breaker at the threshold. Returns the record when it opened.
+
+    After the TTL the breaker is half-open: the next real call runs; success resets the counter, another failure
+    re-opens immediately because the counter is still at or above the threshold."""
+    try:
+        store = breaker_store(settings)
+        if status == "ok":
+            await store.reset_judge_failures(profile)
+            await store.close_judge_breaker(profile)
+            return None
+        if status not in BREAKER_FAILURE_STATUSES:
+            return None
+        failures = await store.record_judge_failure(profile)
+        if failures < int(settings.evaluation_judge_breaker_failure_threshold):
+            return None
+        record = await store.open_judge_breaker(
+            profile,
+            reason=f"{failures} consecutive judge failures (last: {status})",
+            ttl_seconds=int(settings.evaluation_judge_breaker_ttl_seconds),
+            failures=failures,
+        )
+    except Exception:  # noqa: BLE001 - Redis unavailable: no breaker, failures still fall back
+        logger.warning("judge breaker update failed for %s", profile, exc_info=True)
+        return None
+    await _audit_breaker_opened(profile, record)
+    return record
+
+
+async def _audit_breaker_opened(profile: str, record: dict[str, Any]) -> None:
+    """Audited on its own session so a breaker never commits the caller's (e.g. a benchmark's) transaction."""
+    from app.services.judge_background import _session_factory
+
+    factory = _session_factory()
+    if factory is None:
+        return
+    try:
+        async with factory() as session:
+            await audit(
+                session,
+                event="breaker_opened",
+                profile=profile,
+                actor="system:breaker",
+                decision="opened",
+                details={"failures": record.get("failures"), "ttl_seconds": record.get("ttl_seconds"), "reason": record.get("reason")},
+            )
+    except Exception:  # noqa: BLE001
+        logger.warning("could not audit judge breaker opening for %s", profile, exc_info=True)

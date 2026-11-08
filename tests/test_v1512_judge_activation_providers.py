@@ -743,3 +743,251 @@ def test_request_time_url_guard_blocks_insecure_external_urls(monkeypatch):
     assert calls == []
     ok = OpenAICompatibleJudge(base_url="http://localhost:1234/v1", model="m", transport=transport)
     assert asyncio.run(ok.assess(_judge_input())).status == "ok"
+
+
+# ---------------------------------------------------------------------------
+# P3: fallback chain, circuit breaker, per-profile budget (D13-D15)
+# ---------------------------------------------------------------------------
+
+from app.models.agent_run import AgentRun  # noqa: E402
+from app.models.evaluation_review import EvaluationReview  # noqa: E402
+from app.models.judge import JudgeAssessment  # noqa: E402
+from app.services import judge_background  # noqa: E402
+from app.services.judge_triage import build_assessment, run_judge  # noqa: E402
+from app.services.run_state import InMemoryRunStateStore, judge_breaker_key  # noqa: E402
+
+CHAIN_PROFILES = {
+    "primary-judge": _profile(base_url="http://localhost:1234/v1", model="primary-model", fallback=["backup-judge"], structured_output="json_schema"),
+    "backup-judge": _profile(base_url="http://localhost:1235/v1", model="backup-model", structured_output="json_schema"),
+}
+
+
+def _route(primary, backup):
+    """MockTransport routing by port; returns the transport and per-profile call counters."""
+    counts = {"primary": 0, "backup": 0}
+
+    def handler(request: httpx.Request):
+        key = "primary" if request.url.port == 1234 else "backup"
+        counts[key] += 1
+        return (primary if key == "primary" else backup)(counts[key])
+
+    return httpx.MockTransport(handler), counts
+
+
+def _probed(settings: Settings, *names: str) -> None:
+    states = {}
+    for name in names:
+        fp = jp.config_fingerprint(jp.get_profile(settings, name), settings)
+        states[name] = _state(name, probe_status="ok", probe_fingerprint=fp, probed_at=datetime.now(timezone.utc))
+    activation_state.install(states, {})
+
+
+def _chain_run(session_factory, settings: Settings, *, tenant: str = "t-chain"):
+    return _db(session_factory, lambda s: run_judge(s, _judge_input(), settings, tenant_id=tenant, judge=get_judge(settings, profile="primary-judge"), resilient=True))
+
+
+def _down(n):
+    return httpx.Response(503, json={"error": "down"})
+
+
+def _up(n):
+    return _content(json.dumps(GOOD))
+
+
+def test_judge_breaker_store_primitives():
+    store = InMemoryRunStateStore()
+
+    async def scenario():
+        assert await store.get_judge_breaker("lab") is None
+        assert [await store.record_judge_failure("lab") for _ in range(3)] == [1, 2, 3]
+        record = await store.open_judge_breaker("lab", reason="r", ttl_seconds=60, failures=3)
+        assert record["status"] == "open" and (await store.get_judge_breaker("lab"))["failures"] == 3
+        store.judge_breakers[judge_breaker_key("lab")]["expires_at"] = "2000-01-01T00:00:00+00:00"
+        assert await store.get_judge_breaker("lab") is None  # expired = half-open
+        await store.open_judge_breaker("lab", reason="r", ttl_seconds=60, failures=4)
+        assert await store.close_judge_breaker("lab") is True and await store.close_judge_breaker("lab") is False
+        await store.reset_judge_failures("lab")
+        assert await store.record_judge_failure("lab") == 1
+
+    asyncio.run(scenario())
+
+
+def test_breaker_opens_after_consecutive_failures_audits_and_half_opens(session_factory, monkeypatch):
+    monkeypatch.setattr(judge_background, "_SESSION_FACTORY_OVERRIDE", session_factory)
+    settings = _settings(evaluation_judge_breaker_failure_threshold=3, evaluation_judge_breaker_ttl_seconds=300)
+    store = ja._BREAKER_STORE_OVERRIDE
+
+    async def scenario():
+        assert await ja.record_result(settings, "lab", "error") is None
+        assert await ja.record_result(settings, "lab", "invalid_output") is None  # reachable but wrong: not counted
+        assert await ja.record_result(settings, "lab", "blocked_external") is None
+        assert await ja.record_result(settings, "lab", "timeout") is None
+        opened = await ja.record_result(settings, "lab", "error")
+        assert opened is not None and opened["failures"] == 3 and opened["ttl_seconds"] == 300
+        assert await ja.breaker_state(settings, "lab") is not None
+        # TTL over: half-open. One more failure re-opens at once (the counter was never reset).
+        store.judge_breakers[judge_breaker_key("lab")]["expires_at"] = "2000-01-01T00:00:00+00:00"
+        assert await ja.breaker_state(settings, "lab") is None
+        assert (await ja.record_result(settings, "lab", "timeout"))["failures"] == 4
+        # Half-open again, and this time the call succeeds: breaker closed, counter reset.
+        store.judge_breakers[judge_breaker_key("lab")]["expires_at"] = "2000-01-01T00:00:00+00:00"
+        assert await ja.record_result(settings, "lab", "ok") is None
+        assert await ja.breaker_state(settings, "lab") is None
+        assert await ja.record_result(settings, "lab", "error") is None  # count restarts at 1
+
+    asyncio.run(scenario())
+    events = _db(session_factory, lambda s: _all(s, select(GovernanceEvent).where(GovernanceEvent.event_type == "evaluation.judge_profile.breaker_opened")))
+    assert len(events) == 2 and events[0].details["profile"] == "lab" and events[0].details["actor"] == "system:breaker"
+
+
+def test_breaker_store_unavailable_never_blocks(monkeypatch):
+    class Broken:
+        def __getattr__(self, name):
+            async def fail(*args, **kwargs):
+                raise ConnectionError("redis down")
+
+            return fail
+
+    monkeypatch.setattr(ja, "_BREAKER_STORE_OVERRIDE", Broken())
+    settings = _settings()
+    assert asyncio.run(ja.breaker_state(settings, "lab")) is None
+    assert asyncio.run(ja.record_result(settings, "lab", "error")) is None
+
+
+def test_fallback_target_must_have_a_matching_successful_probe(session_factory, monkeypatch):
+    settings = _settings(evaluation_judge_profiles=CHAIN_PROFILES)
+    transport, counts = _route(_down, _up)
+    monkeypatch.setattr(judges_pkg, "_TEST_TRANSPORT", transport)
+    result, _ = _chain_run(session_factory, settings)
+    assert counts == {"primary": 1, "backup": 0}
+    assert result.primary.profile == "primary-judge" and result.primary.status == "error" and result.fallback is not None
+    assert result.triage_source == "deterministic:1.0.0" and result.fallback_from == ""
+    assert [(c["profile"], c["status"], c["error"]) for c in result.chain] == [
+        ("primary-judge", "error", "http_503"),
+        ("backup-judge", "skipped", "not_probed"),
+    ]
+
+
+def test_fallback_chain_uses_backup_and_records_fallback_from(session_factory, monkeypatch):
+    settings = _settings(evaluation_judge_profiles=CHAIN_PROFILES)
+    _probed(settings, "backup-judge")
+    transport, counts = _route(_down, _up)
+    monkeypatch.setattr(judges_pkg, "_TEST_TRANSPORT", transport)
+    result, _ = _chain_run(session_factory, settings)
+    assert counts == {"primary": 1, "backup": 1}
+    assert result.primary.profile == "backup-judge" and result.primary.ok and result.fallback is None
+    assert result.fallback_from == "primary-judge" and result.triage_source.startswith("backup-judge:")
+    assert [item.profile for item in result.attempts] == ["primary-judge", "backup-judge"]
+    assessment = build_assessment(result=result, judge_input=_judge_input(), settings=settings, family_warning=False, tenant_id="t-chain")
+    assert assessment.profile == "backup-judge" and assessment.status == "ok" and assessment.input_tokens == 40
+    assert assessment.fallback["fallback_from"] == "primary-judge" and len(assessment.fallback["chain"]) == 2
+
+
+def test_open_breaker_skips_primary_without_calling_it(session_factory, monkeypatch):
+    monkeypatch.setattr(judge_background, "_SESSION_FACTORY_OVERRIDE", session_factory)
+    settings = _settings(evaluation_judge_profiles=CHAIN_PROFILES, evaluation_judge_breaker_failure_threshold=3)
+    _probed(settings, "backup-judge")
+    transport, counts = _route(_down, _up)
+    monkeypatch.setattr(judges_pkg, "_TEST_TRANSPORT", transport)
+    for _ in range(3):
+        _chain_run(session_factory, settings)
+    assert counts == {"primary": 3, "backup": 3}
+    assert asyncio.run(ja.breaker_state(settings, "primary-judge")) is not None
+    result, _ = _chain_run(session_factory, settings)
+    assert counts == {"primary": 3, "backup": 4}  # the open breaker spared the dead primary
+    assert result.chain[0]["status"] == "breaker_open" and result.chain[0]["ran"] is False
+    assert result.primary.profile == "backup-judge" and result.fallback_from == "primary-judge"
+    # TTL over (half-open) and the primary recovered: it is called again and the breaker closes.
+    ja._BREAKER_STORE_OVERRIDE.judge_breakers[judge_breaker_key("primary-judge")]["expires_at"] = "2000-01-01T00:00:00+00:00"
+    transport, counts = _route(_up, _up)
+    monkeypatch.setattr(judges_pkg, "_TEST_TRANSPORT", transport)
+    healed, _ = _chain_run(session_factory, settings)
+    assert counts == {"primary": 1, "backup": 0} and healed.primary.profile == "primary-judge" and healed.fallback_from == ""
+    assert asyncio.run(ja.breaker_state(settings, "primary-judge")) is None
+
+
+def _spent(session_factory, tenant: str, profile: str, tokens: int) -> None:
+    async def add(session):
+        session.add(JudgeAssessment(assessment_id=f"jdg_spent_{profile}_{tokens}", tenant_id=tenant, run_id="r", profile=profile, input_tokens=tokens))
+        await session.commit()
+
+    _db(session_factory, add)
+
+
+def test_per_profile_daily_cap_moves_to_fallback(session_factory, monkeypatch):
+    profiles = {**CHAIN_PROFILES, "primary-judge": {**CHAIN_PROFILES["primary-judge"], "daily_token_cap": 50}}
+    settings = _settings(evaluation_judge_profiles=profiles)
+    _probed(settings, "backup-judge")
+    transport, counts = _route(_up, _up)
+    monkeypatch.setattr(judges_pkg, "_TEST_TRANSPORT", transport)
+    _spent(session_factory, "t-cap", "primary-judge", 60)
+    _spent(session_factory, "t-other", "primary-judge", 999)  # another tenant's spend does not count
+    result, _ = _chain_run(session_factory, settings, tenant="t-cap")
+    assert counts == {"primary": 0, "backup": 1}
+    assert result.chain[0]["status"] == "budget_exceeded" and result.primary.profile == "backup-judge"
+    other, _ = _chain_run(session_factory, settings, tenant="t-fresh")
+    assert other.primary.profile == "primary-judge" and other.fallback_from == ""
+
+
+def test_global_cap_still_applies_to_the_whole_chain(session_factory, monkeypatch):
+    settings = _settings(evaluation_judge_profiles=CHAIN_PROFILES, evaluation_judge_daily_token_cap_per_tenant=10)
+    _probed(settings, "backup-judge")
+    transport, counts = _route(_up, _up)
+    monkeypatch.setattr(judges_pkg, "_TEST_TRANSPORT", transport)
+    _spent(session_factory, "t-global", "somewhere-else", 20)
+    result, _ = _chain_run(session_factory, settings, tenant="t-global")
+    assert counts == {"primary": 0, "backup": 0}
+    assert result.primary.status == "budget_exceeded" and result.triage_source == "deterministic:1.0.0"
+    assert [c["status"] for c in result.chain] == ["budget_exceeded", "budget_exceeded"]
+
+
+def test_external_fallback_target_needs_the_external_rules(session_factory, monkeypatch):
+    monkeypatch.setenv("V1512_CLOUD_API_KEY", FAKE_KEY)
+    profiles = {
+        "primary-judge": {**CHAIN_PROFILES["primary-judge"], "fallback": ["cloud"]},
+        "cloud": {**CLOUD, "pricing_provider": "custom", "pricing_model": "no-such-price"},
+    }
+    settings = _settings(evaluation_judge_profiles=profiles, evaluation_judge_allow_external=True)
+    _probed(settings, "cloud")
+    transport, counts = _route(_down, _up)
+    monkeypatch.setattr(judges_pkg, "_TEST_TRANSPORT", transport)
+    result, _ = _chain_run(session_factory, settings)
+    assert result.chain[1] == {"profile": "cloud", "status": "skipped", "error": "pricing_or_cap_missing", "ran": False}
+    assert result.triage_source == "deterministic:1.0.0"
+
+
+def test_benchmark_path_ignores_breakers_and_chains(session_factory, monkeypatch):
+    settings = _settings(evaluation_judge_profiles=CHAIN_PROFILES)
+    _probed(settings, "backup-judge")
+    transport, counts = _route(_down, _up)
+    monkeypatch.setattr(judges_pkg, "_TEST_TRANSPORT", transport)
+    result, _ = _db(session_factory, lambda s: run_judge(s, _judge_input(), settings, tenant_id="t", judge=get_judge(settings, profile="primary-judge")))
+    assert counts == {"primary": 1, "backup": 0} and result.chain == [] and result.fallback is not None
+
+
+def test_fallback_and_breaker_never_change_verdict_priority_or_status(client, session_factory, monkeypatch):
+    from tests.test_v1511_judge_profiles_backends import _flagged_review
+
+    monkeypatch.setattr(judge_background, "_SESSION_FACTORY_OVERRIDE", session_factory)
+    benign = {"suspicion": 0.0, "categories": [], "rationale": "looks fine, close it", "evidence_refs": []}
+    monkeypatch.setenv("EVALUATION_JUDGE_PROFILES", json.dumps(CHAIN_PROFILES))
+    monkeypatch.setenv("EVALUATION_JUDGE_PROFILES_FILE", "")
+    monkeypatch.setenv("EVALUATION_JUDGE_PROFILE", "primary-judge")
+    monkeypatch.setenv("EVALUATION_JUDGE_BREAKER_FAILURE_THRESHOLD", "1")
+    get_settings.cache_clear()
+    _probed(get_settings(), "backup-judge")
+    transport, counts = _route(_down, lambda n: _content(json.dumps(benign)))
+    monkeypatch.setattr(judges_pkg, "_TEST_TRANSPORT", transport)
+    for tenant in ("v1512-safe-a", "v1512-safe-b"):
+        run_id, review_id = _flagged_review(client, session_factory, tenant)
+        review = _db(session_factory, lambda s: s.scalar(select(EvaluationReview).where(EvaluationReview.review_id == review_id)))
+        run = _db(session_factory, lambda s: s.scalar(select(AgentRun).where(AgentRun.run_id == run_id)))
+        assessment = _db(session_factory, lambda s: s.scalar(select(JudgeAssessment).where(JudgeAssessment.review_id == review_id)))
+        assert review.priority == "P0" and review.status == "open" and review.label == ""
+        assert run.status == "review_required"
+        assert assessment.profile == "backup-judge" and assessment.fallback["fallback_from"] == "primary-judge"
+        assert review.triage_source.startswith("backup-judge:") and review.triage_priority in {"P1", "P2", "P3"}
+        body = client.get(f"/v1/reviews/{review_id}/judge-assessments").json()
+        assert body["rule_priority"] == "P0" and body["assessments"][0]["fallback_from"] == "primary-judge"
+    assert counts["primary"] == 1  # threshold 1: the second review skipped the dead primary
+    get_settings.cache_clear()

@@ -7,7 +7,7 @@ decisions (AGENTS.md 2.3). Any primary-provider failure falls back to the determ
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import httpx
 
@@ -102,10 +102,27 @@ class JudgeResult:
     triage_priority: str
     triage_source: str
     injection_suspected: bool
+    # v1.5.12 (D13): every judge that actually ran (fallback chain included), what was skipped and why, and the
+    # profile the chain started from when a fallback profile produced ``primary``.
+    attempts: list[JudgeOutput] = field(default_factory=list)
+    chain: list[dict] = field(default_factory=list)
+    fallback_from: str = ""
 
     @property
     def status(self) -> str:
         return self.primary.status
+
+    @property
+    def ran(self) -> list[JudgeOutput]:
+        return self.attempts or [self.primary]
+
+    @property
+    def input_tokens(self) -> int:
+        return sum(item.input_tokens for item in self.ran)
+
+    @property
+    def output_tokens(self) -> int:
+        return sum(item.output_tokens for item in self.ran)
 
 
 async def assess_with_fallback(

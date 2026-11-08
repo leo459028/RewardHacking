@@ -34,11 +34,13 @@ def _judge_activation_isolation():
     from app.services.evaluation.judges import activation_state
 
     judge_activation.RUN_ON_STARTUP = False  # the app lifespan must not reach a real database in tests
+    judge_activation._BREAKER_STORE_OVERRIDE = InMemoryRunStateStore()  # judge breakers never reach Redis in tests
     activation_state.reset()
     previous = activation_state.TRUST_ENV_PROFILE_WITHOUT_PROBE
     activation_state.TRUST_ENV_PROFILE_WITHOUT_PROBE = True
     yield
     activation_state.TRUST_ENV_PROFILE_WITHOUT_PROBE = previous
+    judge_activation._BREAKER_STORE_OVERRIDE = None
     activation_state.reset()
 
 

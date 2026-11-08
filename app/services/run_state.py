@@ -102,6 +102,17 @@ class RunStateStore(Protocol):
     ) -> "QuotaResult":
         ...
 
+    # v1.5.12 (D14): per judge profile circuit breaker and consecutive-failure counter
+    async def get_judge_breaker(self, profile: str) -> dict[str, Any] | None: ...
+
+    async def open_judge_breaker(self, profile: str, *, reason: str, ttl_seconds: int, failures: int) -> dict[str, Any]: ...
+
+    async def close_judge_breaker(self, profile: str) -> bool: ...
+
+    async def record_judge_failure(self, profile: str) -> int: ...
+
+    async def reset_judge_failures(self, profile: str) -> None: ...
+
 
 @dataclass(frozen=True)
 class QuotaResult:
@@ -150,6 +161,32 @@ def mcp_breaker_key(mcp_server_id: str) -> str:
     return f"{MCP_BREAKER_PREFIX}{mcp_server_id}"
 
 
+JUDGE_BREAKER_PREFIX = "circuit:judge:"
+JUDGE_FAILURES_PREFIX = "judge_failures:"
+JUDGE_FAILURES_TTL_SECONDS = 86400
+
+
+def judge_breaker_key(profile: str) -> str:
+    return f"{JUDGE_BREAKER_PREFIX}{profile}"
+
+
+def judge_failures_key(profile: str) -> str:
+    return f"{JUDGE_FAILURES_PREFIX}{profile}"
+
+
+def _judge_breaker_record(profile: str, *, reason: str, ttl_seconds: int, failures: int) -> dict[str, Any]:
+    now = _now_utc()
+    return {
+        "profile": profile,
+        "status": "open",
+        "reason": reason,
+        "failures": failures,
+        "opened_at": now.isoformat(),
+        "expires_at": (now + timedelta(seconds=ttl_seconds)).isoformat(),
+        "ttl_seconds": ttl_seconds,
+    }
+
+
 def _is_breaker_active(breaker: dict[str, Any] | None) -> bool:
     if not breaker or breaker.get("status") != "open":
         return False
@@ -175,6 +212,8 @@ class InMemoryRunStateStore:
         self.token_leases: dict[str, dict[str, Any]] = {}
         self.quota_counters: dict[str, int] = {}
         self.mcp_breakers: dict[str, dict[str, Any]] = {}
+        self.judge_breakers: dict[str, dict[str, Any]] = {}
+        self.judge_failures: dict[str, int] = {}
 
     async def set_run_state(
         self,
@@ -411,6 +450,36 @@ class InMemoryRunStateStore:
         )
 
 
+    async def get_judge_breaker(self, profile: str) -> dict[str, Any] | None:
+        record = self.judge_breakers.get(judge_breaker_key(profile))
+        if record is None:
+            return None
+        if not _is_breaker_active(record):
+            self.judge_breakers.pop(judge_breaker_key(profile), None)
+            return None
+        return record
+
+    async def open_judge_breaker(self, profile: str, *, reason: str, ttl_seconds: int, failures: int) -> dict[str, Any]:
+        record = _judge_breaker_record(profile, reason=reason, ttl_seconds=ttl_seconds, failures=failures)
+        self.judge_breakers[judge_breaker_key(profile)] = record
+        TOOL_BREAKER_EVENTS_TOTAL.labels(tool_name=f"judge:{profile}", action="opened").inc()
+        return record
+
+    async def close_judge_breaker(self, profile: str) -> bool:
+        record = self.judge_breakers.pop(judge_breaker_key(profile), None)
+        if record is not None:
+            TOOL_BREAKER_EVENTS_TOTAL.labels(tool_name=f"judge:{profile}", action="closed").inc()
+        return record is not None
+
+    async def record_judge_failure(self, profile: str) -> int:
+        key = judge_failures_key(profile)
+        self.judge_failures[key] = self.judge_failures.get(key, 0) + 1
+        return self.judge_failures[key]
+
+    async def reset_judge_failures(self, profile: str) -> None:
+        self.judge_failures.pop(judge_failures_key(profile), None)
+
+
 class RedisRunStateStore:
     def __init__(self, redis: Redis) -> None:
         self.redis = redis
@@ -631,3 +700,29 @@ class RedisRunStateStore:
             remaining=remaining,
             allowed=used <= limit,
         )
+
+
+    async def get_judge_breaker(self, profile: str) -> dict[str, Any] | None:
+        record = await get_json(self.redis, judge_breaker_key(profile))
+        return record if _is_breaker_active(record) else None
+
+    async def open_judge_breaker(self, profile: str, *, reason: str, ttl_seconds: int, failures: int) -> dict[str, Any]:
+        record = _judge_breaker_record(profile, reason=reason, ttl_seconds=ttl_seconds, failures=failures)
+        await set_json(self.redis, judge_breaker_key(profile), record, ttl_seconds=ttl_seconds)
+        TOOL_BREAKER_EVENTS_TOTAL.labels(tool_name=f"judge:{profile}", action="opened").inc()
+        return record
+
+    async def close_judge_breaker(self, profile: str) -> bool:
+        deleted = int(await self.redis.delete(judge_breaker_key(profile)))
+        if deleted:
+            TOOL_BREAKER_EVENTS_TOTAL.labels(tool_name=f"judge:{profile}", action="closed").inc()
+        return deleted > 0
+
+    async def record_judge_failure(self, profile: str) -> int:
+        key = judge_failures_key(profile)
+        count = int(await self.redis.incr(key))
+        await self.redis.expire(key, JUDGE_FAILURES_TTL_SECONDS)
+        return count
+
+    async def reset_judge_failures(self, profile: str) -> None:
+        await self.redis.delete(judge_failures_key(profile))
