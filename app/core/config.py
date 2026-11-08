@@ -126,6 +126,13 @@ class Settings(BaseSettings):
     evaluation_judge_internal_hosts: str = "host.docker.internal"
     evaluation_judge_background_concurrency: int = 1
     evaluation_judge_pending_sweep_seconds: int = 600
+    # v1.5.12 judge activation (probe + explicit enable), key-variable allowlist, breaker and Dashboard editing gate
+    evaluation_judge_activation_refresh_seconds: int = 30
+    evaluation_judge_probe_max_age_hours: int = 24
+    evaluation_judge_key_env_allowlist: str = ""
+    evaluation_judge_breaker_failure_threshold: int = 3
+    evaluation_judge_breaker_ttl_seconds: int = 300
+    evaluation_judge_dashboard_editing: str = "auto"
 
     @model_validator(mode="after")
     def _validate_finops_currency_settings(self) -> Settings:
@@ -228,10 +235,27 @@ class Settings(BaseSettings):
             if not 0.0 <= float(getattr(self, name)) <= 1.0:
                 raise ValueError(f"{name.upper()} must be in [0, 1].")
         self.evaluation_judge_profile = (self.evaluation_judge_profile or "default").strip().lower()
-        for name in ("evaluation_judge_background_concurrency", "evaluation_judge_pending_sweep_seconds"):
+        for name in (
+            "evaluation_judge_background_concurrency",
+            "evaluation_judge_pending_sweep_seconds",
+            "evaluation_judge_activation_refresh_seconds",
+            "evaluation_judge_probe_max_age_hours",
+            "evaluation_judge_breaker_failure_threshold",
+            "evaluation_judge_breaker_ttl_seconds",
+        ):
             if int(getattr(self, name)) < 1:
                 raise ValueError(f"{name.upper()} must be >= 1.")
+        self.evaluation_judge_dashboard_editing = (self.evaluation_judge_dashboard_editing or "auto").strip().lower()
+        if self.evaluation_judge_dashboard_editing not in {"auto", "off", "insecure_dev"}:
+            raise ValueError("EVALUATION_JUDGE_DASHBOARD_EDITING must be 'auto', 'off' or 'insecure_dev'.")
+        for name in self.judge_key_env_allowlist:
+            if not re.fullmatch(r"[A-Z_][A-Z0-9_]{0,127}", name):
+                raise ValueError("EVALUATION_JUDGE_KEY_ENV_ALLOWLIST entries must be environment variable names (A-Z, 0-9, _).")
         return self
+
+    @property
+    def judge_key_env_allowlist(self) -> frozenset[str]:
+        return frozenset(item.strip() for item in (self.evaluation_judge_key_env_allowlist or "").split(",") if item.strip())
 
     @property
     def mcp_internal_host_suffix_list(self) -> list[str]:

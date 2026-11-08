@@ -36,7 +36,7 @@ from app.services.evaluation.judges import JudgeProvider, JudgeResult, assess_wi
 from app.services.evaluation.judges.base import JudgeInput
 from app.services.evaluation.judges.family import same_family
 from app.services.evaluation.judges.inputs import build_judge_input
-from app.services.evaluation.judges.profiles import active_profile_known, get_profile, resolve_active_profile
+from app.services.evaluation.judges.profiles import active_profile_known, get_profile, resolve_active
 from app.services.evaluation.taxonomy import PRIORITY_RANK
 
 logger = logging.getLogger(__name__)
@@ -425,7 +425,11 @@ def assessment_to_dict(item: JudgeAssessment) -> dict[str, Any]:
 async def judge_status(session: AsyncSession, settings: Settings, *, tenant_id: str | None = None) -> dict[str, Any]:
     from app.services.judge_background import pending_summary
 
-    judge = get_judge(settings)
+    from app.services.judge_activation import maybe_refresh
+
+    await maybe_refresh(session, settings)
+    resolution = resolve_active(settings)
+    judge = get_judge(settings, profile=resolution.profile)
     since = datetime.now(timezone.utc) - timedelta(hours=24)
     stmt = select(JudgeAssessment.status, func.count()).where(JudgeAssessment.created_at >= since).group_by(JudgeAssessment.status)
     if tenant_id:
@@ -437,6 +441,8 @@ async def judge_status(session: AsyncSession, settings: Settings, *, tenant_id: 
         "profile": getattr(judge, "profile_label", "") or settings.evaluation_judge_profile,
         "configured_profile": settings.evaluation_judge_profile,
         "profile_known": active_profile_known(settings),
+        "source": resolution.source,  # v1.5.12 (D2): dashboard / environment / default
+        "activation_notes": dict(resolution.notes),  # profiles not in use and why (needs_reprobe, not_probed, ...)
         "provider": judge.name,
         "model": getattr(judge, "model", ""),
         "judge_version": judge.version(),
@@ -448,7 +454,7 @@ async def judge_status(session: AsyncSession, settings: Settings, *, tenant_id: 
         "tokens_used_today": await tokens_used_today(session, tenant_id) if tenant_id else None,
         "status_counts_24h": counts,
         "default_order": default_order(settings),
-        "execution": resolve_active_profile(settings).execution,
+        "execution": resolution.profile.execution,
         "pending_triage": await pending_summary(session, settings),
         "used_for_verdict": False,
         "used_for_hard_deny": False,

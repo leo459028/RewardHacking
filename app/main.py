@@ -13,6 +13,7 @@ from app.api.routes import router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.infra.postgres import close_engine, init_engine
+from app.services import judge_activation
 from app.services.evaluation.judges.profiles import load_profiles
 from app.observability.metrics import HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_TOTAL
 from app.ui.routers.benchmark import router as benchmark_ui_router
@@ -28,6 +29,9 @@ async def lifespan(app: FastAPI):
     # v1.5.11: invalid judge profiles (secrets inline, unknown fields, bad values) fail fast at startup.
     load_profiles(get_settings())
     init_engine(settings)
+    # v1.5.12 (D2, D7): load probe / activation state; auto-probe the environment-selected profile in the background.
+    if judge_activation.RUN_ON_STARTUP:
+        await judge_activation.startup(get_settings())
     yield
     await close_engine()
 

@@ -76,7 +76,11 @@ def profiles_view(settings: Settings) -> list[dict[str, Any]]:
     return sorted(rows, key=lambda row: (not row["active"], row["name"] != "deterministic", row["name"]))
 
 
-async def probe_profile(session: AsyncSession, settings: Settings, name: str, *, tenant_id: str = "default") -> dict[str, Any]:
+async def probe_profile(
+    session: AsyncSession, settings: Settings, name: str, *, tenant_id: str = "default", actor: str = "api"
+) -> dict[str, Any]:
+    """Probe with the fixed synthetic input; v1.5.12 stores the outcome and its fingerprint (D3) and audits it."""
+    from app.services.judge_activation import record_probe
     from app.services.judge_triage import _record_judge_usage
 
     profile = _profile_or_error(settings, name)
@@ -93,6 +97,9 @@ async def probe_profile(session: AsyncSession, settings: Settings, name: str, *,
     usage_id = await _record_judge_usage(
         session, settings=settings, tenant_id=tenant_id, run_id="", result=result, extra={"purpose": "probe", "judge_profile": profile.name}
     )
+    external = effective_external(profile, settings)
+    if profile.provider != "deterministic":
+        await record_probe(session, settings, profile, output, actor=actor, effective_external_flag=external)
     return {
         "profile": profile.name,
         "provider": output.provider,
@@ -106,7 +113,7 @@ async def probe_profile(session: AsyncSession, settings: Settings, name: str, *,
         "latency_ms": output.latency_ms,
         "input_tokens": output.input_tokens,
         "output_tokens": output.output_tokens,
-        "effective_external": effective_external(profile, settings),
+        "effective_external": external,
         "usage_id": usage_id,
         "assessment_written": False,
     }

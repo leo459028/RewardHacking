@@ -136,6 +136,9 @@ async def dispatch_triage(
 
     if settings.evaluation_judge_mode == "off":
         return None, False
+    from app.services.judge_activation import maybe_refresh
+
+    await maybe_refresh(session, settings)  # v1.5.12 (D7): pick up activations made in another container
     profile = resolve_active_profile(settings)
     if profile.execution == "background" and _session_factory() is not None:
         await mark_pending(session, review, profile.name)
