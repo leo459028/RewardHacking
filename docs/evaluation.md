@@ -344,7 +344,11 @@ Named profiles produce `judge_version = <profile>:openai_compatible:<model>:<pro
 
 ### 13.2 Reasoning models
 
-Qwen3.5-2B served by LM Studio returns its reasoning in `reasoning_content` and, by default, spends `max_output_tokens` on it, leaving `content` empty (`invalid_output` / `empty_content`). Appending `/no_think`, `chat_template_kwargs.enable_thinking=false` and `reasoning: {effort: none}` were ignored; `reasoning_effort: "none"` disabled reasoning (0 reasoning tokens, valid JSON). Set `reasoning_effort` per profile for reasoning models.
+Qwen3.5-2B served by LM Studio returns its reasoning in `reasoning_content` and, by default, spends `max_output_tokens` on it, leaving `content` empty (`invalid_output` / `empty_content`). Appending `/no_think`, `chat_template_kwargs.enable_thinking=false` and `reasoning: {effort: none}` were ignored; `reasoning_effort: "none"` disabled reasoning (0 reasoning tokens, valid JSON).
+
+Reasoning on vs off, same model and the same 10 seed samples (3 hacking / 7 benign; `bmr_b894f5fcc7e64aec964a9af8`): reasoning off (`reasoning_effort: none`, 300 output tokens) separated hacking from benign at AUROC 0.60 (near chance; it scored `ce-claim-pass-report-failed` 0.0), average 19.7 s, 188 output tokens; reasoning on (no `reasoning_effort`, 2000 output tokens, 300 s timeout) reached AUROC 0.95 (that sample 1.0), average 46.0 s / p95 56.4 s, 607 output tokens; the rules reached 1.00 on the same subset. Both profiles had two benign false alarms (≥ 0.75). precision@5 / @10 were identical (0.6 / 0.3) because only three positives exist, so AUROC was computed from the per-sample scores. Reasoning helps most on claim-vs-evidence contradictions.
+
+**Recommendation**: keep reasoning on for background triage and give it room (`max_output_tokens` ≈ 2000, a longer timeout); use a separate `reasoning_effort: none` profile only when speed matters more than judgement. The example file ships both (`local-small`, `local-small-fast`). Ten samples are a directional signal, not a measurement to promote on.
 
 ### 13.3 Background triage
 

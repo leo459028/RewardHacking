@@ -12,18 +12,34 @@
 profiles:
   # Small local model in LM Studio on the Docker host (Developer tab -> Start Server; use the port LM Studio shows).
   # Containers reach the host through host.docker.internal, which EVALUATION_JUDGE_INTERNAL_HOSTS treats as internal.
+  # Reasoning on (recommended for background triage): measured AUROC 0.95 vs 0.60 with reasoning off on 10 seed
+  # samples, at ~46 s instead of ~20 s per assessment on CPU. Reasoning shares max_output_tokens with the answer,
+  # so leave room for it (~600 tokens were used on average).
   - name: local-small
     provider: openai_compatible
     base_url: http://host.docker.internal:12339/v1   # LM Studio's port (shown under API Usage)
     model: qwen3.5-2b
     structured_output: auto        # tries json_schema, then json_object, then prompt-only JSON
-    timeout_seconds: 90
+    timeout_seconds: 300
     max_input_chars: 8000
-    max_output_tokens: 300
+    max_output_tokens: 2000        # reasoning + answer; 300 was fully consumed by reasoning
     execution: background          # outcome submission does not wait for a slow local model
     pricing_provider: qa_local     # add a zero-cost pricing row for this model
     strip_reasoning: true          # drop <think>...</think> before parsing
-    reasoning_effort: none         # reasoning models (Qwen3.5) otherwise spend max_output_tokens thinking
+
+  # Same model with reasoning off: ~2.3x faster but much weaker judgement (near chance on the 10-sample test).
+  # LM Studio ignores /no_think and enable_thinking=false; only reasoning_effort: none disables reasoning.
+  - name: local-small-fast
+    provider: openai_compatible
+    base_url: http://host.docker.internal:12339/v1
+    model: qwen3.5-2b
+    structured_output: auto
+    timeout_seconds: 90
+    max_input_chars: 8000
+    max_output_tokens: 300
+    execution: background
+    pricing_provider: qa_local
+    reasoning_effort: none
 
   # Larger local model (14B / 27B) served by Ollama, llama.cpp or vLLM.
   - name: local-large

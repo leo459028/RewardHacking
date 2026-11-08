@@ -1175,7 +1175,10 @@ def test_reasoning_effort_is_sent_only_when_configured():
         jp.load_profiles(_settings(evaluation_judge_profiles={"lab": _profile(reasoning_effort="max")}))
     assert jp.load_profiles(_settings(evaluation_judge_profiles={"lab": _profile(reasoning_effort="LOW")}))["lab"].reasoning_effort == "low"
     example = jp.load_profiles(_settings(evaluation_judge_profiles_file=str(EXAMPLE_PROFILES)))
-    assert example["local-small"].reasoning_effort == "none" and example["local-small"].base_url.endswith(":12339/v1")
+    # Reasoning on is the recommended default (measured); the fast profile turns it off explicitly.
+    small, fast = example["local-small"], example["local-small-fast"]
+    assert small.reasoning_effort == "" and small.max_output_tokens == 2000 and small.timeout_seconds == 300
+    assert fast.reasoning_effort == "none" and fast.max_output_tokens == 300 and small.base_url.endswith(":12339/v1")
 
 
 # ---------------------------------------------------------------------------
