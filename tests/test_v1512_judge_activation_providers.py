@@ -1428,3 +1428,18 @@ def test_v1512_version_anchors():
     assert 'release_version", "v1.5.12"' in (root / "app" / "ui" / "routes.py").read_text(encoding="utf-8")
     browser = (root / "scripts" / "browser_manual_test.py").read_text(encoding="utf-8")
     assert 'assert release_ver == "v1.5.12"' in browser and "Scenario 10 (v1.5.12)" in browser
+
+
+def test_open_breaker_is_visible_on_the_profile_in_use(client, monkeypatch, activation_gate):
+    """Found during the v1.5.12 LM Studio check: the active row kept saying "active" while its breaker was open."""
+    _use_env(monkeypatch)
+    _good_transport(monkeypatch)
+    client.post(f"{API}/profiles", json={"name": "live-judge", "config": {**LM_CONFIG, "model": "m"}})
+    client.post(f"{API}/profiles/live-judge/probe")
+    client.post(f"{API}/profiles/live-judge/activate")
+    assert _row(client, "live-judge")["status"] == "active"
+    asyncio.run(ja._BREAKER_STORE_OVERRIDE.open_judge_breaker("live-judge", reason="r", ttl_seconds=300, failures=3))
+    row_after = _row(client, "live-judge")
+    assert row_after["status"] == "breaker_open" and row_after["active"] is True and row_after["active_source"] == "dashboard"
+    assert row_after["breaker"]["failures"] == 3
+    get_settings.cache_clear()

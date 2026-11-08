@@ -462,12 +462,12 @@ def resolution_view(settings: Settings) -> dict[str, Any]:
 def status_label(
     profile: JudgeProfile, settings: Settings, state: activation_state.ProfileState | None, *, in_use: bool, breaker_open: bool
 ) -> str:
+    if breaker_open and profile.provider != "deterministic":
+        return "breaker_open"  # shown even for the profile in use: that is exactly when the operator needs to see it
     if in_use:
         return "active"
     if profile.provider == "deterministic":
         return "ready"
-    if breaker_open:
-        return "breaker_open"
     note = probe_note(profile, settings, state)
     if note == "needs_reprobe":
         return "needs_reprobe"
