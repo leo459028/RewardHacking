@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Judge Profiles | Judge 設定組{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Judge Profiles</h1>
+    <div class="title-note">Judge 設定組：設定、測試、啟用</div>
+    <div class="muted">A judge only orders review work (triage). It never changes a verdict, a review priority or a review status, and the rule-based judge is the default. Any LLM judge is used only after a successful connection test for its exact configuration and an explicit activation.</div>
+  </div>
+  <a class="button secondary" href="/dashboard/benchmark#judge-profiles">Benchmark &amp; consent</a>
+</div>
+
+{% if message %}<div class="success" role="status" id="judge-message">{{ message }}</div>{% endif %}
+{% if error %}<div class="error" role="alert" id="judge-error">{{ error }}</div>{% endif %}
+
+<section class="panel" id="judge-in-use">
+  <h2>In use | 使用中</h2>
+  <p>Live triage uses <strong id="judge-in-use-profile">{{ resolution.profile }}</strong>
+    <span class="muted">({{ resolution.provider }} · {{ source_text.get(resolution.source, resolution.source) }}{% if resolution.source == "default" %} · rule-based default{% endif %})</span> · mode {{ judge_mode }}.</p>
+  {% if resolution.notes %}
+  <ul id="judge-in-use-notes">
+    {% for name, note in resolution.notes.items() %}
+    <li><strong>{{ name }}</strong> is not in use: {{ status_text.get(note, note) if note in status_text else note }}{% if note == "not_probed" %} (never tested){% elif note == "needs_reprobe" %} (configuration or key changed since the last successful test){% elif note == "probe_failed" %} (last test failed){% elif note == "unknown_profile" %} (not defined){% endif %}.</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if resolution.source == "environment" %}<p class="muted">Selected by <code>EVALUATION_JUDGE_PROFILE</code>; to stop using it, change <code>.env</code> and restart.</p>{% endif %}
+  {% if editing.allowed %}
+  <form method="post" action="/dashboard/judge-profiles/deactivate" style="display:inline;"><button class="button secondary" type="submit" id="judge-deactivate">Use rule-based judge | 改回規則判斷</button></form>
+  {% endif %}
+</section>
+
+<section class="panel" id="judge-editing">
+  {% if editing.allowed %}
+    {% if editing.warning %}<div class="error" role="alert" id="judge-insecure-dev">⚠ {{ editing.reason }}</div>{% else %}<p class="muted">Editing enabled (Dashboard Basic Auth with non-default credentials).</p>{% endif %}
+  {% else %}
+  <p id="judge-read-only"><strong>Read-only | 唯讀</strong> — {{ editing.reason }} Enable Dashboard Basic Auth with your own credentials, or set <code>EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev</code> on a local machine only.</p>
+  {% endif %}
+  <p class="muted">API keys are never entered or shown here: a profile names the environment variable that holds its key (<code>api_key_env</code>, ending in <code>_API_KEY</code>). Entering keys in the page waits for Dashboard RBAC (v1.6.x).</p>
+</section>
+
+<section class="panel" id="judge-profile-list">
+  <h2>Profiles | 設定組</h2>
+  <table id="judge-profiles-table">
+    <thead><tr><th>Profile</th><th>Source</th><th>Provider / model</th><th>Host</th><th>External</th><th>Key</th><th>Last test</th><th>Status</th><th>Breaker</th><th>Actions</th></tr></thead>
+    <tbody>
+    {% for p in rows %}
+      <tr id="judge-row-{{ p.name }}">
+        <td><strong>{{ p.name }}</strong>{% if p.fallback %}<div class="muted">fallback: {{ p.fallback|join(", ") }}</div>{% endif %}</td>
+        <td>{{ p.source }}{% if p.version %}<div class="muted">v{{ p.version }}</div>{% endif %}</td>
+        <td>{{ p.provider }}{% if p.model %}<div class="muted">{{ p.model }}</div>{% endif %}</td>
+        <td class="muted">{{ p.host or "—" }}</td>
+        <td>{% if p.effective_external %}<span class="flag warn">external</span>{% else %}internal{% endif %}</td>
+        <td>{% if p.key_status.api_key_env %}{{ p.key_status.api_key_env }}<div class="muted">{% if p.key_status.configured %}set · {{ p.key_status.key_fingerprint }}{% else %}not set | 未設定{% endif %}</div>{% else %}<span class="muted">none</span>{% endif %}</td>
+        <td>{% if p.probe.status %}{{ p.probe.status }}{% if p.probe.error %} <span class="muted">({{ p.probe.error }})</span>{% endif %}<div class="muted">{{ p.probe.probed_at }}{% if p.probe.latency_ms is not none %} · {{ p.probe.latency_ms }} ms · {{ p.probe.input_tokens }}/{{ p.probe.output_tokens }} tok{% endif %}</div>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td><span class="flag {{ 'warn' if p.status in ['probe_failed', 'needs_reprobe', 'breaker_open', 'invalid'] else '' }}" id="judge-status-{{ p.name }}" data-status="{{ p.status }}">{{ status_text.get(p.status, p.status) }}</span>{% if p.active_source %}<div class="muted">{{ source_text.get(p.active_source, p.active_source) }}</div>{% endif %}
+          {% if p.status != "active" and p.readiness and not p.readiness.ready and p.readiness.reasons %}
+          <ul class="muted" id="judge-reasons-{{ p.name }}">{% for r in p.readiness.reasons %}<li>{{ r.message }}</li>{% endfor %}</ul>
+          {% endif %}
+          {% if p.error %}<div class="muted">{{ p.error }}</div>{% endif %}</td>
+        <td>{% if p.breaker %}<span class="flag warn">open</span><div class="muted">until {{ p.breaker.expires_at }}</div>{% else %}<span class="muted">closed</span>{% endif %}</td>
+        <td>
+          {% if editing.allowed %}
+            {% if p.provider != "deterministic" and p.status not in ["draft", "invalid"] %}
+            <form method="post" action="/dashboard/judge-profiles/{{ p.name }}/probe" style="display:inline;"><button class="button secondary" type="submit" id="judge-probe-{{ p.name }}">Test | 測試連線</button></form>
+            {% endif %}
+            {% if p.status != "active" and p.status not in ["draft", "invalid"] and (p.readiness.ready if p.readiness else false) %}
+            <form method="post" action="/dashboard/judge-profiles/{{ p.name }}/activate" style="display:inline;"><button class="button" type="submit" id="judge-activate-{{ p.name }}">Activate | 啟用</button></form>
+            {% elif p.status != "active" and p.status not in ["draft", "invalid"] %}
+            <button class="button" type="button" disabled id="judge-activate-{{ p.name }}" title="Not ready">Activate | 啟用</button>
+            {% endif %}
+            {% if p.editable %}
+            <a class="button secondary" href="/dashboard/judge-profiles?edit={{ p.name }}#judge-form" id="judge-edit-{{ p.name }}">Edit | 編輯</a>
+            {% if p.status != "active" %}
+            <form method="post" action="/dashboard/judge-profiles/{{ p.name }}/delete" style="display:inline;"><input type="hidden" name="version" value="{{ p.version or '' }}"><button class="button secondary" type="submit" id="judge-delete-{{ p.name }}">Delete | 刪除</button></form>
+            {% endif %}
+            {% endif %}
+          {% else %}<span class="muted">read-only</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% if editing.allowed %}
+<section class="panel" id="judge-form">
+  <h2>{% if editing_row %}Edit {{ editing_row.name }} | 編輯{% else %}New profile | 新增設定組{% endif %}</h2>
+  <p class="muted">Templates | 範本：
+    {% for t in templates_list %}<a class="button secondary" href="/dashboard/judge-profiles?template={{ t.id }}#judge-form" id="judge-template-{{ t.id }}">{{ t.label }}</a> {% endfor %}
+  </p>
+  {% if template %}<p class="muted" id="judge-template-note">Template <strong>{{ template.label }}</strong> filled the form; nothing is saved until you press Save. Model names are examples — check the provider's current documentation.</p>{% endif %}
+  {% if show_form %}
+  <form method="post" action="{% if editing_row %}/dashboard/judge-profiles/{{ editing_row.name }}/update{% else %}/dashboard/judge-profiles{% endif %}" id="judge-profile-form">
+    {% if editing_row %}<input type="hidden" name="version" value="{{ editing_row.version }}">{% endif %}
+    <div class="form-grid">
+      <label>Name | 名稱 <input name="name" value="{{ editing_row.name if editing_row else '' }}" {{ "readonly" if editing_row else "" }} placeholder="e.g. local-small (a-z, 0-9, -)" required></label>
+      <label>Provider <select name="provider">{% for item in choices.provider if item != "deterministic" %}<option value="{{ item }}" {{ "selected" if form.provider == item or (not form.provider and item == "openai_compatible") else "" }}>{{ item }}</option>{% endfor %}</select></label>
+      <label>Base URL * <input name="base_url" value="{{ form.base_url }}" placeholder="{{ hints.base_url }}"></label>
+      <label>Model * <input name="model" value="{{ form.model }}" placeholder="{{ hints.model }}"></label>
+      <label>API key env var <input name="api_key_env" value="{{ form.api_key_env }}" placeholder="{{ hints.api_key_env }}"></label>
+      <label>Structured output <select name="structured_output"><option value="">default ({{ hints.structured_output }})</option>{% for item in choices.structured_output %}<option value="{{ item }}" {{ "selected" if form.structured_output == item else "" }}>{{ item }}</option>{% endfor %}</select></label>
+      <label>Timeout (s) <input name="timeout_seconds" value="{{ form.timeout_seconds }}" placeholder="{{ hints.timeout_seconds }}"></label>
+      <label>Max input chars <input name="max_input_chars" value="{{ form.max_input_chars }}" placeholder="{{ hints.max_input_chars }}"></label>
+      <label>Max output tokens <input name="max_output_tokens" value="{{ form.max_output_tokens }}" placeholder="{{ hints.max_output_tokens }}"></label>
+      <label>Pricing provider <input name="pricing_provider" value="{{ form.pricing_provider }}" placeholder="{{ hints.pricing_provider }}"></label>
+      <label>Pricing model <input name="pricing_model" value="{{ form.pricing_model }}" placeholder="{{ hints.pricing_model }}"></label>
+      <label>External <select name="external"><option value="">default ({{ hints.external }})</option>{% for item in choices.external %}<option value="{{ item }}" {{ "selected" if form.external == item else "" }}>{{ item }}</option>{% endfor %}</select></label>
+      <label>Execution <select name="execution"><option value="">default ({{ hints.execution }})</option>{% for item in choices.execution %}<option value="{{ item }}" {{ "selected" if form.execution == item else "" }}>{{ item }}</option>{% endfor %}</select></label>
+      <label>Max retries <input name="max_retries" value="{{ form.max_retries }}" placeholder="{{ hints.max_retries }}"></label>
+      <label>Strip reasoning <select name="strip_reasoning"><option value="">default ({{ hints.strip_reasoning }})</option><option value="true" {{ "selected" if form.strip_reasoning == "true" else "" }}>true</option><option value="false" {{ "selected" if form.strip_reasoning == "false" else "" }}>false</option></select></label>
+      <label>Reasoning effort <select name="reasoning_effort"><option value="">default {{ hints.reasoning_effort }}</option>{% for item in choices.reasoning_effort if item %}<option value="{{ item }}" {{ "selected" if form.reasoning_effort == item else "" }}>{{ item }}</option>{% endfor %}</select></label>
+      <label>Fallback profiles (max 2, comma) <input name="fallback" value="{{ form.fallback }}" placeholder="{{ hints.fallback }}"></label>
+      <label>Daily token cap (per tenant) <input name="daily_token_cap" value="{{ form.daily_token_cap }}" placeholder="{{ hints.daily_token_cap }}"></label>
+    </div>
+    {% if template and template.hints %}<ul class="muted">{% for field, hint in template.hints.items() %}<li><code>{{ field }}</code>: {{ hint }}</li>{% endfor %}</ul>{% endif %}
+    <p class="muted">* required to test or activate; without them the profile is saved as a draft. Blank optional fields use the system default shown in grey.</p>
+    <div style="margin-top:12px;"><button class="button" type="submit" id="judge-save">Save | 儲存</button> <a class="button secondary" href="/dashboard/judge-profiles">Cancel</a></div>
+  </form>
+  {% else %}
+  <p><a class="button" href="/dashboard/judge-profiles?new=1#judge-form" id="judge-new">New profile | 新增</a></p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

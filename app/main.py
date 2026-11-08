@@ -17,6 +17,7 @@ from app.services import judge_activation
 from app.services.evaluation.judges.profiles import load_profiles
 from app.observability.metrics import HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_TOTAL
 from app.ui.routers.benchmark import router as benchmark_ui_router
+from app.ui.routers.judges import router as judges_ui_router
 from app.ui.routers.reviews import router as reviews_ui_router
 from app.ui.routes import router as ui_router
 
@@ -126,3 +127,4 @@ app.include_router(benchmark_router)
 app.include_router(ui_router)
 app.include_router(reviews_ui_router)
 app.include_router(benchmark_ui_router)
+app.include_router(judges_ui_router)

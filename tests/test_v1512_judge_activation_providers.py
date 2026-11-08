@@ -1227,3 +1227,141 @@ def test_dashboard_editing_gate_modes():
     assert dashboard_editing(_settings(evaluation_judge_dashboard_editing="off", dashboard_auth_enabled=True, dashboard_password="x"))["allowed"] is False
     dev = dashboard_editing(_settings(evaluation_judge_dashboard_editing="insecure_dev"))
     assert dev["allowed"] is True and dev["warning"] is True
+
+
+# ---------------------------------------------------------------------------
+# P5: Dashboard /dashboard/judge-profiles (D16-D19)
+# ---------------------------------------------------------------------------
+
+from urllib.parse import unquote  # noqa: E402
+
+PAGE = "/dashboard/judge-profiles"
+SAME_ORIGIN = {"Origin": "http://testserver"}
+LM_FORM = {
+    "name": "lm-dash",
+    "provider": "openai_compatible",
+    "base_url": "http://host.docker.internal:12339/v1",
+    "model": "",
+    "execution": "inline",
+    "pricing_provider": "qa_local",
+    "timeout_seconds": "",
+    "max_retries": "",
+    "strip_reasoning": "",
+    "fallback": "",
+    "daily_token_cap": "",
+}
+
+
+def _dev_editing(monkeypatch, **extra) -> None:
+    _use_env(monkeypatch, **extra)
+    monkeypatch.setenv("EVALUATION_JUDGE_DASHBOARD_EDITING", "insecure_dev")
+    get_settings.cache_clear()
+
+
+def _post(client, path: str, data: dict | None = None, headers: dict | None = None):
+    return client.post(path, data=data or {}, headers=SAME_ORIGIN if headers is None else headers, follow_redirects=False)
+
+
+def _flash(response) -> str:
+    return unquote(response.headers.get("location", ""))
+
+
+def test_judge_profiles_page_defaults_to_rules_and_is_read_only(client, monkeypatch, activation_gate):
+    _use_env(monkeypatch)
+    html = client.get(PAGE).text
+    assert 'id="judge-in-use-profile">default<' in html or 'id="judge-in-use-profile">deterministic<' in html
+    assert "rule-based default" in html and 'id="judge-read-only"' in html and "Basic Auth is off" in html
+    assert 'id="judge-profile-form"' not in html and 'id="judge-deactivate"' not in html
+    assert 'href="/dashboard/judge-profiles">Judge Profiles</a>' in html  # navigation entry
+    blocked = _post(client, PAGE, LM_FORM)
+    assert blocked.status_code == 303 and "Editing judge profiles is disabled" in _flash(blocked)
+    assert all(row["name"] != "lm-dash" for row in client.get(f"{API}/profiles").json()["profiles"])
+    benchmark = client.get("/dashboard/benchmark").text
+    assert 'id="judge-profiles-manage-link"' in benchmark and 'href="/dashboard/judge-profiles"' in benchmark
+    get_settings.cache_clear()
+
+
+def test_insecure_dev_shows_warning_and_templates_prefill_the_form(client, monkeypatch):
+    _dev_editing(monkeypatch)
+    html = client.get(PAGE).text
+    assert 'id="judge-insecure-dev"' in html and 'id="judge-template-anthropic"' in html
+    filled = client.get(f"{PAGE}?template=lm-studio").text
+    assert 'id="judge-template-note"' in filled and 'value="http://host.docker.internal:1234/v1"' in filled
+    assert 'value="background"' in filled and "selected" in filled
+    assert 'placeholder="30"' in filled and "LM Studio shows under API Usage" in filled
+    anthropic = client.get(f"{PAGE}?template=anthropic").text
+    assert 'value="4000"' in anthropic and 'value="ANTHROPIC_API_KEY"' in anthropic and "thinking uses output tokens" in anthropic
+    assert "sk-" not in anthropic  # no key material in any template
+    get_settings.cache_clear()
+
+
+def test_dashboard_forms_require_same_origin(client, monkeypatch):
+    _dev_editing(monkeypatch)
+    for headers in ({}, {"Origin": "http://evil.example"}, {"Origin": "null"}, {"Referer": "http://evil.example/dashboard"}):
+        response = _post(client, PAGE, LM_FORM, headers=headers)
+        assert response.status_code == 403
+    for path in ("/deactivate", "/deterministic/activate", "/lm-dash/update", "/lm-dash/delete", "/lm-dash/probe"):
+        assert _post(client, PAGE + path, {}, headers={"Origin": "http://evil.example"}).status_code == 403
+    ok = _post(client, PAGE, LM_FORM, headers={"Referer": "http://testserver/dashboard/judge-profiles"})
+    assert ok.status_code == 303 and "saved as a draft" in _flash(ok)
+    get_settings.cache_clear()
+
+
+def test_dashboard_full_flow_draft_test_activate_edit_delete(client, session_factory, monkeypatch, activation_gate):
+    _dev_editing(monkeypatch)
+    calls = _good_transport(monkeypatch)
+    created = _post(client, PAGE, LM_FORM)
+    assert "saved as a draft" in _flash(created)
+    html = client.get(PAGE).text
+    assert 'id="judge-status-lm-dash" data-status="draft"' in html and 'id="judge-probe-lm-dash"' not in html
+    stored = _db(session_factory, lambda s: s.scalar(select(JudgeProfileConfig).where(JudgeProfileConfig.name == "lm-dash")))
+    assert stored.config["model"] is None and stored.config["timeout_seconds"] is None and stored.config["fallback"] is None
+    edit_page = client.get(f"{PAGE}?edit=lm-dash").text
+    assert 'name="version" value="1"' in edit_page and 'value="http://host.docker.internal:12339/v1"' in edit_page
+    updated = _post(client, f"{PAGE}/lm-dash/update", {**LM_FORM, "model": "qwen3.5-2b", "version": "1"})
+    assert "updated (version 2)" in _flash(updated)
+    assert 'data-status="untested"' in client.get(PAGE).text
+    refused = _post(client, f"{PAGE}/lm-dash/activate")
+    assert "Cannot activate lm-dash" in _flash(refused) and "Run a connection test first" in _flash(refused)
+    probed = _post(client, f"{PAGE}/lm-dash/probe")
+    assert "succeeded" in _flash(probed) and "not used until you activate" in _flash(probed) and len(calls) == 1
+    page = client.get(PAGE).text
+    assert 'data-status="ready"' in page and 'id="judge-activate-lm-dash"' in page and "disabled" not in page.split('id="judge-activate-lm-dash"')[0][-40:]
+    activated = _post(client, f"{PAGE}/lm-dash/activate")
+    assert "now used for live triage" in _flash(activated)
+    page = client.get(PAGE).text
+    assert 'id="judge-in-use-profile">lm-dash<' in page and 'data-status="active"' in page and 'id="judge-delete-lm-dash"' not in page
+    stale = _post(client, f"{PAGE}/lm-dash/update", {**LM_FORM, "model": "qwen3.5-9b", "version": "1"})
+    assert "changed since you loaded it" in _flash(stale)
+    edited = _post(client, f"{PAGE}/lm-dash/update", {**LM_FORM, "model": "qwen3.5-9b", "version": "2"})
+    assert "has been deactivated" in _flash(edited)
+    page = client.get(PAGE).text
+    assert 'data-status="needs_reprobe"' in page and "The configuration or key changed since the last successful test" in page
+    assert 'id="judge-in-use-notes"' not in page  # the edit cleared the activation, so nothing stale is "in use"
+    assert "rule-based default" in page
+    deleted = _post(client, f"{PAGE}/lm-dash/delete", {"version": "3"})
+    assert "deleted" in _flash(deleted)
+    assert 'id="judge-row-lm-dash"' not in client.get(PAGE).text
+    get_settings.cache_clear()
+
+
+def test_dashboard_deactivate_and_read_only_static_rows(client, monkeypatch, activation_gate):
+    _dev_editing(monkeypatch)
+    _post(client, f"{PAGE}/deterministic/activate")
+    page = client.get(PAGE).text
+    assert 'id="judge-in-use-profile">deterministic<' in page and "Dashboard" in page
+    assert 'id="judge-edit-deterministic"' not in page and 'id="judge-probe-deterministic"' not in page
+    done = _post(client, f"{PAGE}/deactivate")
+    assert "Dashboard activation cleared" in _flash(done)
+    get_settings.cache_clear()
+
+
+def test_dashboard_invalid_input_shows_specific_errors(client, monkeypatch):
+    _dev_editing(monkeypatch)
+    https = _post(client, PAGE, {**LM_FORM, "name": "plain-http", "model": "m", "base_url": "http://api.example.com/v1"})
+    assert "external host must use HTTPS" in _flash(https)
+    key = _post(client, PAGE, {**LM_FORM, "name": "bad-key", "model": "m", "api_key_env": "DATABASE_URL"})
+    assert "_API_KEY" in _flash(key)
+    number = _post(client, PAGE, {**LM_FORM, "name": "bad-num", "model": "m", "timeout_seconds": "soon"})
+    assert "timeout_seconds must be a number" in _flash(number)
+    get_settings.cache_clear()
