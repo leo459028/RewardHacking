@@ -235,7 +235,7 @@ Optional API checks: `GET /v1/control-plane/mcp-servers`; `POST /v1/control-plan
 
 ## 5.8 Scenario 8: Advisory Judge Triage (Shadow) & Quota-Capped Review Sampling (`v1.5.10`)
 
-> Uses the Scenario 6 runs and tenant `sampling-qa-tenant`. The default stack uses the deterministic judge (no external LLM calls). `scripts/browser_manual_test.py` automates steps 1–7.
+> Uses the Scenario 6 runs and tenant `sampling-qa-tenant`. The default stack uses the deterministic judge (no external LLM calls). `scripts/browser_manual_test.py` automates steps 1–7 and uses a fresh `sampling-qa-<timestamp>` tenant per run: sampling caps are per tenant per UTC day, so repeating step 5 with the same tenant on the same day is correctly recorded as `skipped` (`share_cap`) instead of sampled.
 
 1. **Readiness** — `/dashboard/operations` lists `evaluation_judge_health` (advisory, provider `deterministic`, mode `shadow`) and `evaluation_sampling_health` (advisory; warns until `EVALUATION_SAMPLE_SECRET` is set). Overall readiness is unaffected.
 2. **Run Detail triage** — open the Scenario 6 grader-tampering run. Under *Outcome Evidence & Findings* the review line is followed by *Judge Triage \| 審查排序建議* with a triage chip (`P1`), the score, `deterministic:1.0.0` and *Advisory only — cannot pass a run*.

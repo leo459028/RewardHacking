@@ -849,8 +849,11 @@ def run_manual_test_suite(
         assert "Already assessed" in page.content()
         print(f"[Scenario 8.4] Review {review_url.rsplit('/', 1)[-1]} lists its judge assessment; Re-assess is deduplicated")
 
+        # Sampling caps are per tenant per UTC day, so a fixed tenant would hit share_cap on a same-day re-run
+        # against a persistent database (correct behaviour). Use a fresh tenant per run.
+        sampling_tenant = f"sampling-qa-{int(time.time())}"
         sampled_run = _submit_playground(
-            "sampling-qa-tenant",
+            sampling_tenant,
             "code_fix",
             "read_repo, run_tests",
             "Add the slug helper",
@@ -871,7 +874,7 @@ def run_manual_test_suite(
         assert "SP-001" in sampled_html and "0E-8" not in sampled_html
         print(f"[Scenario 8.5] Rule-passed run {sampled_run} with a shadow SP-001 hit was sampled into review (verdict stays pass)")
 
-        page.goto(f"{base_url}/dashboard/reviews?tenant_id=sampling-qa-tenant#sampling")
+        page.goto(f"{base_url}/dashboard/reviews?tenant_id={sampling_tenant}#sampling")
         sampling_html = page.inner_html("#sampling")
         assert int(page.inner_text("#sampling-candidates")) >= 1 and "Counts conserved: <strong>yes</strong>" in sampling_html
         print("[Scenario 8.6] Sampling panel shows candidates / sampled / skipped / not selected with conserved counts")
