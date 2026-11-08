@@ -556,3 +556,190 @@ def test_record_probe_never_stores_key(session_factory, monkeypatch):
     row = _db(session_factory, lambda s: ja.record_probe(s, settings, profile, output, actor="t", effective_external_flag=True))
     assert FAKE_KEY not in json.dumps({"fp": row.probe_fingerprint, "err": row.probe_error, "res": row.probe_result})
     assert row.probe_status == "error" and len(row.probe_fingerprint) == 64
+
+
+# ---------------------------------------------------------------------------
+# P2: provider adapters (D12)
+# ---------------------------------------------------------------------------
+
+from app.services.evaluation.judges import AnthropicJudge, OpenAICompatibleJudge, build_judge, get_judge  # noqa: E402
+from app.services.evaluation.judges.adapters import AnthropicAdapter, OpenAICompatibleAdapter  # noqa: E402
+from app.services.evaluation.judges.adapters.anthropic import ANTHROPIC_VERSION, anthropic_output_schema  # noqa: E402
+from app.services.evaluation.judges.base import JudgeInput  # noqa: E402
+
+CLAUDE = {
+    "provider": "anthropic",
+    "base_url": "https://api.anthropic.com",
+    "model": "claude-sonnet-5-5",
+    "api_key_env": "V1512_ANTHROPIC_API_KEY",
+    "external": True,
+    "structured_output": "auto",
+    "max_output_tokens": 4000,
+    "pricing_provider": "anthropic",
+    "timeout_seconds": 20,
+}
+MESSAGES = [{"role": "system", "content": "SYS"}, {"role": "user", "content": "USER"}]
+
+
+def _judge_input() -> JudgeInput:
+    return JudgeInput(goal="Fix the parser", diff="diff --git a/x.py b/x.py\n+x = 1\n", final_message="Done")
+
+
+def _anthropic_response(text: str | None = None, *, status: int = 200, stop_reason: str = "end_turn", thinking: bool = True, headers=None):
+    content = []
+    if thinking:
+        content.append({"type": "thinking", "thinking": "", "signature": "sig"})
+    if text is not None:
+        content.append({"type": "text", "text": text})
+    body = {"id": "msg_1", "type": "message", "role": "assistant", "content": content, "stop_reason": stop_reason, "usage": {"input_tokens": 120, "output_tokens": 30}}
+    return httpx.Response(status, json=body, headers=headers or {})
+
+
+def _recording(handler):
+    calls: list[dict] = []
+
+    def transport_handler(request: httpx.Request):
+        body = json.loads(request.content)
+        calls.append({"url": str(request.url), "headers": dict(request.headers), "body": body})
+        return handler(body, len(calls))
+
+    return httpx.MockTransport(transport_handler), calls
+
+
+def _claude_judge(monkeypatch, handler, **overrides) -> tuple[AnthropicJudge, list[dict]]:
+    monkeypatch.setenv("V1512_ANTHROPIC_API_KEY", FAKE_KEY)
+    transport, calls = _recording(handler)
+    monkeypatch.setattr(judges_pkg, "_TEST_TRANSPORT", transport)
+    settings = _settings(evaluation_judge_allow_external=True, evaluation_judge_profiles={"claude": {**CLAUDE, **overrides}})
+    judge = get_judge(settings, profile="claude")
+    return judge, calls
+
+
+def test_openai_adapter_request_matches_v1511_shape():
+    adapter = OpenAICompatibleAdapter(base_url="http://localhost:1234/v1/", model="m", api_key="k", max_output_tokens=300, reasoning_effort="none")
+    url, headers, body = adapter.build_request(MESSAGES, "json_schema")
+    assert url == "http://localhost:1234/v1/chat/completions" and headers["Authorization"] == "Bearer k"
+    assert body["temperature"] == 0 and body["max_tokens"] == 300 and body["reasoning_effort"] == "none" and body["messages"] == MESSAGES
+    assert body["response_format"]["type"] == "json_schema" and body["response_format"]["json_schema"]["strict"] is True
+    assert adapter.build_request(MESSAGES, "json_object")[2]["response_format"] == {"type": "json_object"}
+    assert "response_format" not in adapter.build_request(MESSAGES, "none")[2]
+    assert "Authorization" not in OpenAICompatibleAdapter(base_url="http://x", model="m").build_request(MESSAGES, "none")[1]
+    parsed = adapter.parse_response({"choices": [{"message": {"content": "{}", "reasoning_content": "hmm"}}], "usage": {"prompt_tokens": 5, "completion_tokens": 2}})
+    assert (parsed.content, parsed.reasoning, parsed.input_tokens, parsed.output_tokens, parsed.error) == ("{}", "hmm", 5, 2, "")
+    assert adapter.parse_response({"choices": []}).error == "missing_choice_content"
+    assert adapter.parse_response({"choices": [{"message": {"content": "  "}}]}).error == "empty_content"
+
+
+def test_build_judge_picks_adapter_by_provider(monkeypatch):
+    monkeypatch.setenv("V1512_ANTHROPIC_API_KEY", FAKE_KEY)
+    settings = _settings(evaluation_judge_profiles={"claude": CLAUDE, "lab": _profile()})
+    claude = build_judge(jp.get_profile(settings, "claude"), settings)
+    lab = build_judge(jp.get_profile(settings, "lab"), settings)
+    assert isinstance(claude, AnthropicJudge) and isinstance(claude.adapter, AnthropicAdapter) and claude.name == "anthropic"
+    assert isinstance(lab, OpenAICompatibleJudge) and isinstance(lab.adapter, OpenAICompatibleAdapter) and lab.name == "openai_compatible"
+    assert claude.version().startswith("claude:anthropic:claude-sonnet-5-5:") and claude.is_external is True
+    assert FAKE_KEY not in repr(vars(claude)).replace(repr(claude.adapter), "")
+
+
+def test_anthropic_request_shape(monkeypatch):
+    judge, calls = _claude_judge(monkeypatch, lambda body, n: _anthropic_response(json.dumps(GOOD)), reasoning_effort="minimal")
+    result = asyncio.run(judge.assess(_judge_input()))
+    assert result.status == "ok" and result.suspicion == 0.4 and result.structured_output == "json_schema"
+    call = calls[0]
+    assert call["url"] == "https://api.anthropic.com/v1/messages"
+    assert call["headers"]["x-api-key"] == FAKE_KEY and call["headers"]["anthropic-version"] == ANTHROPIC_VERSION == "2026-10-21"
+    assert "authorization" not in call["headers"]
+    body = call["body"]
+    assert body["model"] == "claude-sonnet-5-5" and body["max_tokens"] == 4000
+    assert "temperature" not in body and "tool_choice" not in body and "tools" not in body
+    assert body["system"] and [m["role"] for m in body["messages"]] == ["user"]
+    assert body["output_config"]["effort"] == "low"
+    schema = body["output_config"]["format"]
+    assert schema["type"] == "json_schema" and schema["schema"] == anthropic_output_schema()
+    flat = json.dumps(schema)
+    assert "minimum" not in flat and "maxLength" not in flat and "maxItems" not in flat and '"additionalProperties": false' in flat
+
+
+def test_anthropic_parses_text_after_thinking_and_records_usage(monkeypatch):
+    judge, _ = _claude_judge(monkeypatch, lambda body, n: _anthropic_response(json.dumps(GOOD), thinking=True))
+    result = asyncio.run(judge.assess(_judge_input()))
+    assert result.status == "ok" and (result.input_tokens, result.output_tokens) == (120, 30)
+    assert result.categories == ["test_tampering"] and result.provider == "anthropic" and result.profile == "claude"
+
+
+@pytest.mark.parametrize(
+    ("response", "error"),
+    [
+        (_anthropic_response(None, stop_reason="refusal"), "refusal"),
+        (_anthropic_response(None, stop_reason="max_tokens"), "max_tokens"),
+        (_anthropic_response("   "), "empty_content"),
+        (httpx.Response(200, json={"type": "message"}), "missing_content"),
+    ],
+)
+def test_anthropic_unusable_answers_are_invalid_output(monkeypatch, response, error):
+    judge, _ = _claude_judge(monkeypatch, lambda body, n: response)
+    result = asyncio.run(judge.assess(_judge_input()))
+    assert result.status == "invalid_output" and result.error == error and result.suspicion is None
+
+
+def test_anthropic_retries_429_and_529_with_retry_after(monkeypatch):
+    def handler(body, n):
+        if n == 1:
+            return httpx.Response(429, json={"type": "error", "error": {"type": "rate_limit_error", "message": "slow down"}}, headers={"Retry-After": "0"})
+        if n == 2:
+            return httpx.Response(529, json={"type": "error", "error": {"type": "overloaded_error", "message": "busy"}}, headers={"Retry-After": "0"})
+        return _anthropic_response(json.dumps(GOOD))
+
+    judge, calls = _claude_judge(monkeypatch, handler, max_retries=2)
+    result = asyncio.run(judge.assess(_judge_input()))
+    assert result.status == "ok" and result.attempts == 3 and len(calls) == 3
+
+
+def test_anthropic_without_retries_reports_http_error(monkeypatch):
+    judge, calls = _claude_judge(monkeypatch, lambda body, n: httpx.Response(401, json={"type": "error", "error": {"type": "authentication_error"}}))
+    result = asyncio.run(judge.assess(_judge_input()))
+    assert result.status == "error" and result.error == "http_401" and len(calls) == 1
+    assert FAKE_KEY not in json.dumps(result.summary())
+
+
+def test_anthropic_auto_degrades_when_output_format_is_rejected(monkeypatch):
+    def handler(body, n):
+        if "output_config" in body and "format" in body["output_config"]:
+            return httpx.Response(400, json={"type": "error", "error": {"type": "invalid_request_error", "message": "output_config.format is not supported"}})
+        return _anthropic_response(json.dumps(GOOD), thinking=False)
+
+    judge, calls = _claude_judge(monkeypatch, handler)
+    result = asyncio.run(judge.assess(_judge_input()))
+    assert result.status == "ok" and result.structured_output == "none" and len(calls) == 2
+    assert oc.cached_mode("https://api.anthropic.com", "claude-sonnet-5-5") == "none"
+
+
+def test_anthropic_explicit_json_object_is_sent_as_prompt_only(monkeypatch):
+    judge, calls = _claude_judge(monkeypatch, lambda body, n: _anthropic_response(json.dumps(GOOD)), structured_output="json_object")
+    assert asyncio.run(judge.assess(_judge_input())).structured_output == "none"
+    assert "output_config" not in calls[0]["body"]
+
+
+def test_anthropic_base_url_with_v1_suffix():
+    assert AnthropicAdapter(base_url="https://api.anthropic.com/v1/", model="m").url == "https://api.anthropic.com/v1/messages"
+    assert AnthropicAdapter(base_url="https://gateway.example.com/anthropic", model="m").url == "https://gateway.example.com/anthropic/v1/messages"
+
+
+def test_anthropic_external_needs_global_switch(monkeypatch):
+    monkeypatch.setenv("V1512_ANTHROPIC_API_KEY", FAKE_KEY)
+    transport, calls = _recording(lambda body, n: _anthropic_response(json.dumps(GOOD)))
+    monkeypatch.setattr(judges_pkg, "_TEST_TRANSPORT", transport)
+    settings = _settings(evaluation_judge_profiles={"claude": CLAUDE})
+    result = asyncio.run(get_judge(settings, profile="claude").assess(_judge_input()))
+    assert result.status == "blocked_external" and calls == []
+
+
+def test_request_time_url_guard_blocks_insecure_external_urls(monkeypatch):
+    transport, calls = _recording(lambda body, n: _content(json.dumps(GOOD)))
+    for url in ("http://api.example.com/v1", "https://169.254.169.254/v1", "https://user:pw@api.example.com/v1"):
+        judge = OpenAICompatibleJudge(base_url=url, model="m", allow_external=True, transport=transport)
+        result = asyncio.run(judge.assess(_judge_input()))
+        assert result.status == "blocked_insecure_url" and result.error == "insecure_base_url"
+    assert calls == []
+    ok = OpenAICompatibleJudge(base_url="http://localhost:1234/v1", model="m", transport=transport)
+    assert asyncio.run(ok.assess(_judge_input())).status == "ok"

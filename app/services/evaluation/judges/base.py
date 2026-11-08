@@ -25,6 +25,8 @@ JUDGE_STATUSES: tuple[str, ...] = (
     "blocked_external",
     "budget_exceeded",
     "not_configured",
+    "blocked_insecure_url",  # v1.5.12 (D11): base URL failed the request-time check
+    "breaker_open",  # v1.5.12 (D14): skipped while the profile's circuit breaker is open
 )
 RATIONALE_MAX_CHARS = 1000
 EVIDENCE_REFS_MAX = 10

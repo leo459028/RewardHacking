@@ -14,7 +14,7 @@ import httpx
 from app.core.config import Settings
 from app.services.evaluation.judges.base import JudgeInput, JudgeOutput, JudgeProvider, triage_priority_for
 from app.services.evaluation.judges.deterministic import DETERMINISTIC_VERSION, DeterministicJudge
-from app.services.evaluation.judges.openai_compatible import OpenAICompatibleJudge
+from app.services.evaluation.judges.openai_compatible import HTTP_JUDGES, AnthropicJudge, HttpJudge, OpenAICompatibleJudge
 from app.services.evaluation.judges.profiles import (
     JudgeProfile,
     JudgeProfileError,
@@ -25,6 +25,7 @@ from app.services.evaluation.judges.profiles import (
 )
 
 __all__ = [
+    "AnthropicJudge",
     "DETERMINISTIC_VERSION",
     "DeterministicJudge",
     "JudgeInput",
@@ -33,6 +34,7 @@ __all__ = [
     "JudgeProfileError",
     "JudgeProvider",
     "JudgeResult",
+    "HttpJudge",
     "OpenAICompatibleJudge",
     "assess_with_fallback",
     "build_judge",
@@ -52,8 +54,9 @@ def set_test_transport(transport: httpx.AsyncBaseTransport | None) -> None:
 
 def build_judge(profile: JudgeProfile, settings: Settings) -> JudgeProvider:
     """Instantiate the provider a profile describes. The API key is read from the environment here, per call."""
-    if profile.provider == "openai_compatible":
-        return OpenAICompatibleJudge(
+    judge_class = HTTP_JUDGES.get(profile.provider)
+    if judge_class is not None:  # v1.5.12 (D12): the provider picks the adapter
+        return judge_class(
             base_url=profile.base_url,
             model=profile.model,
             api_key=profile.api_key(settings),
