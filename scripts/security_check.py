@@ -42,6 +42,8 @@ ALLOWLIST_PATTERNS = [
     r"sk-secret1234567890",
     # v1.5.8 outcome-evidence redaction test fixture (fake, non-functional value asserted to be redacted)
     r"sk-abcdefghijklmnop1234",
+    # v1.5.12 Dashboard editing-gate test fixture (fake, non-default Basic Auth credentials)
+    r"s3cret-pass",
 ]
 
 
@@ -116,7 +118,7 @@ def check_working_tree() -> list[str]:
 
 
 def main() -> int:
-    print("Running RewardHacking Security & Secret Scan (v1.5.11)...")
+    print("Running RewardHacking Security & Secret Scan (v1.5.12)...")
     git_findings = check_git_history()
     tree_findings = check_working_tree()
 

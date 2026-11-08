@@ -175,3 +175,12 @@ docker compose logs --tail=100 -f worker
 - **Pending triage piling up** (`evaluation_judge_health` warns): the background tasks were lost or the model is too slow. Run **Sweep** on `/dashboard/benchmark#pending-triage` (or `POST /v1/evaluations/judge/sweep`), raise `timeout_seconds`, or switch `EVALUATION_JUDGE_PROFILE` back to `deterministic`.
 - **External judge returns `blocked_external`**: set `EVALUATION_JUDGE_ALLOW_EXTERNAL=true` and record the tenant's consent in *External judge consent*; check `api_key_configured` on the profiles table.
 - **Switching profiles**: edit `config/judge_profiles.yaml` (no rebuild; it is mounted) and set `EVALUATION_JUDGE_PROFILE`, then restart `api` and `worker`. Invalid profiles stop startup with a message naming the field.
+
+### 11. Judge Not in Use, Needs Re-test or Breaker Open (`v1.5.12`)
+- **Symptom**: `evaluation_judge_health` warns "judge profile 'X' is not in use (not_probed / probe_failed / needs_reprobe)", `/dashboard/judge-profiles` shows *Needs re-test* or *Probe failed*, and triage runs on the rule-based judge. Verdicts are unaffected.
+- **Mitigation**:
+  1. **`needs_reprobe`**: the model, URL, key or request format changed since the last successful test. Open `/dashboard/judge-profiles`, press **Test**, then **Activate** (Dashboard profiles). Environment-selected profiles are used again as soon as the test succeeds (or at the next restart's startup probe).
+  2. **`probe_failed` / `not_probed`**: fix the endpoint (see §10), then **Test**. The row lists every remaining activation condition (key, HTTPS, external switch, pricing or cap).
+  3. **Breaker open** (*Offline (breaker)*, `open_breakers` in the health check): the profile failed `EVALUATION_JUDGE_BREAKER_FAILURE_THRESHOLD` times in a row; triage uses its fallback chain or the rule-based judge. It retries automatically after `EVALUATION_JUDGE_BREAKER_TTL_SECONDS`. Fix the backend; no manual reset is needed.
+  4. **Stop using an LLM judge now**: **Use rule-based judge** on the page (or `POST /v1/evaluations/judge/deactivate`). If `EVALUATION_JUDGE_PROFILE` selects the profile, change `.env` and restart.
+  5. **Page is read-only**: enable Dashboard Basic Auth with non-default credentials, or set `EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev` on a local machine only.

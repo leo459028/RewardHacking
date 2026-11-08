@@ -38,8 +38,9 @@ def _load_migration(filename: str):
 
 
 def _settings(**values) -> Settings:
+    # Ignore the developer's .env (for example EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev on a QA stack).
     values.setdefault("evaluation_judge_profiles_file", "")
-    return Settings(**values)
+    return Settings(_env_file=None, **values)
 
 
 def _profile(**overrides) -> dict:
@@ -1008,6 +1009,7 @@ def _use_env(monkeypatch, profiles: dict | None = None, active: str = "default",
     monkeypatch.setenv("EVALUATION_JUDGE_PROFILES", json.dumps(profiles or {}))
     monkeypatch.setenv("EVALUATION_JUDGE_PROFILES_FILE", "")
     monkeypatch.setenv("EVALUATION_JUDGE_PROFILE", active)
+    monkeypatch.setenv("EVALUATION_JUDGE_DASHBOARD_EDITING", "auto")  # never inherit a developer's .env value
     for key, value in extra.items():
         monkeypatch.setenv(key, value)
     get_settings.cache_clear()
@@ -1365,3 +1367,64 @@ def test_dashboard_invalid_input_shows_specific_errors(client, monkeypatch):
     number = _post(client, PAGE, {**LM_FORM, "name": "bad-num", "model": "m", "timeout_seconds": "soon"})
     assert "timeout_seconds must be a number" in _flash(number)
     get_settings.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# P6: operations health and version anchors
+# ---------------------------------------------------------------------------
+
+
+def test_operations_judge_health_reports_unused_profiles_and_breakers(session_factory, monkeypatch, activation_gate):
+    from app.services.operations import compute_operations_readiness
+
+    def health():
+        result = _db(session_factory, lambda s: compute_operations_readiness(s, settings=get_settings()))
+        return {check.check_key: check for check in result.checks}["evaluation_judge_health"]
+
+    _use_env(monkeypatch)
+    clean = health()
+    assert clean.status == "pass" and clean.metadata["source"] == "default" and clean.metadata["activation_notes"] == {}
+    _use_env(monkeypatch, {"local-small": _profile(pricing_provider="qa_local")}, "local-small")
+    unprobed = health()
+    assert unprobed.status == "warn" and unprobed.metadata["activation_notes"] == {"local-small": "not_probed"}
+    assert "local-small" in unprobed.detail and unprobed.metadata["provider"] == "deterministic"
+    settings = get_settings()
+    profile = jp.get_profile(settings, "local-small")
+    fp = jp.config_fingerprint(profile, settings)
+
+    async def failed_probe(session):
+        session.add(JudgeProfileState(profile_name="local-small", probe_status="timeout", probe_error="timeout", probe_fingerprint=fp))
+        await session.commit()
+        await ja.refresh_activation_cache(session)
+
+    _db(session_factory, failed_probe)
+    failed = health()
+    assert failed.status == "warn" and "probe_failed: timeout" in failed.detail
+    # Working environment profile with an open breaker: still advisory, warns, lists the breaker.
+    activation_state.install({"local-small": _state("local-small", probe_status="ok", probe_fingerprint=fp)}, {})
+    asyncio.run(ja._BREAKER_STORE_OVERRIDE.open_judge_breaker("local-small", reason="r", ttl_seconds=300, failures=3))
+    monkeypatch.setattr(ja, "maybe_refresh", _no_refresh)
+    tripped = health()
+    assert tripped.metadata["source"] == "environment" and tripped.metadata["provider"] == "openai_compatible"
+    assert tripped.status == "warn" and list(tripped.metadata["open_breakers"]) == ["local-small"]
+    assert tripped.metadata["advisory"] is True and tripped.metadata["used_for_verdict"] is False
+    get_settings.cache_clear()
+
+
+async def _no_refresh(*args, **kwargs):
+    return False
+
+
+def test_v1512_version_anchors():
+    from app.main import app as fastapi_app
+    from app.services.finops import FINOPS_CALCULATION_VERSION
+
+    root = ROOT
+    assert fastapi_app.version == "1.5.12"
+    assert FINOPS_CALCULATION_VERSION == "v1.5.12"
+    assert 'version = "1.5.12"' in (root / "pyproject.toml").read_text(encoding="utf-8")
+    assert "(v1.5.12)" in (root / "scripts" / "security_check.py").read_text(encoding="utf-8")
+    assert 'value="v1.5.12"' in (root / "app" / "ui" / "templates" / "operations.html").read_text(encoding="utf-8")
+    assert 'release_version", "v1.5.12"' in (root / "app" / "ui" / "routes.py").read_text(encoding="utf-8")
+    browser = (root / "scripts" / "browser_manual_test.py").read_text(encoding="utf-8")
+    assert 'assert release_ver == "v1.5.12"' in browser and "Scenario 10 (v1.5.12)" in browser

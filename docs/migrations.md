@@ -2,7 +2,7 @@
 
 > **Migration Baseline**: `v1.5.2`  
 > **Tool**: Alembic  
-> **Current Head Revision**: `202606010004` (`expand_v151_finops_core`)
+> **Current Head Revision**: `202611120001` (`add_v1512_judge_activation`)
 
 RewardHacking employs Alembic to manage relational schema evolutions across PostgreSQL audit tables. The `v1.5.2` release maintains strict schema compatibility with revision `202606010004`.
 
@@ -25,7 +25,8 @@ migrations/versions/
 ├── 202611070001_add_v158_outcome_review_queue.py (run_outcomes, evaluation_reviews, tenant_evaluation_policies, evaluation_results evidence columns)
 ├── 202611080001_add_v159_benchmark_honeypot_attestation.py (benchmark_samples, benchmark_runs, honeypot_probes, honeypot_launches, tenant_attestation_keys; cohort / honeypot / attestation columns on run_outcomes, cohort / finding_labels / export link on evaluation_reviews, evaluation_results.suspicion_score)
 ├── 202611090001_add_v1510_judge_triage_sampling.py (judge_assessments, review_sampling_decisions; triage_priority / triage_score / triage_source / judge_assessment_id on evaluation_reviews; benchmark_runs.judge_config)
-└── 202611100001_add_v1511_judge_profiles.py (Head: judge_assessments.profile; tenant_evaluation_policies.allow_external_judge / external_judge_profiles)
+├── 202611100001_add_v1511_judge_profiles.py (judge_assessments.profile; tenant_evaluation_policies.allow_external_judge / external_judge_profiles)
+└── 202611120001_add_v1512_judge_activation.py (Head: judge_profile_configs, judge_profile_states)
 ```
 
 ---

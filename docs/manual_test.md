@@ -1,6 +1,6 @@
 # Manual QA & Interactive Browser Testing Guide
 
-> **Testing Baseline**: `v1.5.7`
+> **Testing Baseline**: `v1.5.12`
 > **Target Environment**: Local Docker Compose Stack (`http://localhost:8000`)
 > **Primary Interface**: Web Browser (`/dashboard`) & REST API (`/v1`)
 > **Automated Browser Runner**: `python scripts/browser_manual_test.py` (supports `--qa-currency TWD|USD|CNY`, default `TWD`)
@@ -20,7 +20,7 @@ docker compose up -d --build
 ```
 
 ### 1.2 Verify Container & Database Health
-Run the following commands in your terminal to confirm all 5 containers are healthy and migrations are at head (`202606010004`):
+Run the following commands in your terminal to confirm all 5 containers are healthy and migrations are at head (`202611120001`). Since `v1.5.12` the QA stack needs `EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev` in `.env` (local only) so Scenario 10 can edit judge profiles:
 
 ```bash
 docker compose ps
@@ -261,11 +261,24 @@ Optional API checks: `GET /v1/control-plane/mcp-servers`; `POST /v1/control-plan
 7. **(Manual) Background triage** — submit flagged outcome evidence on a completed run: the page returns immediately and shows *Judging… \| 評估中*; after the model answers, refresh to see the `local-small` assessment (priority and status unchanged).
 8. **(Manual) Compare profiles** — run a benchmark with `deterministic` and `local-small` and a small *Max judged samples*; compare precision, invalid-output rate and latency.
 
+## 5.10 Scenario 10: Judge Profile Management & the Activation Gate (`v1.5.12`)
+
+> Steps 1–7 are automated by `scripts/browser_manual_test.py` and call no real LLM: the test profile points at a closed local port, so its connection test fails and activation must stay blocked. Step 8 is manual and needs LM Studio.
+
+1. **Page** — `/dashboard/judge-profiles`: *In use* shows the rule-based judge (`default` or `deterministic`), the red `insecure_dev` warning, and the profiles table. `GET /v1/evaluations/judge/templates` lists `lm-studio`, `ollama`, `openai`, `gemini`, `deepseek`, `anthropic`.
+2. **Draft** — click *LM Studio (local)*: Base URL `http://host.docker.internal:1234/v1` is filled. Name `e2e-lm-<id>`, Base URL `http://host.docker.internal:9/v1`, Timeout `3`, leave Model blank → **Save**. Expect *saved as a draft*, status *Draft \| 草稿*, no **Test** button.
+3. **Untested** — **Edit**, Model `e2e-unreachable-model` → **Save**: *updated (version 2)*, status *Untested \| 待測試*, **Activate** disabled.
+4. **Failed test blocks activation** — **Test**: red *Connection test of e2e-lm-<id> failed*, status *Probe failed \| 測試失敗*, reason *The last connection test failed.*; `POST /v1/evaluations/judge/profiles/e2e-lm-<id>/activate` returns `409 judge_profile_not_ready` with `probe_failed`; *In use* is unchanged.
+5. **Cloud template** — *Google Gemini*, name `e2e-gemini-<id>` → **Save**: external, status *Untested*, key *not set \| 未設定* (when `GEMINI_API_KEY` is absent), **Activate** disabled with the reasons listed.
+6. **Clean up** — **Activate** on `deterministic` (in use: `deterministic`, source Dashboard), **Use rule-based judge**, then **Delete** both test profiles; `created`, `probed` and `deleted` appear in governance events.
+7. **Benchmark link** — `/dashboard/benchmark#judge-profiles` shows *Manage, test and activate profiles*.
+8. **(Manual) Real local model** — start LM Studio, use the LM Studio template with its real port and model, **Test** (expect latency, tokens and `json_schema`), **Activate**, submit flagged evidence and see the profile's assessment; change the model and expect *Needs re-test* and the rule-based judge; stop LM Studio and watch three failures open the breaker (*Offline (breaker)*) with the fallback used.
+
 ## 6. Browser QA Sign-Off Checklist
 
 Before signing off a release via manual browser testing, verify all items below:
 
-- [ ] All primary navigation tabs (`Overview`, `Runs`, `Approvals`, `Reviews`, `Benchmark`, `Worker`, `Observability`, `Governance`, `Control Plane`, `Costs`, `Admin FinOps`, `Operations`, `Playground`) return HTTP 200 with zero server tracebacks.
+- [ ] All primary navigation tabs (`Overview`, `Runs`, `Approvals`, `Reviews`, `Benchmark`, `Judge Profiles`, `Worker`, `Observability`, `Governance`, `Control Plane`, `Costs`, `Admin FinOps`, `Operations`, `Playground`) return HTTP 200 with zero server tracebacks.
 - [ ] Browser Developer Tools (`F12` $\rightarrow$ **Console** & **Network**) show `0` unhandled JavaScript errors or broken asset requests (`404`/`500`).
 - [ ] No scientific notation artifacts (`0E-8` or `0E-12`) appear on `/dashboard/costs`, `/dashboard/runs/{run_id}`, `/dashboard/admin/finops/pricing`, or `/dashboard/admin/finops/budgets`.
 - [ ] Budget violation inline buttons (**Acknowledge**, **Resolve**, **Ignore**) transition violation state and persist across page reloads.

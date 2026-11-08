@@ -4,6 +4,7 @@ import argparse
 import os
 import sys
 import time
+import uuid
 
 __test__ = False
 
@@ -928,6 +929,90 @@ def run_manual_test_suite(
         assert 'href="/dashboard/benchmark#external-judge-consent"' in page.content()
         print("[Scenario 9.5] Review detail shows the assessment profile; Governance links to external-judge consent")
 
+        # Scenario 10 (v1.5.12): judge profile management, connection test and the activation gate.
+        # No real LLM is called: the test profile points at a closed local port, so the probe fails and activation
+        # must stay blocked. Requires EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev on the QA stack.
+        suffix = uuid.uuid4().hex[:6]
+        lm_name = f"e2e-lm-{suffix}"
+        cloud_name = f"e2e-gemini-{suffix}"
+        page.goto(f"{base_url}/dashboard/judge-profiles")
+        jp_html = page.content()
+        assert 'id="judge-in-use-profile"' in jp_html and "0E-8" not in jp_html
+        assert 'id="judge-insecure-dev"' in jp_html, "Scenario 10 needs EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev on the QA stack"
+        templates_json = page.request.get(f"{base_url}/v1/evaluations/judge/templates").json()
+        assert [t["id"] for t in templates_json["templates"]] == ["lm-studio", "ollama", "openai", "gemini", "deepseek", "anthropic"]
+        in_use_before = page.inner_text("#judge-in-use-profile")
+        print(f"[Scenario 10.1] Judge Profiles page: in use {in_use_before}; editing enabled (insecure_dev); 6 templates")
+
+        page.click("#judge-template-lm-studio")
+        page.wait_for_load_state("networkidle")
+        assert page.input_value('#judge-profile-form input[name="base_url"]') == "http://host.docker.internal:1234/v1"
+        page.fill('#judge-profile-form input[name="name"]', lm_name)
+        page.fill('#judge-profile-form input[name="base_url"]', "http://host.docker.internal:9/v1")
+        page.fill('#judge-profile-form input[name="timeout_seconds"]', "3")
+        page.click("#judge-save")
+        page.wait_for_load_state("networkidle")
+        assert "saved as a draft" in page.content()
+        assert page.get_attribute(f"#judge-status-{lm_name}", "data-status") == "draft"
+        assert page.locator(f"#judge-probe-{lm_name}").count() == 0
+        print(f"[Scenario 10.2] LM Studio template -> draft {lm_name} (model left blank; test button hidden)")
+
+        page.click(f"#judge-edit-{lm_name}")
+        page.wait_for_load_state("networkidle")
+        page.fill('#judge-profile-form input[name="model"]', "e2e-unreachable-model")
+        page.click("#judge-save")
+        page.wait_for_load_state("networkidle")
+        assert "updated (version 2)" in page.content()
+        assert page.get_attribute(f"#judge-status-{lm_name}", "data-status") == "untested"
+        assert page.locator(f"#judge-activate-{lm_name}").is_disabled()
+        print(f"[Scenario 10.3] {lm_name} saved with a model -> untested; Activate disabled")
+
+        page.click(f"#judge-probe-{lm_name}")
+        page.wait_for_load_state("networkidle")
+        assert f"Connection test of {lm_name} failed" in page.inner_text("#judge-error")
+        assert page.get_attribute(f"#judge-status-{lm_name}", "data-status") == "probe_failed"
+        assert "The last connection test failed." in page.inner_text(f"#judge-reasons-{lm_name}")
+        assert page.locator(f"#judge-activate-{lm_name}").is_disabled()
+        refused = page.request.post(f"{base_url}/v1/evaluations/judge/profiles/{lm_name}/activate")
+        refused_body = refused.json()
+        assert refused.status == 409 and refused_body["error"]["code"] == "judge_profile_not_ready"
+        assert [r["code"] for r in refused_body["error"]["reasons"]] == ["probe_failed"]
+        assert page.inner_text("#judge-in-use-profile") == in_use_before
+        print(f"[Scenario 10.4] Probe of {lm_name} failed -> activation refused (409 judge_profile_not_ready: probe_failed); judge in use unchanged")
+
+        page.click("#judge-template-gemini")
+        page.wait_for_load_state("networkidle")
+        page.fill('#judge-profile-form input[name="name"]', cloud_name)
+        page.click("#judge-save")
+        page.wait_for_load_state("networkidle")
+        cloud_row = next(row for row in page.request.get(f"{base_url}/v1/evaluations/judge/profiles").json()["profiles"] if row["name"] == cloud_name)
+        cloud_reasons = [r["code"] for r in cloud_row["readiness"]["reasons"]]
+        assert cloud_row["status"] == "untested" and cloud_row["effective_external"] is True and "not_probed" in cloud_reasons
+        if not cloud_row["key_status"]["configured"]:
+            assert "key_missing" in cloud_reasons and "not set" in page.inner_text(f"#judge-row-{cloud_name}")
+        assert page.locator(f"#judge-activate-{cloud_name}").is_disabled()
+        print(f"[Scenario 10.5] Gemini template -> {cloud_name}: external, activation blocked ({', '.join(cloud_reasons)})")
+
+        if page.locator("#judge-activate-deterministic").count():
+            page.click("#judge-activate-deterministic")
+            page.wait_for_load_state("networkidle")
+        assert page.inner_text("#judge-in-use-profile") == "deterministic"
+        page.click("#judge-deactivate")
+        page.wait_for_load_state("networkidle")
+        assert "Dashboard activation cleared" in page.content()
+        for name in (lm_name, cloud_name):
+            page.click(f"#judge-delete-{name}")
+            page.wait_for_load_state("networkidle")
+            assert f"Profile {name} deleted." in page.content()
+        assert page.locator(f"#judge-row-{lm_name}").count() == 0 and page.locator(f"#judge-row-{cloud_name}").count() == 0
+        audit_types = {e.get("event_type") for e in page.request.get(f"{base_url}/v1/governance/events?limit=100").json()}
+        assert {"evaluation.judge_profile.created", "evaluation.judge_profile.probed", "evaluation.judge_profile.deleted"} <= audit_types
+        print("[Scenario 10.6] Rule-based judge activated and cleared; both test profiles deleted; created/probed/deleted audited")
+
+        page.goto(f"{base_url}/dashboard/benchmark")
+        assert 'id="judge-profiles-manage-link"' in page.content()
+        print("[Scenario 10.7] Benchmark page links to Judge Profiles")
+
         page.goto(f"{base_url}/dashboard/observability")
         obs_html = page.content()
         assert "FinOps" in obs_html
@@ -972,20 +1057,20 @@ def run_manual_test_suite(
         assert "evaluation_benchmark_gate" in ops_html
         assert "evaluation_judge_health" in ops_html and "evaluation_sampling_health" in ops_html
         release_ver = page.input_value('input[name="release_version"]')
-        assert release_ver == "v1.5.11"
+        assert release_ver == "v1.5.12"
 
         page.select_option('select[name="evidence_type"]', "safety_regression")
         page.select_option('select[name="status"]', "pass")
         page.fill('input[name="reference_url"]', "docs/manual_test.md")
-        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.5.11")
+        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.5.12")
         page.click('button:has-text("Save Evidence")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
         page.click('button:has-text("Create Release Gate Snapshot")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
-        assert "v1.5.11" in page.content()
-        print("[Scenario 4.3] Operations evidence saved & v1.5.11 Release Gate snapshot created via browser")
+        assert "v1.5.12" in page.content()
+        print("[Scenario 4.3] Operations evidence saved & v1.5.12 Release Gate snapshot created via browser")
 
         # 6. Check all primary navigation tabs for 0E-8 and HTTP 200
         nav_routes = [
@@ -994,6 +1079,7 @@ def run_manual_test_suite(
             "/dashboard/approvals",
             "/dashboard/reviews",
             "/dashboard/benchmark",
+            "/dashboard/judge-profiles",
             "/dashboard/worker",
             "/dashboard/observability",
             "/dashboard/governance",

@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="1.5.11",
+    version="1.5.12",
     description="Guardrail service for preventing reward hacking in agent systems.",
     lifespan=lifespan,
 )

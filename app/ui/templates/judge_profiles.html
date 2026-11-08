@@ -41,6 +41,7 @@
 
 <section class="panel" id="judge-profile-list">
   <h2>Profiles | 設定組</h2>
+  <div class="table-scroll" style="overflow-x:auto;">
   <table id="judge-profiles-table">
     <thead><tr><th>Profile</th><th>Source</th><th>Provider / model</th><th>Host</th><th>External</th><th>Key</th><th>Last test</th><th>Status</th><th>Breaker</th><th>Actions</th></tr></thead>
     <tbody>
@@ -81,6 +82,7 @@
     {% endfor %}
     </tbody>
   </table>
+  </div>
 </section>
 
 {% if editing.allowed %}

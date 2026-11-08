@@ -1190,15 +1190,16 @@ def test_reasoning_effort_is_sent_only_when_configured():
 
 
 def test_v1511_version_anchors():
+    """Exact anchors moved to the latest release test; this keeps the 1.5.x series checks (v1.5.12 relaxed them)."""
     from app.main import app as fastapi_app
     from app.services.finops import FINOPS_CALCULATION_VERSION
 
-    assert fastapi_app.version == "1.5.11"
-    assert FINOPS_CALCULATION_VERSION == "v1.5.11"
-    assert 'version = "1.5.11"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert "(v1.5.11)" in (ROOT / "scripts" / "security_check.py").read_text(encoding="utf-8")
-    assert 'value="v1.5.11"' in (ROOT / "app" / "ui" / "templates" / "operations.html").read_text(encoding="utf-8")
-    assert 'release_version", "v1.5.11"' in (ROOT / "app" / "ui" / "routes.py").read_text(encoding="utf-8")
+    assert fastapi_app.version.startswith("1.5.")
+    assert FINOPS_CALCULATION_VERSION.startswith("v1.5.")
+    assert 'version = "1.5.' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert "(v1.5." in (ROOT / "scripts" / "security_check.py").read_text(encoding="utf-8")
+    assert 'value="v1.5.' in (ROOT / "app" / "ui" / "templates" / "operations.html").read_text(encoding="utf-8")
+    assert 'release_version", "v1.5.' in (ROOT / "app" / "ui" / "routes.py").read_text(encoding="utf-8")
     browser = (ROOT / "scripts" / "browser_manual_test.py").read_text(encoding="utf-8")
-    assert 'assert release_ver == "v1.5.11"' in browser and "Scenario 9 (v1.5.11)" in browser
+    assert 'assert release_ver == "v1.5.' in browser and "Scenario 9 (v1.5.11)" in browser
     assert (ROOT / "config" / "judge_profiles.example.yaml").is_file()

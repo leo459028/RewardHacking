@@ -119,6 +119,21 @@ Risk scores range deterministically from `0.0` to `1.0`:
 | Benchmark runs cause side effects | Runs call the pure evaluation engine only: no evaluation results, reviews, incidents, Kafka events or lease changes |
 | Malicious Inspect logs | JSON only (`.eval` zip archives rejected), size and sample-count limits, redaction, admin-only, dry run by default |
 
+## Judge Activation & Dashboard Profiles Threat Model (`v1.5.12`)
+
+| Threat | Control |
+| --- | --- |
+| A profile exfiltrates any environment variable (`api_key_env=DATABASE_URL` plus a hostile `base_url`) | `api_key_env` must end in `_API_KEY` or be listed in `EVALUATION_JUDGE_KEY_ENV_ALLOWLIST`, for file, environment and Dashboard sources |
+| Keys or evidence sent in clear text, to cloud metadata services or via URL credentials | External hosts must use HTTPS; `169.254.169.254`, `fd00:ec2::254`, `metadata.google.internal`, userinfo, query strings and fragments are refused at load time and re-checked before every request (`blocked_insecure_url`) |
+| "Just testing a connection" silently switches the live judge | A probe never activates a Dashboard profile; activation is explicit, needs a matching successful probe, and is audited |
+| A configuration or key change keeps using an untested judge | Activation and probes are bound to a configuration fingerprint (endpoint, model, key digest, request format, output budget); any change falls back to the rule-based judge until re-tested |
+| Anyone with Dashboard access rewires the judge | Dashboard editing is off unless Basic Auth uses non-default credentials (`auto`), or explicitly `insecure_dev` (local only, red warning); API writes need the `admin` role |
+| Cross-site form submission | Every new Dashboard form checks that `Origin` (else `Referer`) matches the request host; missing both is refused (403). A full CSRF token scheme is planned with Dashboard RBAC (`v1.6.x`) |
+| Keys leak through APIs, pages, audits or error bodies | Only the variable name, a set flag and a 6-hex fingerprint are shown; audits carry fingerprint prefixes and field names; `422` responses drop the value of forbidden fields such as `api_key` |
+| A failing cloud judge stalls triage or drives costs | Per-profile breaker (half-open retry), fallback chain ending in the rule-based judge, per-profile and global daily token caps; none of these can change verdicts, priorities or statuses |
+
+**Why keys are not entered in the page yet**: the Dashboard has a single Basic Auth account (default off, default `admin/admin`), runs every action as one administrator, and has no roles or CSRF tokens. Storing secrets behind that would add an attack surface; encrypted, write-only key entry bound to a host waits for Dashboard RBAC, CSRF and re-authentication (`v1.6.x`). With `AUTH_ENABLED=false` (the default) the judge profile API, like every other admin endpoint, is open to anyone who can reach it.
+
 ## Judge Profiles Threat Model (`v1.5.11`)
 
 | Threat | Control |
