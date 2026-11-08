@@ -695,8 +695,15 @@ def run_manual_test_suite(
         page.click("#export-to-benchmark")
         page.wait_for_load_state("networkidle")
         export_html = page.content()
-        assert "Exported to benchmark as bms_" in export_html and "true_positive" in export_html
-        print("[Scenario 7.3] Confirmed review (with per-finding label) exported to the tenant benchmark corpus")
+        # On a reused database the same evidence may already be in the tenant corpus from an earlier run;
+        # deduplication by (corpus, evidence_digest) is the documented behaviour, so either outcome is valid.
+        exported = "Exported to benchmark as bms_" in export_html
+        deduplicated = "Identical evidence is already in this corpus. (bms_" in export_html
+        assert (exported or deduplicated) and "true_positive" in export_html
+        print(
+            "[Scenario 7.3] Confirmed review (with per-finding label) "
+            + ("exported to the tenant benchmark corpus" if exported else "deduplicated against an earlier export (409 benchmark_sample_duplicate)")
+        )
 
         def _launch_probe(probe_id: str) -> str:
             page.goto(f"{base_url}/dashboard/benchmark?tenant_id=benchmark-qa-tenant#honeypots")
