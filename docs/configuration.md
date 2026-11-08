@@ -99,6 +99,12 @@ Application configuration is loaded from environment variables and local `.env` 
 | `EVALUATION_SAMPLE_RANDOM_RATE` | `0.02` | Uniform random audit rate (`[0, 1]`) |
 | `EVALUATION_SAMPLE_RANDOM_DAILY_CAP_PER_TENANT` | `5` | Random-audit samples per tenant per UTC day |
 | `EVALUATION_SAMPLE_SECRET` | *(empty)* | HMAC secret for random draws. Set it in production: without it a per-process secret is used and draws are not reproducible across restarts |
+| `EVALUATION_JUDGE_PROFILE` | `default` | `v1.5.11` live-triage judge profile name; unknown names fall back to `deterministic` and fail `evaluation_judge_health` |
+| `EVALUATION_JUDGE_PROFILES_FILE` | `config/judge_profiles.yaml` | YAML profile file (git-ignored; copy `config/judge_profiles.example.yaml`). Missing file = no file profiles. Mounted read-only into the containers |
+| `EVALUATION_JUDGE_PROFILES` | `{}` | JSON profiles (`{"name": {...}}` or a list); override file profiles by name |
+| `EVALUATION_JUDGE_INTERNAL_HOSTS` | `host.docker.internal` | Comma-separated host names a judge endpoint may use without being external (exact match) |
+| `EVALUATION_JUDGE_BACKGROUND_CONCURRENCY` | `1` | Background judge tasks per event loop (keep 1 for a single local model) |
+| `EVALUATION_JUDGE_PENDING_SWEEP_SECONDS` | `600` | Reviews pending longer than this are re-scheduled by the sweep and warn in `evaluation_judge_health` |
 | `TOOL_BREAKER_FAILURE_THRESHOLD` | `3` | Consecutive worker execution failures (`1`–`100`) before a tool's circuit breaker automatically trips to `open` |
 | `TOOL_BREAKER_TTL_SECONDS` | `300` | Default TTL in seconds (`30`–`86400`) for an open tool circuit breaker in Redis |
 
@@ -121,3 +127,11 @@ Application configuration is loaded from environment variables and local `.env` 
 1. **Disable Bootstrap Keys**: Set `AUTH_ENABLED=true` and provision hashed API keys in the PostgreSQL database via `/v1/tenants/{tenant_id}/api-keys`. Remove fallback `API_KEYS` from production environment files.
 2. **Dashboard Security**: Set `DASHBOARD_AUTH_ENABLED=true` and supply high-entropy credentials via enterprise secret managers.
 3. **Fail-Closed Thresholds**: Ensure `RELEASE_GATE_FAIL_ON_BOOTSTRAP_KEYS_IN_PROD=true` in `APP_ENV=prod`.
+
+## Judge Profiles (`v1.5.11`)
+
+Copy `config/judge_profiles.example.yaml` to `config/judge_profiles.yaml` and set `EVALUATION_JUDGE_PROFILE`. Fields and semantics: [`docs/evaluation.md`](evaluation.md) §13.
+
+- **LM Studio (local)**: load the model, start the server (Developer tab) and use the port shown under *API Usage*. From the containers use `http://host.docker.internal:<port>/v1` (do not use the `169.254.x.x` address LM Studio may show; link-local addresses are treated as external). For reasoning models (for example Qwen3.5) set `reasoning_effort: none`. Use `execution: background` for slow CPU inference and create zero-cost pricing with **Zero-cost pricing** on `/dashboard/benchmark#judge-profiles`.
+- **Ollama / vLLM (larger local models)**: same pattern with their OpenAI-compatible base URL (Ollama: `http://host.docker.internal:11434/v1`).
+- **Gemini (cloud)**: base URL `https://generativelanguage.googleapis.com/v1beta/openai`, `api_key_env: GEMINI_API_KEY`, `external: true`, `pricing_provider: google`; set `EVALUATION_JUDGE_ALLOW_EXTERNAL=true` and record tenant consent before evidence is sent.

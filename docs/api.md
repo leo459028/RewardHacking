@@ -227,6 +227,18 @@ Served by `app/api/routers/benchmark.py` and `app/api/routers/evaluations.py`. E
 | `POST` | `/v1/tenants/{tenant_id}/attestation-keys` | Registers a public key (`name`, `algorithm` = `ed25519` \| `ecdsa-p256-sha256`, `public_key_pem`, `allowed_subjects`) → `201`; private keys and invalid PEM return `422 attestation_key_invalid`; duplicates `409 attestation_key_duplicate` | `tenant_admin`, `admin` |
 | `POST` | `/v1/tenants/{tenant_id}/attestation-keys/{key_id}/revoke` | Revokes a key | `tenant_admin`, `admin` |
 
+### Judge Profiles (`v1.5.11`)
+
+| Method | Path | Description | Access Role |
+| --- | --- | --- | --- |
+| `GET` | `/v1/evaluations/judge/profiles` | All profiles (safe view: host only, `api_key_configured`, `effective_external`, accepted structured-output mode, active flag) | `reviewer`, `tenant_admin`, `admin` |
+| `POST` | `/v1/evaluations/judge/profiles/{name}/probe` | Sends a fixed synthetic input; returns status, structured-output mode, attempts, latency, tokens; writes no assessment (`404 judge_profile_not_found`) | `admin` |
+| `POST` | `/v1/evaluations/judge/profiles/{name}/zero-cost-pricing` | Creates zero-price input / output rows for a `qa_local` profile (`409 judge_profile_not_local` otherwise) | `admin` |
+| `POST` | `/v1/evaluations/judge/sweep` | Re-schedules reviews pending background triage longer than `older_than_seconds` (default `EVALUATION_JUDGE_PENDING_SWEEP_SECONDS`) | `tenant_admin`, `admin` |
+| `POST` | `/v1/benchmark/runs` | Adds `judge_profiles` (≤ 3; LLM profiles admin-only; unknown names `422 benchmark_judge_profile_unknown`); runs gain `metrics.triage_by_profile` and `judge_config.profiles` | `tenant_admin`, `admin` |
+
+`GET/PUT /v1/tenants/{tenant_id}/evaluation-policy` add `allow_external_judge` and `external_judge_profiles` (omitting them on `PUT` keeps the stored consent). `GET /v1/evaluations/judge/status` adds `profile`, `configured_profile`, `profile_known`, `execution` and `pending_triage`. Assessments add `profile` and `fallback.request` (`structured_output`, `attempts`); reviews pending background triage report `triage_source: "pending:<profile>"`.
+
 ### Judge Triage & Review Sampling (`v1.5.10`)
 
 Served by `app/api/routers/evaluations.py` (and the judge option on `POST /v1/benchmark/runs`). Every response is monitor-only. The judge only orders review work and never changes verdicts, priorities or review status. Roles that submit agent work (`operator`) cannot read these endpoints, see review triage fields as empty and `sample_reason` values `threshold_sample` / `random_audit` (and `honeypot`) as `rule_review`; `order=triage` falls back to `rule` for them.

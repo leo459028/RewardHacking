@@ -119,6 +119,16 @@ Risk scores range deterministically from `0.0` to `1.0`:
 | Benchmark runs cause side effects | Runs call the pure evaluation engine only: no evaluation results, reviews, incidents, Kafka events or lease changes |
 | Malicious Inspect logs | JSON only (`.eval` zip archives rejected), size and sample-count limits, redaction, admin-only, dry run by default |
 
+## Judge Profiles Threat Model (`v1.5.11`)
+
+| Threat | Control |
+| --- | --- |
+| API keys committed in profile files | Profiles may only reference `api_key_env` (a variable name); `api_key` / `token` / `secret` / `password` / `authorization` fields fail startup. The real profile file is git-ignored and mounted read-only |
+| Evidence sent to a cloud judge without the customer's agreement | External judges need the global switch **and** recorded tenant consent (audited); otherwise nothing is sent |
+| A misconfigured profile downgrades a public endpoint to internal | `external: false` behaves like `auto`; only exact host names in `EVALUATION_JUDGE_INTERNAL_HOSTS` are internal; link-local `169.254.x.x` (cloud metadata) is always external |
+| Background tasks alter verdicts or leak into production data from tests | Background triage reuses `triage_review()` (triage columns only); tests point background sessions at the in-memory test database |
+| Reasoning text with injected content persisted | Reasoning blocks are stripped before parsing and never stored |
+
 ## Judge Triage & Review Sampling Threat Model (`v1.5.10`)
 
 | Threat | Control |

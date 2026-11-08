@@ -1176,3 +1176,23 @@ def test_reasoning_effort_is_sent_only_when_configured():
     assert jp.load_profiles(_settings(evaluation_judge_profiles={"lab": _profile(reasoning_effort="LOW")}))["lab"].reasoning_effort == "low"
     example = jp.load_profiles(_settings(evaluation_judge_profiles_file=str(EXAMPLE_PROFILES)))
     assert example["local-small"].reasoning_effort == "none" and example["local-small"].base_url.endswith(":12339/v1")
+
+
+# ---------------------------------------------------------------------------
+# P8: version anchors (exact strings: "v1.5.11" shares a prefix with "v1.5.1")
+# ---------------------------------------------------------------------------
+
+
+def test_v1511_version_anchors():
+    from app.main import app as fastapi_app
+    from app.services.finops import FINOPS_CALCULATION_VERSION
+
+    assert fastapi_app.version == "1.5.11"
+    assert FINOPS_CALCULATION_VERSION == "v1.5.11"
+    assert 'version = "1.5.11"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert "(v1.5.11)" in (ROOT / "scripts" / "security_check.py").read_text(encoding="utf-8")
+    assert 'value="v1.5.11"' in (ROOT / "app" / "ui" / "templates" / "operations.html").read_text(encoding="utf-8")
+    assert 'release_version", "v1.5.11"' in (ROOT / "app" / "ui" / "routes.py").read_text(encoding="utf-8")
+    browser = (ROOT / "scripts" / "browser_manual_test.py").read_text(encoding="utf-8")
+    assert 'assert release_ver == "v1.5.11"' in browser and "Scenario 9 (v1.5.11)" in browser
+    assert (ROOT / "config" / "judge_profiles.example.yaml").is_file()

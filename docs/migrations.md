@@ -24,7 +24,8 @@ migrations/versions/
 ├── 202606010004_expand_v151_finops_core.py       (Expanded pricing metadata & source audits)
 ├── 202611070001_add_v158_outcome_review_queue.py (run_outcomes, evaluation_reviews, tenant_evaluation_policies, evaluation_results evidence columns)
 ├── 202611080001_add_v159_benchmark_honeypot_attestation.py (benchmark_samples, benchmark_runs, honeypot_probes, honeypot_launches, tenant_attestation_keys; cohort / honeypot / attestation columns on run_outcomes, cohort / finding_labels / export link on evaluation_reviews, evaluation_results.suspicion_score)
-└── 202611090001_add_v1510_judge_triage_sampling.py (Head: judge_assessments, review_sampling_decisions; triage_priority / triage_score / triage_source / judge_assessment_id on evaluation_reviews; benchmark_runs.judge_config)
+├── 202611090001_add_v1510_judge_triage_sampling.py (judge_assessments, review_sampling_decisions; triage_priority / triage_score / triage_source / judge_assessment_id on evaluation_reviews; benchmark_runs.judge_config)
+└── 202611100001_add_v1511_judge_profiles.py (Head: judge_assessments.profile; tenant_evaluation_policies.allow_external_judge / external_judge_profiles)
 ```
 
 ---

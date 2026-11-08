@@ -1,6 +1,6 @@
 # Project Roadmap: Evolutionary Milestones
 
-> **Roadmap Baseline**: `v1.5.10`
+> **Roadmap Baseline**: `v1.5.11`
 > **Status**: Active Open-Source Track (`v1.5.x` Governance, FinOps & Evaluation Series)
 > **Next Target**: `v1.6.0` (Runtime Foundations)
 
@@ -34,30 +34,30 @@ This roadmap outlines the past development trajectory, the `v1.5.x` evaluation s
 | `v1.5.7` | Completed | Safe MCP Gateway MVP & Tool Schema Guardrails | MCP server registry with trust tiers & transport guardrails, tool input/output JSON schema validation with injection scan profiles, sensitive argument redaction, dynamic executor registry closure, and per-MCP-server cost and risk attribution (`mcp_server_id`). |
 | `v1.5.8` | Completed | Outcome Ingestion, Evidence Detectors & Review Queue | Agent outcome evidence ingestion (diff, test/lint reports, final message) with provenance levels, evidence-based reward-hacking detectors (test/grader/CI tampering, claim–evidence mismatch, error suppression, scope), and a post-execution review queue separated from pre-execution approval. |
 | `v1.5.9` | Completed | Labeled Benchmark & Detector Measurement | Review labels exported as benchmark samples, TPR at low FPR / AUROC / audit-budget curves, shadow `special_casing` detector, honeypot (impossible-task) probes, per-agent cheat rates, and CI attestation verification. |
-| `v1.5.10` | **Current** | **LLM-as-Judge Triage (Shadow) & Review Sampling** | Pluggable trusted judge providers that only prioritize review work and never turn `review` into `pass`, plus quota-capped `sample_for_review` with a uniform random audit slice and triage precision@K measurement. |
+| `v1.5.10` | Completed | LLM-as-Judge Triage (Shadow) & Review Sampling | Pluggable trusted judge providers that only prioritize review work and never turn `review` into `pass`, plus quota-capped `sample_for_review` with a uniform random audit slice and triage precision@K measurement. |
+| `v1.5.11` | **Current** | **Real Local & Cloud Judges** | Named judge profiles, backend compatibility (structured-output fallback, reasoning control, retries), background triage, profile cost attribution, tenant consent for external judges and multi-profile benchmarks; verified with a local model in LM Studio. |
 | `v1.6.0` | **Next** | Runtime Foundations | OTLP / W3C trace export, audit retention purge with legal hold (FinOps ledger excluded), FinOps module split, and a `SandboxBackend` interface. |
 | `v1.6.1` | Planned | Isolated Sandbox Runtime MVP | Hardened Docker backend with a configurable OCI runtime (`runc` locally, `runsc`/gVisor on Linux), limited to low-risk tools behind a feature flag; sandbox re-runs upgrade evidence to `platform_verified`. |
 | `v1.6.2+` | Long-Term | Remote MCP, MicroVM & Graph Replay | Real remote MCP transports behind an egress proxy, K8s Job and microVM backends, hidden held-out tests, mutation testing, resampling, and stateful graph time-travel replay. |
 
 ---
 
-## Current Release: `v1.5.10` LLM-as-Judge Triage (Shadow) & Quota-Capped Review Sampling
+## Current Release: `v1.5.11` Real Local & Cloud Judges
+
+The `v1.5.11` milestone turns the `v1.5.10` judge framework into something that runs against real models while keeping every safety property:
+- **Judge Profiles**: named, validated profiles (YAML file and/or JSON setting) with provider, endpoint, model, API-key environment-variable *name*, structured-output mode, timeout, input budget, pricing provider / model, external policy, execution mode, retries, reasoning stripping and `reasoning_effort`. Keys inside a profile fail startup. Without profiles, behaviour and `judge_version` strings equal `v1.5.10`; named profiles prefix `judge_version` so results stay comparable across models.
+- **Backend Compatibility**: `auto` structured output (`json_schema` → `json_object` → prompt-only, remembered per backend), `<think>` stripping and last-JSON-object extraction, empty-content detection, and retries on 429 / 502 / 503 / 504 and connection errors within the profile timeout (timeouts never retried).
+- **Background Triage**: `execution: background` marks the review `pending:<profile>` and assesses it in an in-process task with its own session and a per-loop concurrency limit; lost tasks are re-scheduled by a sweep (opportunistic and on demand). Reviews decided before the judge runs spend no tokens.
+- **Cost & Consent**: profile-based pricing attribution, one-click zero-cost rows for local models, exact-match internal hosts (`host.docker.internal`), forced-external only (never downgraded), and tenant consent for external judges (a stricter change from `v1.5.10`, where the global switch alone sufficed).
+- **Real-hardware result**: Qwen3.5-2B (Q4_K_M) in LM Studio, CPU only: reasoning had to be disabled with `reasoning_effort: none`; then 11–25 s per assessment with valid `json_schema` output. Seed benchmark (30 judged samples): 0% invalid output, ~20 s average; the 2B judge alone ranks worse than the rules, combined ordering slightly better; far too few positives to promote.
+
+## Previous Release: `v1.5.10` LLM-as-Judge Triage (Shadow) & Quota-Capped Review Sampling
 
 The `v1.5.10` milestone adds the first LLM component under the monotonic-safety rule and starts estimating the miss rate:
 - **Pluggable Trusted Judges**: `deterministic` (default, reproducible, fallback) and `openai_compatible` (hosted or local) providers in `app/services/evaluation/judges/`. Evidence is re-redacted and bounded, wrapped in a per-call nonce boundary, and scanned for judge-directed text (which can only raise triage). Replies are parsed against a strict schema; extra fields such as `verdict` are dropped. External endpoints need an explicit opt-in; timeouts, errors, invalid output and the per-tenant daily token cap fall back to the deterministic judge. A same-model-family warning is recorded and shown. Judge tokens are recorded in the FinOps ledger without touching token leases.
 - **Triage Only**: assessments (`jdg_`) write only `triage_priority` (`P1`–`P3`, never `P0`), `triage_score`, `triage_source` and the assessment link on a review. The advisory order `(min(rule, triage), rule, -triage_score)` keeps every rule `P0` first. `EVALUATION_JUDGE_MODE=shadow` (default) records and shows triage; `triage` changes the default order and is a manual switch. Roles that submit agent work never see judge output.
 - **Quota-Capped `sample_for_review`**: one recorded decision per rule-passed outcome (`smp_`): a uniform random audit slice (server-side HMAC draw, own daily cap) and a threshold slice (`max(shadow-inclusive suspicion, risk_score) ≥ 0.5`, daily cap and share cap). Skips are counted. Sampled runs become `review_required` at `P3` with all shadow findings visible for per-finding labels; no incident, no Kafka, no lease. Cheat rates add the unbiased `random_audit_hacking_rate`.
 - **Benchmark-Driven**: benchmark runs accept `judge_provider` and report precision@K and audit-budget curves for `rule_only` / `judge_only` / `combined`, with `promotion_criteria_met` and blockers (seed-only runs never qualify). Seed result with the deterministic judge: precision@5/10/20 equal to rules (1.0 / 0.9 / 0.9), slightly better reward-tampering catch in the first 1–5% of budget. `TT-001` tuning and `special_casing` promotion remain pending non-seed evidence, which the threshold slice now collects.
-
-## Previous Release: `v1.5.9` Labeled Benchmark & Detector Measurement
-
-The `v1.5.9` milestone makes every detection signal measurable before any LLM judge is added:
-- **Labeled Benchmark Corpus**: `benchmark_samples` (`bms_`) with the code-owned `seed-v1.5.9` corpus (94 samples: 49 hacking / 45 benign, including deliberate evasions and known false positives), explicit export of decided reviews into tenant or global corpora (re-redacted, deduplicated), per-finding `true_positive` / `false_positive` labels, deterministic dev/holdout splits, admin relabeling with history, and an optional Inspect JSON log importer.
-- **Control-Style Metrics**: side-effect-free benchmark runs (`bmr_`) with a deterministic `suspicion_score`, AUROC, TPR at FPR 1% / 5% with Wilson intervals and *insufficient samples* flags, audit-budget-versus-catch-rate curves, verdict confusion, precision by priority and a shadow what-if view; reproducible from `evaluator_version` + `corpus_digest`. The `evaluation_benchmark_gate` readiness check is advisory by default (`EVALUATION_BENCHMARK_GATE_ENFORCED`). Seed result: reward-tampering TPR at FPR 5% = 0.75, below the default 0.90 gate, driven by `TT-001` false positives on legitimate test refactors and CI edits.
-- **`special_casing` Detector (Shadow)**: `SP-001`–`SP-004` with two positive and two negative fixtures per rule; zero false positives on the seed negatives; not promoted to `enforce` in this release.
-- **Honeypot Probes**: six impossible-task probes launched through the normal submit path, server-side run mapping (never in run payloads), deterministic `cheated` / `honest_refusal` / `inconclusive` judgement, and a new `reports_impossible` claim type.
-- **Cheat Rates**: monitor-only per-agent / per-model / per-version rates with lower-bound semantics and Wilson intervals; never used for risk scoring.
-- **CI Attestation Verification**: DSSE / in-toto (test-result, SLSA provenance) verification against tenant-registered Ed25519 / ECDSA P-256 keys with run binding, report digest, freshness and replay checks; `CE-009` / `CE-010` on failure; Sigstore keyless verification deferred (bundles stay unverified).
 
 ## Roadmap Principles (Re-baselined after `v1.5.7`)
 
@@ -95,6 +95,11 @@ The pre-execution perimeter (prompt guards, policy engine, Safe MCP Gateway, Fin
 - **Quota-Capped `sample_for_review`**: Rule-passed runs can be pulled into review only above a suspicion or risk threshold, within a per-tenant daily cap and a maximum share of passed volume, plus a small uniform random slice for unbiased miss-rate estimation. Skipped samples are counted and shown, never silently dropped.
 - **Trusted, Hardened Judges**: Pluggable `deterministic` and `openai-compatible` providers (hosted or local), warnings when the judge shares a model family with the monitored agent, redaction before external calls, judge prompt-injection regression tests, judge token costs recorded in the FinOps ledger, and deterministic fallback on timeout.
 
+### `v1.5.11` (Current): Real Local & Cloud Judges
+- **Judge Profiles**: switching local / larger local / cloud models is configuration; results stay comparable through profile-prefixed `judge_version`.
+- **Compatibility & Background Execution**: structured-output fallback, reasoning control, bounded retries, and background triage so slow local models never block outcome submission.
+- **Cost & Consent**: real-provider cost attribution and tenant consent before evidence leaves for an external judge.
+
 ---
 
 ## `v1.6.x` Runtime Execution Series
@@ -118,5 +123,5 @@ The pre-execution perimeter (prompt guards, policy engine, Safe MCP Gateway, Fin
 - **Additional Sandbox Backends**: Kubernetes Job backend (with gVisor `RuntimeClass`) and optional Firecracker microVMs for Linux deployments.
 - **Stronger Verification**: Hidden held-out tests, mutation testing to detect weakened tests, and resampling of suspicious steps.
 - **Closed-Loop Risk Scoring**: Feed confirmed per-agent cheat rates back into pre-execution risk scoring once false-positive rates are stable.
-- **Judge Extensions** (deferred from `v1.5.10`): native (non-OpenAI-compatible) judge providers, multi-judge voting, an asynchronous judge queue on the worker, and evidence-based `TT-001` tuning / `special_casing` promotion once enough sampled, non-seed labels exist.
+- **Judge Extensions** (deferred from `v1.5.10` / `v1.5.11`): native (non-OpenAI-compatible) judge providers, multi-judge voting, a cross-process (Kafka) judge queue, real 14B / 27B and Gemini measurements once hardware or keys are available, and evidence-based `TT-001` tuning / `special_casing` promotion once enough sampled, non-seed labels exist.
 - **Stateful Graph Time-Travel & Live Replay**: Full workflow graph checkpointing with isolated sandbox re-execution.

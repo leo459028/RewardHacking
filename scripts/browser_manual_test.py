@@ -886,6 +886,45 @@ def run_manual_test_suite(
         triage_bmr = page.url.split("run=")[1].split("&")[0].split("#")[0]
         print(f"[Scenario 8.7] Benchmark {triage_bmr} measured triage precision@K (rule_only / judge_only / combined); promotion stays manual")
 
+        # Scenario 9 (v1.5.11): judge profiles, external-judge consent, pending sweep, multi-profile benchmark.
+        # No real LLM is called here: only the deterministic profile is exercised.
+        page.goto(f"{base_url}/dashboard/benchmark#judge-profiles")
+        profiles_html = page.inner_html("#judge-profile-table")
+        assert "deterministic" in profiles_html and "default" in profiles_html
+        profiles_json = page.request.get(f"{base_url}/v1/evaluations/judge/profiles").json()
+        assert profiles_json["signal_usage"] == "monitor_only" and all("api_key" not in row for row in profiles_json["profiles"])
+        print(f"[Scenario 9.1] Judge Profiles table lists {len(profiles_json['profiles'])} profile(s); API exposes no keys")
+
+        page.fill('#judge-profiles input[name="tenant_id"]', "consent-qa-tenant")
+        page.check('#judge-profiles input[name="allow_external_judge"]')
+        page.click("#save-judge-consent")
+        page.wait_for_load_state("networkidle")
+        assert "External judge consent for consent-qa-tenant: allowed" in page.content()
+        consent_policy = page.request.get(f"{base_url}/v1/tenants/consent-qa-tenant/evaluation-policy").json()
+        assert consent_policy["allow_external_judge"] is True
+        print("[Scenario 9.2] External judge consent saved for consent-qa-tenant (audited governance event)")
+
+        page.click("#sweep-pending")
+        page.wait_for_load_state("networkidle")
+        assert "stale pending judge triage" in page.content()
+        print("[Scenario 9.3] Pending-triage sweep ran from the Dashboard")
+
+        page.goto(f"{base_url}/dashboard/benchmark")
+        page.select_option("#judge-profiles-select", ["deterministic"])
+        page.click("#run-benchmark")
+        page.wait_for_load_state("networkidle")
+        profile_bench_html = page.content()
+        assert "profiles: deterministic" in profile_bench_html and 'id="triage-profile-deterministic"' in profile_bench_html
+        assert "invalid output" in profile_bench_html and "0E-8" not in profile_bench_html
+        profile_bmr = page.url.split("run=")[1].split("&")[0].split("#")[0]
+        print(f"[Scenario 9.4] Benchmark {profile_bmr} measured the deterministic profile with latency / invalid-output columns")
+
+        page.goto(review_url)
+        assert "<th>Profile</th>" in page.inner_html("#judge-assessment-table")
+        page.goto(f"{base_url}/dashboard/governance")
+        assert 'href="/dashboard/benchmark#external-judge-consent"' in page.content()
+        print("[Scenario 9.5] Review detail shows the assessment profile; Governance links to external-judge consent")
+
         page.goto(f"{base_url}/dashboard/observability")
         obs_html = page.content()
         assert "FinOps" in obs_html
@@ -930,20 +969,20 @@ def run_manual_test_suite(
         assert "evaluation_benchmark_gate" in ops_html
         assert "evaluation_judge_health" in ops_html and "evaluation_sampling_health" in ops_html
         release_ver = page.input_value('input[name="release_version"]')
-        assert release_ver == "v1.5.10"
+        assert release_ver == "v1.5.11"
 
         page.select_option('select[name="evidence_type"]', "safety_regression")
         page.select_option('select[name="status"]', "pass")
         page.fill('input[name="reference_url"]', "docs/manual_test.md")
-        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.5.10")
+        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.5.11")
         page.click('button:has-text("Save Evidence")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
         page.click('button:has-text("Create Release Gate Snapshot")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
-        assert "v1.5.10" in page.content()
-        print("[Scenario 4.3] Operations evidence saved & v1.5.10 Release Gate snapshot created via browser")
+        assert "v1.5.11" in page.content()
+        print("[Scenario 4.3] Operations evidence saved & v1.5.11 Release Gate snapshot created via browser")
 
         # 6. Check all primary navigation tabs for 0E-8 and HTTP 200
         nav_routes = [
