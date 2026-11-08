@@ -1,0 +1,53 @@
+# RewardHacking judge profiles (v1.5.11)
+#
+# Copy to config/judge_profiles.yaml (git-ignored) and select the live-triage profile with
+# EVALUATION_JUDGE_PROFILE=<name>. A judge only orders human review work: it never changes a verdict,
+# a review priority or a review status, in any profile.
+#
+# Never put a key in this file. Reference the environment variable that holds it with api_key_env;
+# a profile containing api_key / token / secret fields is rejected at startup.
+#
+# Built-in profiles that always exist: "deterministic" and "default" (derived from EVALUATION_JUDGE_*).
+
+profiles:
+  # Small local model in LM Studio on the Docker host (Developer tab -> Start Server, port 1234).
+  # Containers reach the host through host.docker.internal, which EVALUATION_JUDGE_INTERNAL_HOSTS treats as internal.
+  - name: local-small
+    provider: openai_compatible
+    base_url: http://host.docker.internal:1234/v1
+    model: qwen3.5-2b
+    structured_output: auto        # tries json_schema, then json_object, then prompt-only JSON
+    timeout_seconds: 90
+    max_input_chars: 8000
+    max_output_tokens: 300
+    execution: background          # outcome submission does not wait for a slow local model
+    pricing_provider: qa_local     # add a zero-cost pricing row for this model
+    strip_reasoning: true          # drop <think>...</think> before parsing
+
+  # Larger local model (14B / 27B) served by Ollama, llama.cpp or vLLM.
+  - name: local-large
+    provider: openai_compatible
+    base_url: http://host.docker.internal:11434/v1
+    model: qwen2.5:14b-instruct
+    structured_output: auto
+    timeout_seconds: 180
+    max_input_chars: 16000
+    max_output_tokens: 400
+    execution: background
+    pricing_provider: qa_local
+
+  # Cloud API through Gemini's OpenAI-compatible endpoint. Requires GEMINI_API_KEY in the environment,
+  # EVALUATION_JUDGE_ALLOW_EXTERNAL=true and the tenant's consent to external judges.
+  - name: gemini-flash
+    provider: openai_compatible
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai
+    model: gemini-3.5-flash
+    api_key_env: GEMINI_API_KEY
+    external: true
+    structured_output: json_schema
+    timeout_seconds: 20
+    max_input_chars: 24000
+    max_output_tokens: 600
+    max_retries: 2
+    execution: inline
+    pricing_provider: google

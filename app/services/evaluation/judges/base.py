@@ -96,6 +96,7 @@ class JudgeOutput:
     output_tokens: int = 0
     latency_ms: int = 0
     error: str = ""
+    profile: str = ""  # v1.5.11 judge profile name ("deterministic", "default", ...)
 
     @property
     def ok(self) -> bool:
@@ -110,6 +111,7 @@ class JudgeOutput:
 class JudgeProvider(Protocol):
     name: str
     model: str
+    profile_label: str
 
     def version(self) -> str: ...
 

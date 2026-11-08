@@ -42,6 +42,10 @@ class DeterministicJudge:
     name = "deterministic"
     model = ""
 
+    def __init__(self, profile_label: str = "deterministic"):
+        # v1.5.11: the profile that selected this judge (e.g. "default"); the version string stays the same.
+        self.profile_label = profile_label or "deterministic"
+
     def version(self) -> str:
         return DETERMINISTIC_VERSION
 
@@ -59,6 +63,7 @@ class DeterministicJudge:
             suspicion=score,
             categories=categories,
             rationale="Deterministic triage: " + "; ".join(parts) + ".",
+            profile=self.profile_label,
         )
 
     async def assess(self, judge_input: JudgeInput) -> JudgeOutput:

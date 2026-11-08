@@ -18,6 +18,7 @@ import httpx
 
 from app.services.evaluation.judges.base import JudgeInput, JudgeOutput
 from app.services.evaluation.judges.parsing import JudgeOutputError, parse_judge_output
+from app.services.evaluation.judges.profiles import JudgeProfile
 from app.services.evaluation.judges.prompt import build_messages, prompt_version
 from app.services.mcp_gateway import is_external_endpoint
 
@@ -36,6 +37,7 @@ class OpenAICompatibleJudge:
         allow_external: bool = False,
         internal_suffixes: list[str] | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        profile: JudgeProfile | None = None,
     ):
         self.base_url = (base_url or "").strip().rstrip("/")
         self.model = (model or "").strip()
@@ -45,9 +47,17 @@ class OpenAICompatibleJudge:
         self.allow_external = bool(allow_external)
         self.internal_suffixes = list(internal_suffixes or [])
         self._transport = transport
+        # v1.5.11: named profiles prefix judge_version; the synthesized legacy ``default`` keeps v1.5.10 strings (D3, D6).
+        self.profile = profile
+        self.profile_label = profile.name if profile is not None else ""
+        self._version_prefix = profile.name if profile is not None and not profile.legacy else ""
+        self.structured_output = profile.structured_output if profile is not None else "json_object"
+        self.max_retries = profile.max_retries if profile is not None else 0
+        self.strip_reasoning = profile.strip_reasoning if profile is not None else True
 
     def version(self) -> str:
-        return f"{self.name}:{self.model or 'unset'}:{prompt_version()}"
+        base = f"{self.name}:{self.model or 'unset'}:{prompt_version()}"
+        return f"{self._version_prefix}:{base}" if self._version_prefix else base
 
     @property
     def is_external(self) -> bool:
@@ -60,6 +70,7 @@ class OpenAICompatibleJudge:
             judge_version=self.version(),
             prompt_version=prompt_version(),
             status=status,
+            profile=self.profile_label,
             **kwargs,
         )
 

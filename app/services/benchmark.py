@@ -480,6 +480,7 @@ async def run_benchmark(
         )
         judge_config = {
             "provider": judge.name,
+            "profile": getattr(judge, "profile_label", ""),
             "model": getattr(judge, "model", ""),
             "judge_version": judge.version(),
             "mode": settings.evaluation_judge_mode,

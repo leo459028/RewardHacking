@@ -3,6 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from functools import lru_cache
 import re
+from typing import Any
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -118,6 +119,13 @@ class Settings(BaseSettings):
     evaluation_sample_random_rate: float = 0.02
     evaluation_sample_random_daily_cap_per_tenant: int = 5
     evaluation_sample_secret: SecretStr = SecretStr("")
+    # v1.5.11 named judge profiles (local and cloud judges are configuration, not code)
+    evaluation_judge_profile: str = "default"
+    evaluation_judge_profiles_file: str = "config/judge_profiles.yaml"
+    evaluation_judge_profiles: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    evaluation_judge_internal_hosts: str = "host.docker.internal"
+    evaluation_judge_background_concurrency: int = 1
+    evaluation_judge_pending_sweep_seconds: int = 600
 
     @model_validator(mode="after")
     def _validate_finops_currency_settings(self) -> Settings:
@@ -219,11 +227,19 @@ class Settings(BaseSettings):
         for name in ("evaluation_sample_min_score", "evaluation_sample_max_share", "evaluation_sample_random_rate"):
             if not 0.0 <= float(getattr(self, name)) <= 1.0:
                 raise ValueError(f"{name.upper()} must be in [0, 1].")
+        self.evaluation_judge_profile = (self.evaluation_judge_profile or "default").strip().lower()
+        for name in ("evaluation_judge_background_concurrency", "evaluation_judge_pending_sweep_seconds"):
+            if int(getattr(self, name)) < 1:
+                raise ValueError(f"{name.upper()} must be >= 1.")
         return self
 
     @property
     def mcp_internal_host_suffix_list(self) -> list[str]:
         return [item.strip().lower() for item in self.mcp_internal_host_suffixes.split(",") if item.strip()]
+
+    @property
+    def judge_internal_host_list(self) -> list[str]:
+        return [item.strip().lower().rstrip(".") for item in self.evaluation_judge_internal_hosts.split(",") if item.strip()]
 
     @property
     def effective_judge_provider(self) -> str:

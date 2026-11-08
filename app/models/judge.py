@@ -26,6 +26,7 @@ class JudgeAssessment(Base):
     benchmark_run_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False, default="")
     sample_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     provider: Mapped[str] = mapped_column(String(32), index=True, nullable=False, default="deterministic")
+    profile: Mapped[str] = mapped_column(String(48), index=True, nullable=False, default="")  # v1.5.11 judge profile name
     model: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     judge_version: Mapped[str] = mapped_column(String(200), index=True, nullable=False, default="")
     prompt_version: Mapped[str] = mapped_column(String(16), nullable=False, default="")

@@ -161,9 +161,14 @@ async def _evaluation_judge_health_check(session: AsyncSession, *, settings: Set
     from app.models.judge import JudgeAssessment
     from app.services.evaluation.judges import get_judge
 
+    from app.services.evaluation.judges.profiles import active_profile_known
+
     judge = get_judge(settings)
     issues: list[str] = []
     status = "pass"
+    if not active_profile_known(settings):
+        status = "fail"
+        issues.append(f"EVALUATION_JUDGE_PROFILE '{settings.evaluation_judge_profile}' is not defined (falling back to deterministic)")
     if settings.evaluation_judge_mode == "off":
         status = "warn"
         issues.append("judge mode is off")
@@ -217,6 +222,9 @@ async def _evaluation_judge_health_check(session: AsyncSession, *, settings: Set
         metadata={
             "advisory": True,
             "mode": settings.evaluation_judge_mode,
+            "profile": getattr(judge, "profile_label", ""),
+            "configured_profile": settings.evaluation_judge_profile,
+            "profile_known": active_profile_known(settings),
             "provider": judge.name,
             "judge_version": judge.version(),
             "status_counts_24h": counts,

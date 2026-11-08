@@ -36,6 +36,7 @@ from app.services.evaluation.judges import JudgeProvider, JudgeResult, assess_wi
 from app.services.evaluation.judges.base import JudgeInput
 from app.services.evaluation.judges.family import same_family
 from app.services.evaluation.judges.inputs import build_judge_input
+from app.services.evaluation.judges.profiles import active_profile_known
 from app.services.evaluation.taxonomy import PRIORITY_RANK
 
 logger = logging.getLogger(__name__)
@@ -215,6 +216,7 @@ def build_assessment(
         benchmark_run_id=benchmark_run_id,
         sample_id=sample_id,
         provider=primary.provider,
+        profile=primary.profile,
         model=primary.model,
         judge_version=primary.judge_version,
         prompt_version=primary.prompt_version,
@@ -352,6 +354,7 @@ def assessment_to_dict(item: JudgeAssessment) -> dict[str, Any]:
         "benchmark_run_id": item.benchmark_run_id,
         "sample_id": item.sample_id,
         "provider": item.provider,
+        "profile": item.profile,
         "model": item.model,
         "judge_version": item.judge_version,
         "prompt_version": item.prompt_version,
@@ -389,6 +392,9 @@ async def judge_status(session: AsyncSession, settings: Settings, *, tenant_id: 
     external = bool(getattr(judge, "is_external", False))
     return {
         "mode": settings.evaluation_judge_mode,
+        "profile": getattr(judge, "profile_label", "") or settings.evaluation_judge_profile,
+        "configured_profile": settings.evaluation_judge_profile,
+        "profile_known": active_profile_known(settings),
         "provider": judge.name,
         "model": getattr(judge, "model", ""),
         "judge_version": judge.version(),
