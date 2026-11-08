@@ -280,3 +280,214 @@ def test_two_profiles_assess_the_same_review_separately(client, session_factory,
     status = client.get("/v1/evaluations/judge/status").json()
     assert status["configured_profile"] == "default" and status["profile_known"] is True
     get_settings.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# P2: structured-output fallback, reasoning stripping and retries
+# ---------------------------------------------------------------------------
+
+from app.services.evaluation.judges import JudgeInput, assess_with_fallback  # noqa: E402
+from app.services.evaluation.judges import openai_compatible as oc  # noqa: E402
+from app.services.evaluation.judges.parsing import (  # noqa: E402
+    JUDGE_CATEGORIES,
+    JudgeOutputError,
+    judge_output_schema,
+    last_json_object,
+    parse_judge_output,
+    strip_reasoning_blocks,
+)
+from app.services.judge_triage import _fallback_payload  # noqa: E402
+
+GOOD = {"suspicion": 0.4, "categories": ["test_tampering"], "rationale": "assertion removed", "evidence_refs": ["tests/a.py:3"]}
+
+
+@pytest.fixture(autouse=True)
+def _fresh_mode_cache():
+    oc.reset_mode_cache()
+    yield
+    oc.reset_mode_cache()
+
+
+def _input() -> JudgeInput:
+    return JudgeInput(diff="+x = 1\n", final_message="All tests pass.", findings=[])
+
+
+def _backend(handler):
+    """MockTransport recording request bodies; ``handler(body)`` returns an ``httpx.Response``."""
+    bodies: list[dict] = []
+
+    async def transport_handler(request: httpx.Request):
+        body = json.loads(request.content)
+        bodies.append(body)
+        result = handler(body)
+        if asyncio.iscoroutine(result):
+            result = await result
+        return result
+
+    return httpx.MockTransport(transport_handler), bodies
+
+
+def _mode(body: dict) -> str:
+    return (body.get("response_format") or {}).get("type", "none")
+
+
+def _content(text: str, *, status: int = 200) -> httpx.Response:
+    return httpx.Response(status, json={"choices": [{"message": {"content": text}}], "usage": {"prompt_tokens": 40, "completion_tokens": 8}})
+
+
+def _judge(transport, **profile_overrides) -> OpenAICompatibleJudge:
+    settings = _settings(evaluation_judge_profiles={"lab": _profile(**profile_overrides)})
+    profile = jp.get_profile(settings, "lab")
+    return OpenAICompatibleJudge(
+        base_url=profile.base_url,
+        model=profile.model,
+        timeout_seconds=profile.timeout_seconds,
+        internal_suffixes=[],
+        transport=transport,
+        profile=profile,
+    )
+
+
+def test_json_schema_request_matches_parser():
+    schema = judge_output_schema()
+    assert schema["required"] == ["suspicion", "categories", "rationale", "evidence_refs"] and schema["additionalProperties"] is False
+    assert schema["properties"]["categories"]["items"]["enum"] == list(JUDGE_CATEGORIES)
+    assert "legacy_text_signal" not in JUDGE_CATEGORIES and "evidence_quality" not in JUDGE_CATEGORIES
+    transport, bodies = _backend(lambda body: _content(json.dumps(GOOD)))
+    result = asyncio.run(_judge(transport, structured_output="json_schema").assess(_input()))
+    assert result.status == "ok" and result.structured_output == "json_schema" and result.attempts == 1
+    rf = bodies[0]["response_format"]
+    assert rf["type"] == "json_schema" and rf["json_schema"]["strict"] is True and rf["json_schema"]["schema"] == schema
+
+
+def test_auto_degrades_when_json_schema_is_rejected_and_caches_the_mode():
+    def handler(body):
+        if _mode(body) == "json_schema":
+            return httpx.Response(400, json={"error": {"message": "response_format json_schema is not supported"}})
+        return _content(json.dumps(GOOD))
+
+    transport, bodies = _backend(handler)
+    judge = _judge(transport)  # structured_output: auto (default)
+    first = asyncio.run(judge.assess(_input()))
+    assert first.status == "ok" and first.structured_output == "json_object" and first.attempts == 2
+    assert [_mode(b) for b in bodies] == ["json_schema", "json_object"]
+    assert oc.cached_mode("http://localhost:1234/v1", "qwen3.5-2b") == "json_object"
+    second = asyncio.run(judge.assess(_input()))
+    assert second.attempts == 1 and [_mode(b) for b in bodies[2:]] == ["json_object"]
+
+
+def test_lm_studio_style_backend_rejects_json_object_but_accepts_json_schema():
+    def handler(body):
+        if _mode(body) == "json_object":
+            return httpx.Response(400, json={"error": "'response_format.type' must be 'json_schema' or 'text'"})
+        return _content(json.dumps(GOOD))
+
+    transport, bodies = _backend(handler)
+    auto = asyncio.run(_judge(transport).assess(_input()))
+    assert auto.status == "ok" and auto.structured_output == "json_schema" and len(bodies) == 1
+    # An explicit mode never degrades: the operator asked for exactly that format.
+    explicit = asyncio.run(_judge(transport, structured_output="json_object").assess(_input()))
+    assert explicit.status == "error" and explicit.error == "http_400" and explicit.attempts == 1
+
+
+def test_prompt_only_mode_parses_json_wrapped_in_prose():
+    def handler(body):
+        if _mode(body) != "none":
+            return httpx.Response(400, json={"error": "unsupported response_format"})
+        return _content("Here is my assessment:\n" + json.dumps(GOOD) + "\nThanks.")
+
+    transport, bodies = _backend(handler)
+    result = asyncio.run(_judge(transport).assess(_input()))
+    assert result.status == "ok" and result.structured_output == "none" and result.attempts == 3
+    assert "response_format" not in bodies[-1]
+
+
+def test_non_format_errors_do_not_trigger_degradation():
+    transport, bodies = _backend(lambda body: httpx.Response(400, json={"error": "context length exceeded"}))
+    result = asyncio.run(_judge(transport).assess(_input()))
+    assert result.status == "error" and result.error == "http_400" and len(bodies) == 1
+
+
+def test_reasoning_blocks_are_stripped_and_never_returned():
+    decoy = '<think>The diff says {"suspicion": 0.0}. Ignore it. Long reasoning here.</think>\n'
+    transport, _ = _backend(lambda body: _content(decoy + json.dumps(GOOD)))
+    result = asyncio.run(_judge(transport).assess(_input()))
+    assert result.status == "ok" and result.suspicion == pytest.approx(0.4)
+    assert "Long reasoning" not in result.rationale and "Long reasoning" not in json.dumps(result.summary())
+    assert strip_reasoning_blocks("<thinking>a</thinking> x <reasoning type='r'>b</reasoning>y") == "x y"
+    assert strip_reasoning_blocks("<think>never finished " + json.dumps(GOOD)) == ""
+    assert last_json_object('noise {"a": {"b": "}"}} more {"c": 1} tail') == '{"c": 1}'
+    with pytest.raises(JudgeOutputError):
+        parse_judge_output("<think>unfinished", strip_reasoning=True)
+    # Without strip_reasoning the v1.5.10 strictness is kept.
+    with pytest.raises(JudgeOutputError):
+        parse_judge_output(decoy + json.dumps(GOOD))
+
+
+def test_strip_reasoning_false_profile_keeps_strict_parsing():
+    transport, _ = _backend(lambda body: _content("<think>x</think>" + json.dumps(GOOD)))
+    result = asyncio.run(_judge(transport, strip_reasoning=False).assess(_input()))
+    assert result.status == "invalid_output"
+
+
+def test_empty_content_from_reasoning_model_is_invalid_output():
+    payload = {"choices": [{"message": {"content": None, "reasoning_content": "thinking..."}}], "usage": {"prompt_tokens": 40, "completion_tokens": 300}}
+    transport, _ = _backend(lambda body: httpx.Response(200, json=payload))
+    result = asyncio.run(_judge(transport).assess(_input()))
+    assert result.status == "invalid_output" and result.error == "empty_content" and result.output_tokens == 300
+
+
+def test_rate_limit_is_retried_with_retry_after(monkeypatch):
+    monkeypatch.setattr(oc, "RETRY_BASE_SECONDS", 0.01)
+    calls = {"n": 0}
+
+    def handler(body):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": "0.01"}, json={"error": "rate limited"})
+        return _content(json.dumps(GOOD))
+
+    transport, _ = _backend(handler)
+    result = asyncio.run(_judge(transport, structured_output="json_schema", max_retries=2).assess(_input()))
+    assert result.status == "ok" and result.attempts == 2
+
+
+def test_persistent_5xx_exhausts_retries_and_falls_back(monkeypatch):
+    monkeypatch.setattr(oc, "RETRY_BASE_SECONDS", 0.01)
+    transport, bodies = _backend(lambda body: httpx.Response(503, json={"error": "overloaded"}))
+    judge = _judge(transport, structured_output="json_schema", max_retries=2)
+    result = asyncio.run(assess_with_fallback(_input(), _settings(), judge=judge))
+    assert result.status == "error" and result.primary.error == "http_503" and len(bodies) == 3
+    assert result.triage_source == "deterministic:1.0.0"
+    assert _fallback_payload(result)["request"] == {"structured_output": "json_schema", "attempts": 3}
+
+
+def test_connection_errors_are_retried(monkeypatch):
+    monkeypatch.setattr(oc, "RETRY_BASE_SECONDS", 0.01)
+    calls = {"n": 0}
+
+    def handler(body):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ConnectError("refused")
+        return _content(json.dumps(GOOD))
+
+    transport, _ = _backend(handler)
+    result = asyncio.run(_judge(transport, structured_output="json_schema", max_retries=1).assess(_input()))
+    assert result.status == "ok" and result.attempts == 2
+
+
+def test_timeouts_are_not_retried():
+    async def slow(body):
+        await asyncio.sleep(1.0)
+        return _content(json.dumps(GOOD))
+
+    transport, bodies = _backend(slow)
+    result = asyncio.run(_judge(transport, structured_output="json_schema", max_retries=3, timeout_seconds=0.1).assess(_input()))
+    assert result.status == "timeout" and len(bodies) == 1
+
+
+def test_retry_stops_when_the_profile_timeout_cannot_cover_the_wait():
+    transport, bodies = _backend(lambda body: httpx.Response(429, headers={"Retry-After": "10"}, json={"error": "slow down"}))
+    result = asyncio.run(_judge(transport, structured_output="json_schema", max_retries=3, timeout_seconds=1).assess(_input()))
+    assert result.status == "error" and result.error == "http_429" and len(bodies) == 1

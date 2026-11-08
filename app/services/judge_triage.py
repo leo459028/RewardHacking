@@ -229,7 +229,7 @@ def build_assessment(
         categories=list(effective.categories),
         evidence_refs=[redact_text(item) for item in effective.evidence_refs],
         rationale=redact_text(effective.rationale)[:1000],
-        fallback=result.fallback.summary() if result.fallback is not None else {},
+        fallback=_fallback_payload(result),
         injection_suspected=result.injection_suspected,
         injection_markers=list(judge_input.injection_markers),
         same_family_warning=family_warning,
@@ -239,6 +239,15 @@ def build_assessment(
         output_tokens=primary.output_tokens,
         latency_ms=primary.latency_ms,
     )
+
+
+def _fallback_payload(result: JudgeResult) -> dict[str, Any]:
+    """Fallback summary plus (v1.5.11) how the primary request was made: format actually used and HTTP attempts."""
+    payload: dict[str, Any] = result.fallback.summary() if result.fallback is not None else {}
+    primary = result.primary
+    if primary.provider != "deterministic" and (primary.structured_output or primary.attempts):
+        payload["request"] = {"structured_output": primary.structured_output, "attempts": primary.attempts}
+    return payload
 
 
 def _apply_to_review(review: EvaluationReview, assessment: JudgeAssessment) -> None:
