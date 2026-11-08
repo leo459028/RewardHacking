@@ -62,6 +62,17 @@ async def trace_id_middleware(request: Request, call_next):
     return response
 
 
+def _safe_validation_errors(errors) -> list:
+    """v1.5.12: never echo the value of a field the schema forbids (e.g. an ``api_key`` sent to a judge profile)."""
+    safe = []
+    for error in errors:
+        item = dict(error)
+        if item.get("type") == "extra_forbidden":
+            item.pop("input", None)
+        safe.append(item)
+    return safe
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     return JSONResponse(
@@ -70,7 +81,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "error": {
                 "code": "validation_error",
                 "message": "Request validation failed.",
-                "details": jsonable_encoder(exc.errors()),
+                "details": jsonable_encoder(_safe_validation_errors(exc.errors())),
             }
         },
     )

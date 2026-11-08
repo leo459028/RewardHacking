@@ -991,3 +991,239 @@ def test_fallback_and_breaker_never_change_verdict_priority_or_status(client, se
         assert body["rule_priority"] == "P0" and body["assessments"][0]["fallback_from"] == "primary-judge"
     assert counts["primary"] == 1  # threshold 1: the second review skipped the dead primary
     get_settings.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# P4: management service and API (D3, D4, D8, D9, D16, D18-D22)
+# ---------------------------------------------------------------------------
+
+from app.services.evaluation.judges.templates import list_templates  # noqa: E402
+from app.services.judge_profiles_admin import dashboard_editing  # noqa: E402
+
+API = "/v1/evaluations/judge"
+LM_CONFIG = {"provider": "openai_compatible", "base_url": "http://host.docker.internal:12339/v1", "execution": "inline", "pricing_provider": "qa_local"}
+
+
+def _use_env(monkeypatch, profiles: dict | None = None, active: str = "default", **extra) -> None:
+    monkeypatch.setenv("EVALUATION_JUDGE_PROFILES", json.dumps(profiles or {}))
+    monkeypatch.setenv("EVALUATION_JUDGE_PROFILES_FILE", "")
+    monkeypatch.setenv("EVALUATION_JUDGE_PROFILE", active)
+    for key, value in extra.items():
+        monkeypatch.setenv(key, value)
+    get_settings.cache_clear()
+
+
+def _good_transport(monkeypatch):
+    transport, calls = _recording(lambda body, n: _content(json.dumps(GOOD)))
+    monkeypatch.setattr(judges_pkg, "_TEST_TRANSPORT", transport)
+    return calls
+
+
+def _row(client, name: str) -> dict:
+    body = client.get(f"{API}/profiles").json()
+    return next(row for row in body["profiles"] if row["name"] == name)
+
+
+def _events(session_factory, event: str) -> list[GovernanceEvent]:
+    return _db(session_factory, lambda s: _all(s, select(GovernanceEvent).where(GovernanceEvent.event_type == f"evaluation.judge_profile.{event}")))
+
+
+def test_templates_api_and_contents(client):
+    body = client.get(f"{API}/templates").json()
+    ids = [item["id"] for item in body["templates"]]
+    assert ids == ["lm-studio", "ollama", "openai", "gemini", "deepseek", "anthropic"] and body["signal_usage"] == "monitor_only"
+    by_id = {item["id"]: item for item in list_templates()}
+    assert by_id["lm-studio"]["config"]["execution"] == "background" and by_id["lm-studio"]["config"]["pricing_provider"] == "qa_local"
+    assert by_id["anthropic"]["config"]["provider"] == "anthropic" and by_id["anthropic"]["config"]["max_output_tokens"] == 4000
+    settings = _settings()
+    for item in list_templates():
+        config = dict(item["config"])
+        assert not set(map(str.lower, config)) & jp.FORBIDDEN_KEYS
+        if item["kind"] == "cloud":
+            assert config["external"] is True and config["max_retries"] == 2 and config["api_key_env"].endswith("_API_KEY")
+        config["model"] = config["model"] or "some-model"
+        assert jp.parse_profile(f"t-{item['id']}", config, source="dashboard", settings=settings).name == f"t-{item['id']}"
+
+
+def test_dashboard_profile_lifecycle_draft_probe_activate_edit(client, session_factory, monkeypatch, activation_gate):
+    _use_env(monkeypatch)
+    calls = _good_transport(monkeypatch)
+    created = client.post(f"{API}/profiles", json={"name": "lm-local", "config": LM_CONFIG})
+    assert created.status_code == 201 and created.json()["draft"] is True and created.json()["config"]["model"] is None
+    draft = _row(client, "lm-local")
+    assert draft["status"] == "draft" and draft["editable"] is True and draft["version"] == 1
+    for path in ("probe", "activate"):
+        refused = client.post(f"{API}/profiles/lm-local/{path}")
+        assert refused.status_code == 409 and refused.json()["error"]["code"] == "judge_profile_not_ready"
+    updated = client.put(f"{API}/profiles/lm-local", json={"version": 1, "config": {**LM_CONFIG, "model": "qwen3.5-2b", "timeout_seconds": ""}})
+    assert updated.status_code == 200 and updated.json()["version"] == 2 and updated.json()["draft"] is False
+    assert updated.json()["config"]["timeout_seconds"] is None  # blank = system default (D18)
+    assert _row(client, "lm-local")["status"] == "untested"
+    not_ready = client.post(f"{API}/profiles/lm-local/activate")
+    assert not_ready.status_code == 409 and [r["code"] for r in not_ready.json()["error"]["reasons"]] == ["not_probed"]
+    probe = client.post(f"{API}/profiles/lm-local/probe")
+    assert probe.status_code == 200 and probe.json()["status"] == "ok" and len(calls) == 1
+    row = _row(client, "lm-local")
+    assert row["status"] == "ready" and row["probe"]["status"] == "ok" and row["readiness"]["ready"] is True
+    assert client.get(f"{API}/status").json()["provider"] == "deterministic"  # tested is not enough: activation is explicit
+    activated = client.post(f"{API}/profiles/lm-local/activate")
+    assert activated.status_code == 200 and activated.json()["resolution"]["source"] == "dashboard"
+    status = client.get(f"{API}/status").json()
+    assert status["profile"] == "lm-local" and status["source"] == "dashboard"
+    assert _row(client, "lm-local")["status"] == "active"
+    # Editing the active profile deactivates it and needs a new test (D20).
+    edited = client.put(f"{API}/profiles/lm-local", json={"version": 2, "config": {**LM_CONFIG, "model": "qwen3.5-9b"}})
+    assert edited.json()["deactivated"] is True and edited.json()["changed_fields"] == ["model"]
+    assert _row(client, "lm-local")["status"] == "needs_reprobe"
+    assert client.get(f"{API}/status").json()["provider"] == "deterministic"
+    names = {event: len(_events(session_factory, event)) for event in ("created", "updated", "probed", "activated", "deactivated")}
+    assert names == {"created": 1, "updated": 2, "probed": 1, "activated": 1, "deactivated": 1}
+    get_settings.cache_clear()
+
+
+def test_only_one_profile_is_active_and_deactivate_returns_to_rules(client, session_factory, monkeypatch, activation_gate):
+    _use_env(monkeypatch)
+    _good_transport(monkeypatch)
+    for name in ("judge-a", "judge-b"):
+        assert client.post(f"{API}/profiles", json={"name": name, "config": {**LM_CONFIG, "model": f"{name}-m"}}).status_code == 201
+        assert client.post(f"{API}/profiles/{name}/probe").json()["status"] == "ok"
+    client.post(f"{API}/profiles/judge-a/activate")
+    client.post(f"{API}/profiles/judge-b/activate")
+    states = _db(session_factory, lambda s: _all(s, select(JudgeProfileState).where(JudgeProfileState.active.is_(True))))
+    assert [row.profile_name for row in states] == ["judge-b"]
+    body = client.post(f"{API}/deactivate").json()
+    assert body["deactivated"] == ["judge-b"] and body["resolution"]["provider"] == "deterministic" and body["note"] == ""
+    # Choosing the rule-based judge explicitly is also an activation.
+    assert client.post(f"{API}/profiles/deterministic/activate").json()["resolution"] == {
+        "profile": "deterministic",
+        "provider": "deterministic",
+        "source": "dashboard",
+        "configured_profile": "default",
+        "notes": {},
+    }
+    get_settings.cache_clear()
+
+
+def test_deactivate_cannot_switch_off_an_environment_profile(client, session_factory, monkeypatch, activation_gate):
+    _use_env(monkeypatch, {"env-judge": _profile()}, "env-judge")
+    _good_transport(monkeypatch)
+    assert client.post(f"{API}/profiles/env-judge/probe").json()["status"] == "ok"
+    body = client.post(f"{API}/deactivate").json()
+    assert body["resolution"]["source"] == "environment" and "EVALUATION_JUDGE_PROFILE" in body["note"]
+    row = _row(client, "env-judge")
+    assert row["status"] == "active" and row["active_source"] == "environment" and row["editable"] is False
+    get_settings.cache_clear()
+
+
+def test_external_activation_lists_every_missing_condition(client, monkeypatch, activation_gate):
+    monkeypatch.delenv("V1512_CLOUD_API_KEY", raising=False)
+    _use_env(monkeypatch, {"cloud": {**CLOUD, "pricing_provider": "custom", "pricing_model": "unpriced"}})
+    refused = client.post(f"{API}/profiles/cloud/activate")
+    codes = [r["code"] for r in refused.json()["error"]["reasons"]]
+    assert refused.status_code == 409 and codes == ["not_probed", "key_missing", "external_not_allowed", "pricing_or_cap_missing"]
+    row = _row(client, "cloud")
+    assert row["key_status"] == {"api_key_env": "V1512_CLOUD_API_KEY", "configured": False, "key_fingerprint": ""}
+    assert [r["code"] for r in row["readiness"]["reasons"]] == codes
+    get_settings.cache_clear()
+
+
+def test_create_validation_and_name_rules(client, monkeypatch):
+    _use_env(monkeypatch, {"env-judge": _profile()})
+    cases = [
+        ({"name": "env-judge", "config": LM_CONFIG}, 409, "judge_profile_name_conflict"),
+        ({"name": "default", "config": LM_CONFIG}, 409, "judge_profile_name_conflict"),
+        ({"name": "deterministic", "config": LM_CONFIG}, 422, "judge_profile_invalid"),
+        ({"name": "Bad Name!", "config": LM_CONFIG}, 422, "judge_profile_invalid"),
+        ({"name": "leak", "config": {**LM_CONFIG, "model": "m", "api_key_env": "DATABASE_URL"}}, 422, "judge_profile_invalid"),
+        ({"name": "plain", "config": {**LM_CONFIG, "model": "m", "base_url": "http://api.example.com/v1"}}, 422, "judge_profile_invalid"),
+        ({"name": "meta", "config": {**LM_CONFIG, "model": "m", "base_url": "https://169.254.169.254/v1"}}, 422, "judge_profile_invalid"),
+        ({"name": "loop", "config": {**LM_CONFIG, "model": "m", "fallback": ["loop"]}}, 422, "judge_profile_invalid"),
+        ({"name": "orphan", "config": {**LM_CONFIG, "model": "m", "fallback": ["missing-one"]}}, 422, "judge_profile_invalid"),
+        ({"name": "secret", "config": {**LM_CONFIG, "api_key": FAKE_KEY}}, 422, "validation_error"),
+        ({"name": "secret2", "config": LM_CONFIG, "token": FAKE_KEY}, 422, "validation_error"),
+    ]
+    for body, status, code in cases:
+        response = client.post(f"{API}/profiles", json=body)
+        assert response.status_code == status, (body, response.text)
+        assert response.json()["error"]["code"] == code
+        assert FAKE_KEY not in response.text
+    plain = client.post(f"{API}/profiles", json={"name": "plain", "config": {**LM_CONFIG, "model": "m", "base_url": "http://api.example.com/v1"}})
+    assert "HTTPS" in plain.json()["error"]["message"]
+    assert client.post(f"{API}/profiles", json={"name": "dup", "config": LM_CONFIG}).status_code == 201
+    assert client.post(f"{API}/profiles", json={"name": "dup", "config": LM_CONFIG}).json()["error"]["code"] == "judge_profile_name_conflict"
+    get_settings.cache_clear()
+
+
+def test_update_delete_conflicts_and_read_only(client, session_factory, monkeypatch, activation_gate):
+    _use_env(monkeypatch, {"env-judge": _profile()})
+    _good_transport(monkeypatch)
+    client.post(f"{API}/profiles", json={"name": "base-judge", "config": {**LM_CONFIG, "model": "m"}})
+    client.post(f"{API}/profiles", json={"name": "top-judge", "config": {**LM_CONFIG, "model": "m2", "fallback": ["base-judge"]}})
+    stale = client.put(f"{API}/profiles/base-judge", json={"version": 9, "config": {**LM_CONFIG, "model": "x"}})
+    assert stale.status_code == 409 and stale.json()["error"]["code"] == "judge_profile_version_conflict"
+    for method in ("put", "delete"):
+        kwargs = {"json": {"version": 1, "config": LM_CONFIG}} if method == "put" else {}
+        read_only = getattr(client, method)(f"{API}/profiles/env-judge", **kwargs)
+        assert read_only.status_code == 409 and read_only.json()["error"]["code"] == "judge_profile_read_only"
+    assert client.delete(f"{API}/profiles/nope").status_code == 404
+    referenced = client.delete(f"{API}/profiles/base-judge")
+    assert referenced.status_code == 409 and referenced.json()["error"]["code"] == "judge_profile_referenced"
+    client.post(f"{API}/profiles/top-judge/probe")
+    client.post(f"{API}/profiles/top-judge/activate")
+    active = client.delete(f"{API}/profiles/top-judge")
+    assert active.status_code == 409 and active.json()["error"]["code"] == "judge_profile_active"
+    client.post(f"{API}/deactivate")
+    assert client.delete(f"{API}/profiles/top-judge?version=2").json()["error"]["code"] == "judge_profile_version_conflict"
+    assert client.delete(f"{API}/profiles/top-judge?version=1").json() == {"name": "top-judge", "deleted": True}
+    assert client.delete(f"{API}/profiles/base-judge").status_code == 200
+    names = {row["name"] for row in client.get(f"{API}/profiles").json()["profiles"]}
+    assert "top-judge" not in names and "base-judge" not in names
+    assert _db(session_factory, lambda s: ja.state_row(s, "top-judge")) is None
+    assert len(_events(session_factory, "deleted")) == 2
+    get_settings.cache_clear()
+
+
+def test_keys_never_appear_in_api_or_audit(client, session_factory, monkeypatch, activation_gate):
+    monkeypatch.setenv("V1512_LAB_API_KEY", FAKE_KEY)
+    _use_env(monkeypatch)
+    calls = _good_transport(monkeypatch)
+    config = {**LM_CONFIG, "model": "m", "api_key_env": "V1512_LAB_API_KEY"}
+    texts = [client.post(f"{API}/profiles", json={"name": "keyed", "config": config}).text]
+    texts.append(client.post(f"{API}/profiles/keyed/probe").text)
+    texts.append(client.post(f"{API}/profiles/keyed/activate").text)
+    texts.append(client.get(f"{API}/profiles").text)
+    texts.append(client.get(f"{API}/status").text)
+    assert calls[0]["headers"]["authorization"] == f"Bearer {FAKE_KEY}"  # sent to the judge only
+    events = _db(session_factory, lambda s: _all(s, select(GovernanceEvent).where(GovernanceEvent.event_type.like("evaluation.judge_profile.%"))))
+    texts.extend(json.dumps(event.details) + event.reason for event in events)
+    rows = _db(session_factory, lambda s: _all(s, select(JudgeProfileConfig)))
+    texts.extend(json.dumps(row.config) for row in rows)
+    assert all(FAKE_KEY not in text for text in texts)
+    row = _row(client, "keyed")
+    assert row["key_status"]["configured"] is True and len(row["key_status"]["key_fingerprint"]) == 6
+    get_settings.cache_clear()
+
+
+def test_profile_writes_need_the_admin_role(client, monkeypatch):
+    from tests.test_v1511_judge_profiles_backends import _auth
+
+    headers = _auth(monkeypatch, "t-1512")
+    body = {"name": "rbac-judge", "config": LM_CONFIG}
+    for role in ("operator", "reviewer", "tenant_admin"):
+        assert client.post(f"{API}/profiles", json=body, headers=headers[role]).status_code == 403
+        assert client.post(f"{API}/deactivate", headers=headers[role]).status_code == 403
+        assert client.post(f"{API}/profiles/deterministic/activate", headers=headers[role]).status_code == 403
+    assert client.get(f"{API}/templates", headers=headers["reviewer"]).status_code == 200
+    assert client.post(f"{API}/profiles", json=body, headers=headers["admin"]).status_code == 201
+    assert client.delete(f"{API}/profiles/rbac-judge", headers=headers["tenant_admin"]).status_code == 403
+    get_settings.cache_clear()
+
+
+def test_dashboard_editing_gate_modes():
+    assert dashboard_editing(_settings())["allowed"] is False  # auto + Basic Auth off
+    assert dashboard_editing(_settings(dashboard_auth_enabled=True))["allowed"] is False  # default admin/admin
+    custom = dashboard_editing(_settings(dashboard_auth_enabled=True, dashboard_username="ops", dashboard_password="s3cret-pass"))
+    assert custom == {"allowed": True, "mode": "auto", "warning": False, "reason": ""}
+    assert dashboard_editing(_settings(evaluation_judge_dashboard_editing="off", dashboard_auth_enabled=True, dashboard_password="x"))["allowed"] is False
+    dev = dashboard_editing(_settings(evaluation_judge_dashboard_editing="insecure_dev"))
+    assert dev["allowed"] is True and dev["warning"] is True

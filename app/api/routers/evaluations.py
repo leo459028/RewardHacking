@@ -20,6 +20,8 @@ from app.schemas.evaluation import (
     EvaluationPolicyUpdateRequest,
     EvaluationPreviewRequest,
     EvaluationPreviewResponse,
+    JudgeProfileCreateRequest,
+    JudgeProfileUpdateRequest,
     OutcomeRecord,
     OutcomeSubmitRequest,
     OutcomeSubmitResponse,
@@ -60,7 +62,18 @@ from app.services.review_queue import (
 )
 from app.services.review_sampling import decision_to_dict, list_decisions, sampling_summary
 from app.services.judge_background import pending_summary, sweep_pending_triage
-from app.services.judge_profiles_admin import JudgeProfileAdminError, ensure_zero_cost_pricing, probe_profile, profiles_view
+from app.services.evaluation.judges.templates import list_templates
+from app.services.judge_profiles_admin import (
+    JudgeProfileAdminError,
+    activate_profile,
+    create_profile,
+    deactivate_profiles,
+    delete_profile,
+    ensure_zero_cost_pricing,
+    probe_profile,
+    profiles_overview,
+    update_profile,
+)
 
 router = APIRouter(prefix="/v1", tags=["evaluation"])
 
@@ -455,19 +468,99 @@ async def get_sampling_decisions(
 
 
 def _profile_admin_error(exc: JudgeProfileAdminError) -> HTTPException:
-    return HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.detail})
+    return HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.detail, **exc.extra})
+
+
+def _profile_actor(auth_context: AuthContext) -> str:
+    """Audit identity for profile changes (never a key value)."""
+    if not auth_context.enabled:
+        return "api"
+    return f"api:{auth_context.key_id or auth_context.role}"
 
 
 @router.get("/evaluations/judge/profiles")
-async def get_judge_profiles(auth_context: AuthContext = Depends(get_auth_context)):
+async def get_judge_profiles(auth_context: AuthContext = Depends(get_auth_context), session: AsyncSession = Depends(get_session)):
     _require_reviewer_view(auth_context)
     settings = get_settings()
+    overview = await profiles_overview(session, settings)
     return {
+        # v1.5.11 key kept: the configured EVALUATION_JUDGE_PROFILE. v1.5.12: ``resolution`` says what is really in use.
         "active_profile": settings.evaluation_judge_profile,
-        "profiles": profiles_view(settings),
+        **overview,
         "safety_statement": JUDGE_SAFETY_STATEMENT,
         "signal_usage": "monitor_only",
     }
+
+
+@router.get("/evaluations/judge/templates")
+async def get_judge_templates(auth_context: AuthContext = Depends(get_auth_context)):
+    _require_reviewer_view(auth_context)
+    return {"templates": list_templates(), "signal_usage": "monitor_only"}
+
+
+@router.post("/evaluations/judge/profiles", status_code=201)
+async def post_judge_profile(
+    body: JudgeProfileCreateRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin")
+    try:
+        result = await create_profile(session, get_settings(), body.name, body.config.model_dump(exclude_unset=True), actor=_profile_actor(auth_context))
+    except JudgeProfileAdminError as exc:
+        raise _profile_admin_error(exc) from exc
+    return {**result, "signal_usage": "monitor_only"}
+
+
+@router.put("/evaluations/judge/profiles/{name}")
+async def put_judge_profile(
+    name: str,
+    body: JudgeProfileUpdateRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin")
+    try:
+        result = await update_profile(
+            session, get_settings(), name, body.config.model_dump(exclude_unset=True), version=body.version, actor=_profile_actor(auth_context)
+        )
+    except JudgeProfileAdminError as exc:
+        raise _profile_admin_error(exc) from exc
+    return {**result, "signal_usage": "monitor_only"}
+
+
+@router.delete("/evaluations/judge/profiles/{name}")
+async def delete_judge_profile(
+    name: str,
+    version: int | None = Query(default=None, ge=1),
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin")
+    try:
+        return await delete_profile(session, get_settings(), name, actor=_profile_actor(auth_context), version=version)
+    except JudgeProfileAdminError as exc:
+        raise _profile_admin_error(exc) from exc
+
+
+@router.post("/evaluations/judge/profiles/{name}/activate")
+async def post_judge_profile_activate(
+    name: str,
+    auth_context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    require_role(auth_context, "admin")
+    try:
+        result = await activate_profile(session, get_settings(), name, actor=_profile_actor(auth_context))
+    except JudgeProfileAdminError as exc:
+        raise _profile_admin_error(exc) from exc
+    return {**result, "signal_usage": "monitor_only"}
+
+
+@router.post("/evaluations/judge/deactivate")
+async def post_judge_deactivate(auth_context: AuthContext = Depends(get_auth_context), session: AsyncSession = Depends(get_session)):
+    require_role(auth_context, "admin")
+    return {**(await deactivate_profiles(session, get_settings(), actor=_profile_actor(auth_context))), "signal_usage": "monitor_only"}
 
 
 @router.post("/evaluations/judge/profiles/{name}/probe")
@@ -479,7 +572,7 @@ async def post_judge_profile_probe(
     require_role(auth_context, "admin")
     tenant_id = (auth_context.tenant_id if auth_context.enabled else "") or "default"
     try:
-        result = await probe_profile(session, get_settings(), name, tenant_id=tenant_id)
+        result = await probe_profile(session, get_settings(), name, tenant_id=tenant_id, actor=_profile_actor(auth_context))
     except JudgeProfileAdminError as exc:
         raise _profile_admin_error(exc) from exc
     return {**result, "signal_usage": "monitor_only"}
