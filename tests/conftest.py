@@ -48,12 +48,20 @@ def client(session_factory):
     app.dependency_overrides[get_session] = override_get_session
     app.dependency_overrides[get_state_store] = lambda: state_store
     app.dependency_overrides[get_event_publisher] = lambda: event_publisher
-    with TestClient(app) as client:
-        client.state_store = state_store
-        client.event_publisher = event_publisher
-        yield client
-    app.dependency_overrides.clear()
-    get_settings.cache_clear()
+    # v1.5.11: background judge triage opens its own sessions. The app lifespan initializes a real Postgres
+    # SessionLocal, so point background work at this test's in-memory database instead.
+    from app.services import judge_background
+
+    judge_background._SESSION_FACTORY_OVERRIDE = session_factory
+    try:
+        with TestClient(app) as client:
+            client.state_store = state_store
+            client.event_publisher = event_publisher
+            yield client
+    finally:
+        judge_background._SESSION_FACTORY_OVERRIDE = None
+        app.dependency_overrides.clear()
+        get_settings.cache_clear()
 
 
 @pytest.fixture

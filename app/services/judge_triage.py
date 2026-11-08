@@ -284,7 +284,8 @@ async def triage_review(
             .limit(1)
         )
         if existing is not None:
-            if review.judge_assessment_id != existing.assessment_id:
+            # Re-apply when the review points elsewhere or still carries a v1.5.11 "pending:" marker.
+            if review.judge_assessment_id != existing.assessment_id or review.triage_source != existing.triage_source:
                 _apply_to_review(review, existing)
                 await session.commit()
             return existing, True

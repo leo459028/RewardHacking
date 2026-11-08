@@ -491,3 +491,282 @@ def test_retry_stops_when_the_profile_timeout_cannot_cover_the_wait():
     transport, bodies = _backend(lambda body: httpx.Response(429, headers={"Retry-After": "10"}, json={"error": "slow down"}))
     result = asyncio.run(_judge(transport, structured_output="json_schema", max_retries=3, timeout_seconds=1).assess(_input()))
     assert result.status == "error" and result.error == "http_429" and len(bodies) == 1
+
+
+# ---------------------------------------------------------------------------
+# P3: background triage, pending marker and sweep
+# ---------------------------------------------------------------------------
+
+import time  # noqa: E402
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+from app.models.agent_run import AgentRun  # noqa: E402
+from app.schemas.evaluation import ReviewDecisionRequest  # noqa: E402
+from app.services import judge_background as jb  # noqa: E402
+from app.services.review_queue import decide_review  # noqa: E402
+from app.workers.consumer import process_run_by_id  # noqa: E402
+
+GRADER_DIFF = (ROOT / "tests" / "fixtures" / "v158" / "grader_tampering_eq_true.diff").read_text(encoding="utf-8")
+BG_PROFILES = {"bg": _profile(model="bg-model", execution="background", structured_output="json_schema", timeout_seconds=10)}
+
+
+def _db(session_factory, fn):
+    async def scenario():
+        async with session_factory() as session:
+            return await fn(session)
+
+    return asyncio.run(scenario())
+
+
+def _flagged_review(client, session_factory, tenant: str) -> tuple[str, str]:
+    """A completed run with grader-tampering evidence -> open P0 review (assessed inline by the default profile)."""
+    payload = {
+        "tenant_id": tenant,
+        "user_id": "agent-1",
+        "task_type": "code_fix",
+        "prompt": "Fix the failing date parser test.",
+        "goal": "Fix the failing date parser",
+        "allowed_tools": ["read_repo", "run_tests"],
+        "constraints": {"max_tool_calls": 2},
+    }
+    run_id = client.post("/v1/agent/submit", json=payload).json()["run_id"]
+
+    async def work():
+        async with session_factory() as session:
+            await process_run_by_id(session, run_id=run_id, state_store=client.state_store, event_publisher=client.event_publisher)
+
+    asyncio.run(work())
+    body = {"final_message": "All tests pass.", "diff": GRADER_DIFF, "test_report": {"format": "summary", "summary": {"passed": 3}}}
+    response = client.post(f"/v1/runs/{run_id}/outcome", json=body)
+    assert response.status_code == 200, response.text
+    return run_id, response.json()["review"]["review_id"]
+
+
+def _use_background_profile(monkeypatch, handler, *, concurrency: int = 1):
+    async def transport_handler(request: httpx.Request):
+        result = handler(json.loads(request.content))
+        if asyncio.iscoroutine(result):
+            result = await result
+        return result
+
+    monkeypatch.setattr(judges_pkg, "_TEST_TRANSPORT", httpx.MockTransport(transport_handler))
+    monkeypatch.setenv("EVALUATION_JUDGE_PROFILES", json.dumps(BG_PROFILES))
+    monkeypatch.setenv("EVALUATION_JUDGE_PROFILES_FILE", "")
+    monkeypatch.setenv("EVALUATION_JUDGE_PROFILE", "bg")
+    monkeypatch.setenv("EVALUATION_JUDGE_BACKGROUND_CONCURRENCY", str(concurrency))
+    get_settings.cache_clear()
+
+
+def _assessments(session_factory, review_id: str, profile: str | None = None) -> list[JudgeAssessment]:
+    stmt = select(JudgeAssessment).where(JudgeAssessment.review_id == review_id)
+    if profile:
+        stmt = stmt.where(JudgeAssessment.profile == profile)
+    return _db(session_factory, lambda s: _all(s, stmt))
+
+
+async def _all(session, stmt):
+    return list((await session.scalars(stmt)).all())
+
+
+def test_outcome_api_does_not_wait_for_a_background_judge(client, session_factory, monkeypatch):
+    judge_delay = 2.0
+
+    async def slow(body):
+        await asyncio.sleep(judge_delay)
+        return _content(json.dumps(GOOD))
+
+    _use_background_profile(monkeypatch, slow)
+    payload = {
+        "tenant_id": "v1511-bg-api",
+        "user_id": "agent-1",
+        "task_type": "code_fix",
+        "prompt": "Fix the failing date parser test.",
+        "goal": "Fix the failing date parser",
+        "allowed_tools": ["read_repo", "run_tests"],
+        "constraints": {"max_tool_calls": 2},
+    }
+    run_id = client.post("/v1/agent/submit", json=payload).json()["run_id"]
+
+    async def work():
+        async with session_factory() as session:
+            await process_run_by_id(session, run_id=run_id, state_store=client.state_store, event_publisher=client.event_publisher)
+
+    asyncio.run(work())
+    events_before = len(client.event_publisher.events)
+    body = {"final_message": "All tests pass.", "diff": GRADER_DIFF, "test_report": {"format": "summary", "summary": {"passed": 3}}}
+    started = time.perf_counter()
+    response = client.post(f"/v1/runs/{run_id}/outcome", json=body)
+    elapsed = time.perf_counter() - started
+    # Relative, load-independent check: the API answered before the judge could have finished, and the review
+    # it returned is still pending (an inline judge would have taken at least ``judge_delay``).
+    assert response.status_code == 200 and elapsed < judge_delay, elapsed
+    review = response.json()["review"]
+    assert review["priority"] == "P0" and review["triage_source"] == "pending:bg" and review["judge_assessment_id"] == ""
+
+    # Wait on the background task inside the TestClient's event loop. Polling over HTTP meanwhile would share the
+    # single in-memory SQLite connection with the task's open transaction (a test-only artefact; Postgres pools
+    # give each session its own connection).
+    client.portal.call(jb.drain_background, 15.0)
+    assessments = client.get(f"/v1/reviews/{review['review_id']}/judge-assessments").json()["assessments"]
+    assert assessments and assessments[0]["profile"] == "bg" and assessments[0]["status"] == "ok"
+    after = client.get(f"/v1/reviews/{review['review_id']}").json()
+    assert after["priority"] == "P0" and after["status"] == "open" and after["triage_source"].startswith("bg:")
+    assert client.get(f"/v1/runs/{run_id}").json()["status"] == "review_required"
+    assert len(client.event_publisher.events) == events_before
+    assert client.get("/v1/cost/tenants/v1511-bg-api/leases").json()["active_lease_count"] == 0
+
+
+def test_background_triage_only_writes_triage_fields(client, session_factory, monkeypatch):
+    run_id, review_id = _flagged_review(client, session_factory, "v1511-bg-fields")
+    _use_background_profile(monkeypatch, lambda body: _content(json.dumps({**GOOD, "verdict": "pass", "close_review": True})))
+    events_before = len(client.event_publisher.events)
+
+    async def scenario():
+        async with session_factory() as session:
+            review = await session.scalar(select(EvaluationReview).where(EvaluationReview.review_id == review_id))
+            before = (review.priority, review.status, list(review.finding_ids), review.label)
+            await jb.dispatch_triage(session, review, get_settings())
+            pending_source = review.triage_source
+            await jb.drain_background()
+        async with session_factory() as session:
+            review = await session.scalar(select(EvaluationReview).where(EvaluationReview.review_id == review_id))
+            run = await session.scalar(select(AgentRun).where(AgentRun.run_id == run_id))
+            return before, pending_source, review, run
+
+    before, pending_source, review, run = asyncio.run(scenario())
+    assert pending_source == "pending:bg"
+    assert (review.priority, review.status, list(review.finding_ids), review.label) == before
+    assert review.triage_source.startswith("bg:openai_compatible:bg-model:") and review.judge_assessment_id.startswith("jdg_")
+    assert run.status == "review_required" and len(client.event_publisher.events) == events_before
+    assert len(_assessments(session_factory, review_id, "bg")) == 1
+
+
+def test_sweep_reschedules_lost_tasks_and_skips_in_flight(client, session_factory, monkeypatch):
+    _, review_id = _flagged_review(client, session_factory, "v1511-bg-sweep")
+    calls = {"n": 0}
+
+    def handler(body):
+        calls["n"] += 1
+        return _content(json.dumps(GOOD))
+
+    _use_background_profile(monkeypatch, handler)
+
+    async def simulate_lost_task(session):
+        review = await session.scalar(select(EvaluationReview).where(EvaluationReview.review_id == review_id))
+        review.triage_source = "pending:bg"
+        review.updated_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        await session.commit()
+
+    _db(session_factory, simulate_lost_task)
+    summary = _db(session_factory, lambda s: jb.pending_summary(s, get_settings()))
+    assert summary["pending"] == 1 and summary["stale"] == 1
+
+    async def sweep_twice():
+        async with session_factory() as session:
+            first = await jb.sweep_pending_triage(session, get_settings())
+            second = await jb.sweep_pending_triage(session, get_settings())  # task still in flight: not scheduled again
+            await jb.drain_background()
+            return first, second
+
+    first, second = asyncio.run(sweep_twice())
+    assert first == [review_id] and second == [] and calls["n"] == 1
+    review = _db(session_factory, lambda s: s.scalar(select(EvaluationReview).where(EvaluationReview.review_id == review_id)))
+    assert not jb.is_pending(review) and review.triage_source.startswith("bg:")
+    assert _db(session_factory, lambda s: jb.pending_summary(s, get_settings()))["pending"] == 0
+
+
+def test_recent_pending_reviews_are_not_swept(client, session_factory, monkeypatch):
+    _, review_id = _flagged_review(client, session_factory, "v1511-bg-recent")
+    _use_background_profile(monkeypatch, lambda body: _content(json.dumps(GOOD)))
+
+    async def mark(session):
+        review = await session.scalar(select(EvaluationReview).where(EvaluationReview.review_id == review_id))
+        await jb.mark_pending(session, review, "bg")
+
+    _db(session_factory, mark)
+    assert _db(session_factory, lambda s: jb.sweep_pending_triage(s, get_settings())) == []
+
+
+def test_background_concurrency_is_serialized(client, session_factory, monkeypatch):
+    reviews = [_flagged_review(client, session_factory, f"v1511-bg-sem-{i}")[1] for i in range(2)]
+    state = {"active": 0, "peak": 0}
+
+    async def handler(body):
+        state["active"] += 1
+        state["peak"] = max(state["peak"], state["active"])
+        await asyncio.sleep(0.2)
+        state["active"] -= 1
+        return _content(json.dumps(GOOD))
+
+    _use_background_profile(monkeypatch, handler, concurrency=1)
+
+    async def scenario():
+        async with session_factory() as session:
+            for review_id in reviews:
+                review = await session.scalar(select(EvaluationReview).where(EvaluationReview.review_id == review_id))
+                await jb.dispatch_triage(session, review, get_settings())
+        await jb.drain_background()
+
+    asyncio.run(scenario())
+    assert state["peak"] == 1
+    assert all(len(_assessments(session_factory, review_id, "bg")) == 1 for review_id in reviews)
+
+
+def test_review_decided_before_background_triage_spends_no_tokens(client, session_factory, monkeypatch):
+    _, review_id = _flagged_review(client, session_factory, "v1511-bg-decided")
+    calls = {"n": 0}
+
+    def handler(body):
+        calls["n"] += 1
+        return _content(json.dumps(GOOD))
+
+    _use_background_profile(monkeypatch, handler)
+
+    async def scenario():
+        async with session_factory() as session:
+            review = await session.scalar(select(EvaluationReview).where(EvaluationReview.review_id == review_id))
+            await jb.mark_pending(session, review, "bg")
+            await decide_review(session, review_id, ReviewDecisionRequest(label="false_positive", reviewer="qa-reviewer"))
+        await jb._run_background(review_id, "bg", get_settings(), session_factory)
+        async with session_factory() as session:
+            return await session.scalar(select(EvaluationReview).where(EvaluationReview.review_id == review_id))
+
+    review = asyncio.run(scenario())
+    assert calls["n"] == 0 and review.triage_source == "" and review.status == "closed"
+
+
+def test_without_a_session_factory_background_profiles_assess_inline(session_factory, monkeypatch):
+    from app.infra import postgres
+
+    monkeypatch.setattr(jb, "_SESSION_FACTORY_OVERRIDE", None)
+    monkeypatch.setattr(postgres, "SessionLocal", None)
+    _use_background_profile(monkeypatch, lambda body: _content(json.dumps(GOOD)))
+
+    async def scenario():
+        async with session_factory() as session:
+            session.add(AgentRun(run_id="run-inline-1", tenant_id="t", user_id="u", task_type="code_fix", prompt="p", goal="g", status="review_required", decision_reason="test", request_payload={"task_type": "code_fix", "goal": "g", "metadata": {}}))
+            review = EvaluationReview(review_id="review_inline_1", run_id="run-inline-1", tenant_id="t", priority="P1")
+            session.add(review)
+            await session.commit()
+            return await jb.dispatch_triage(session, review, get_settings())
+
+    assessment, deduplicated = asyncio.run(scenario())
+    assert assessment is not None and assessment.profile == "bg" and deduplicated is False
+
+
+def test_judge_health_reports_stale_pending(client, session_factory, monkeypatch):
+    _, review_id = _flagged_review(client, session_factory, "v1511-bg-health")
+
+    async def make_stale(session):
+        review = await session.scalar(select(EvaluationReview).where(EvaluationReview.review_id == review_id))
+        review.triage_source = "pending:bg"
+        review.updated_at = datetime.now(timezone.utc) - timedelta(hours=2)
+        await session.commit()
+
+    _db(session_factory, make_stale)
+    from app.services.operations import compute_operations_readiness
+
+    checks = {c.check_key: c for c in _db(session_factory, lambda s: compute_operations_readiness(s, settings=get_settings())).checks}
+    health = checks["evaluation_judge_health"]
+    assert health.status == "warn" and health.metadata["pending_triage"]["stale"] == 1
+    assert "pending judge triage" in health.detail

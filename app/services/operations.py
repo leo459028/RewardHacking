@@ -205,6 +205,15 @@ async def _evaluation_judge_health_check(session: AsyncSession, *, settings: Set
         issues.append(f"{same_family} assessments used a judge from the monitored agent's model family")
     if settings.judge_uses_legacy_alias:
         issues.append("LLM_JUDGE_ENABLED is deprecated; set EVALUATION_JUDGE_PROVIDER")
+    from app.services.judge_background import pending_summary
+
+    pending = await pending_summary(session, settings, now=now)
+    if pending["stale"]:
+        status = "warn" if status == "pass" else status
+        issues.append(
+            f"{pending['stale']} review(s) pending judge triage longer than {int(pending['sweep_threshold_seconds'])}s "
+            "(run POST /v1/evaluations/judge/sweep)"
+        )
     latest = None
     for candidate in (await session.scalars(select(BenchmarkRun).order_by(BenchmarkRun.id.desc()).limit(20))).all():
         if (candidate.metrics or {}).get("triage"):
@@ -235,6 +244,7 @@ async def _evaluation_judge_health_check(session: AsyncSession, *, settings: Set
             "delta_vs_rule_only": triage.get("delta_vs_rule_only", {}),
             "promotion_criteria_met": triage.get("promotion_criteria_met"),
             "promotion_blockers": triage.get("promotion_blockers", []),
+            "pending_triage": pending,
             "used_for_verdict": False,
         },
     )
