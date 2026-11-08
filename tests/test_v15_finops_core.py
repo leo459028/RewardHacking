@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import contextmanager
 from decimal import Decimal
 
@@ -186,22 +187,40 @@ def test_budget_policy_records_violation_for_over_budget_run(monkeypatch, sessio
                 "actions": ["record_violation", "warn"],
             },
         )
-        assert budget.status_code == 200
+        assert budget.status_code == 200, budget.text
 
         submit = client.post(
             "/v1/agent/submit-with-details",
             headers={"X-API-Key": "admin-key", "X-Trace-Id": "trace-v15-budget"},
             json=low_risk_payload,
         )
-        assert submit.status_code == 200
+        assert submit.status_code == 200, submit.text
         run_id = submit.json()["response"]["run_id"]
 
         violations = client.get("/v1/budget-violations", headers={"X-API-Key": "admin-key"})
-        assert violations.status_code == 200
+        assert violations.status_code == 200, violations.text
         body = violations.json()
-        assert body[0]["run_id"] == run_id
-        assert body[0]["violation_type"] == "run_budget_exceeded"
-        assert body[0]["actual_amount"] > body[0]["limit_amount"]
+
+        def diagnostics() -> str:
+            # Intermittent failure seen once in ~5 full-suite runs (v1.5.12 P7): dump the state it depends on.
+            headers = {"X-API-Key": "admin-key"}
+            return json.dumps(
+                {
+                    "run_id": run_id,
+                    "submit": submit.json(),
+                    "budget": budget.json(),
+                    "violations": body,
+                    "usage_events": client.get(f"/v1/usage-events/runs/{run_id}", headers=headers).json(),
+                    "run_cost": client.get(f"/v1/cost/runs/{run_id}", headers=headers).json(),
+                },
+                default=str,
+                ensure_ascii=False,
+            )[:12000]
+
+        assert body, diagnostics()
+        assert body[0]["run_id"] == run_id, diagnostics()
+        assert body[0]["violation_type"] == "run_budget_exceeded", diagnostics()
+        assert body[0]["actual_amount"] > body[0]["limit_amount"], diagnostics()
 
 
 def test_replay_and_resume_create_linked_usage_events(monkeypatch, session_factory, low_risk_payload):
