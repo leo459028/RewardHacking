@@ -10,6 +10,15 @@ These specifications apply across the entire repository. Unless a subdirectory p
 
 ---
 
+## Session Start: Read the Handoff File First
+
+- **At the start of every session (new or resumed), read `docs/handoff.md` before anything else**, if it exists. It holds the current state, next steps, local environment notes and known pitfalls, so a session does not need to re-read the codebase to orient itself. It is a local, git-ignored working file (Traditional Chinese, like `docs/plan/*.md`); a fresh clone will not have it.
+- Then verify it against git (`git status`, `git log --oneline -3`, `git branch --show-current`). If they disagree, git wins: continue from the real state and correct the handoff.
+- **Keep it current**: update it after each phase commit, before ending a session, and whenever the state changes (push, PR, merge, new version). Keep it short (about 100 lines): current state, next steps and pitfalls only; details belong in the version plan and `docs/test_report.md`.
+- **Never stage or commit it** (`docs/handoff.md` is listed in `.gitignore`).
+
+---
+
 ## 0. Codebase Quick Map & Fast-Iteration Reference
 
 To minimize exploratory file reads and maximize iteration speed and model quota efficiency, use this map to locate core modules immediately:
@@ -162,7 +171,7 @@ pytest tests/test_v15x_<new_feature>.py -q -W error::DeprecationWarning
   3. If the fast-forward fails (local `main` has diverged), stop and report; never `reset`, `rebase` or force anything to make it succeed.
   4. Do not delete the release branch (local or remote) unless the user asks.
   5. Report the merge commit and confirm `main` matches `origin/main`.
-- **Never Upload `docs/plan/*.md`**: Ensure `docs/plan/` and `docs/plan/*.md` remain in `.gitignore` and are never staged (`git add`) or committed to GitHub.
+- **Never Upload `docs/plan/*.md` or `docs/handoff.md`**: Ensure `docs/plan/`, `docs/plan/*.md` and `docs/handoff.md` remain in `.gitignore` and are never staged (`git add`) or committed to GitHub.
 - **Pre-Commit Disclosure**: State clearly which files will be staged and verify that unrelated changes are not commingled.
 - **Protect Working Tree**: If the working tree contains pre-existing user changes, preserve them untouched.
 
