@@ -193,7 +193,7 @@ async def readiness(
 
 async def audit(session: AsyncSession, *, event: str, profile: str, actor: str, decision: str, details: dict[str, Any]) -> None:
     """GovernanceEvent ``evaluation.judge_profile.<event>``. Callers pass names and fingerprints only, never a key."""
-    from app.services.audit_log import persist_governance_event
+    from app.services.governance_audit import persist_governance_event
 
     await persist_governance_event(
         session,

@@ -145,7 +145,7 @@ async def _record_output_usage(
     if not (primary.input_tokens or primary.output_tokens):
         return ""
     from app.schemas.finops import UsageEventCreateRequest
-    from app.services.finops import record_usage_event
+    from app.services.finops.ledger import record_usage_event
 
     status = {"ok": "success", "timeout": "timeout"}.get(primary.status, "failed")
     # v1.5.11 (D13): attribute cost to the profile's real provider / model so catalog prices match

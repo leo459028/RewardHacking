@@ -1,0 +1,1523 @@
+{
+ "DELETE /v1/evaluations/judge/profiles/{name}": {
+  "params": [
+   "header:X-API-Key",
+   "path:name",
+   "query:version"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "DELETE /v1/pricing/{pricing_id}": {
+  "params": [
+   "header:X-API-Key",
+   "path:pricing_id"
+  ],
+  "request": "",
+  "response_200": "0ac03f03994d3816"
+ },
+ "GET /dashboard": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/admin/finops/budgets": {
+  "params": [
+   "query:active_only",
+   "query:tenant_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/admin/finops/pricing": {
+  "params": [
+   "query:active_only",
+   "query:model",
+   "query:pricing_mode",
+   "query:provider",
+   "query:resource_type",
+   "query:scope_type",
+   "query:token_type"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/admin/finops/pricing/import": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/admin/finops/pricing/sources": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/admin/finops/pricing/{pricing_id}": {
+  "params": [
+   "path:pricing_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/approvals": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/benchmark": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/control-plane": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/costs": {
+  "params": [
+   "query:cost_center",
+   "query:mcp_server_id",
+   "query:project_id",
+   "query:resolution_status",
+   "query:tenant_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/costs/export": {
+  "params": [
+   "query:cost_center",
+   "query:cost_type",
+   "query:end_date",
+   "query:format",
+   "query:mcp_server_id",
+   "query:project_id",
+   "query:provider",
+   "query:settled_only",
+   "query:start_date",
+   "query:tenant_id"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /dashboard/governance": {
+  "params": [
+   "query:tenant_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/honeypots/{probe_id}/package": {
+  "params": [
+   "path:probe_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/judge-profiles": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/observability": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/operations": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/playground": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/reviews": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/reviews/{review_id}": {
+  "params": [
+   "path:review_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/runs": {
+  "params": [
+   "query:status",
+   "query:task_type",
+   "query:tenant_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/runs/{run_id}": {
+  "params": [
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /dashboard/worker": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "GET /v1/admin/finops/pricing": {
+  "params": [
+   "header:X-API-Key",
+   "query:active_only",
+   "query:model",
+   "query:pricing_mode",
+   "query:provider",
+   "query:resource_type",
+   "query:scope_type",
+   "query:token_type"
+  ],
+  "request": "",
+  "response_200": "48cdbe7bff420c7b"
+ },
+ "GET /v1/admin/finops/pricing/changes": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "0940fbe95dc5fa96"
+ },
+ "GET /v1/admin/finops/pricing/imports": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "bdff567b922f4ddb"
+ },
+ "GET /v1/admin/finops/pricing/imports/{import_batch_id}": {
+  "params": [
+   "header:X-API-Key",
+   "path:import_batch_id"
+  ],
+  "request": "",
+  "response_200": "5ea1dd7c4015316b"
+ },
+ "GET /v1/admin/finops/pricing/sources": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "2dcc6b7ca9649924"
+ },
+ "GET /v1/admin/finops/pricing/{pricing_id}": {
+  "params": [
+   "header:X-API-Key",
+   "path:pricing_id"
+  ],
+  "request": "",
+  "response_200": "0ac03f03994d3816"
+ },
+ "GET /v1/approvals": {
+  "params": [
+   "header:X-API-Key",
+   "query:expired",
+   "query:reviewer",
+   "query:status",
+   "query:tenant_id"
+  ],
+  "request": "",
+  "response_200": "242e561cb001dd70"
+ },
+ "GET /v1/benchmark/runs": {
+  "params": [
+   "header:X-API-Key",
+   "query:limit",
+   "query:tenant_id"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/benchmark/runs/{benchmark_run_id}": {
+  "params": [
+   "header:X-API-Key",
+   "path:benchmark_run_id"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/benchmark/runs/{benchmark_run_id}/export": {
+  "params": [
+   "header:X-API-Key",
+   "path:benchmark_run_id",
+   "query:format"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/benchmark/samples": {
+  "params": [
+   "header:X-API-Key",
+   "query:category",
+   "query:corpus",
+   "query:include_evidence",
+   "query:label",
+   "query:limit",
+   "query:source",
+   "query:split",
+   "query:status",
+   "query:tenant_id"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/benchmark/samples/{sample_id}": {
+  "params": [
+   "header:X-API-Key",
+   "path:sample_id"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/budget-violations": {
+  "params": [
+   "header:X-API-Key",
+   "query:limit",
+   "query:resolution_status",
+   "query:run_id",
+   "query:tenant_id"
+  ],
+  "request": "",
+  "response_200": "170ab7f2119a5e99"
+ },
+ "GET /v1/budget-violations/{violation_id}": {
+  "params": [
+   "header:X-API-Key",
+   "path:violation_id"
+  ],
+  "request": "",
+  "response_200": "8453e5c098a2c7ad"
+ },
+ "GET /v1/budgets": {
+  "params": [
+   "header:X-API-Key",
+   "query:active_only",
+   "query:tenant_id"
+  ],
+  "request": "",
+  "response_200": "582276a07d5c2430"
+ },
+ "GET /v1/budgets/{budget_id}": {
+  "params": [
+   "header:X-API-Key",
+   "path:budget_id"
+  ],
+  "request": "",
+  "response_200": "38e6de1b73d79dc4"
+ },
+ "GET /v1/control-plane/breakers": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "0699c9a3302ddc8d"
+ },
+ "GET /v1/control-plane/mcp-servers": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "2dade77e14391832"
+ },
+ "GET /v1/control-plane/tools": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "69e62d6022a4c3c4"
+ },
+ "GET /v1/control-plane/workflows": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "85b318230311498f"
+ },
+ "GET /v1/cost/models": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/cost/runs/{run_id}": {
+  "params": [
+   "header:X-API-Key",
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "0f7d8a2009ebe16e"
+ },
+ "GET /v1/cost/tenants/{tenant_id}": {
+  "params": [
+   "header:X-API-Key",
+   "path:tenant_id",
+   "query:cost_center",
+   "query:mcp_server_id",
+   "query:project_id"
+  ],
+  "request": "",
+  "response_200": "39eaccb7ed170921"
+ },
+ "GET /v1/cost/tenants/{tenant_id}/export": {
+  "params": [
+   "header:X-API-Key",
+   "path:tenant_id",
+   "query:cost_center",
+   "query:cost_type",
+   "query:end_date",
+   "query:format",
+   "query:limit",
+   "query:mcp_server_id",
+   "query:project_id",
+   "query:provider",
+   "query:settled_only",
+   "query:start_date"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/cost/tenants/{tenant_id}/forecast": {
+  "params": [
+   "header:X-API-Key",
+   "path:tenant_id",
+   "query:project_id",
+   "query:window_hours"
+  ],
+  "request": "",
+  "response_200": "1ebd5e7cbf167264"
+ },
+ "GET /v1/cost/tenants/{tenant_id}/leases": {
+  "params": [
+   "header:X-API-Key",
+   "path:tenant_id"
+  ],
+  "request": "",
+  "response_200": "b4a2c6e6c882563a"
+ },
+ "GET /v1/cost/workflows/{workflow_id}": {
+  "params": [
+   "header:X-API-Key",
+   "path:workflow_id"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/dashboard/summary": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "9e82b1cc53102d47"
+ },
+ "GET /v1/evaluations": {
+  "params": [
+   "header:X-API-Key",
+   "query:task_type",
+   "query:tenant_id",
+   "query:verdict"
+  ],
+  "request": "",
+  "response_200": "ef85fb4adafb5977"
+ },
+ "GET /v1/evaluations/cheat-rates": {
+  "params": [
+   "header:X-API-Key",
+   "query:group_by",
+   "query:tenant_id",
+   "query:window_days"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/evaluations/judge/profiles": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/evaluations/judge/status": {
+  "params": [
+   "header:X-API-Key",
+   "query:tenant_id"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/evaluations/judge/templates": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/evaluations/sampling/decisions": {
+  "params": [
+   "header:X-API-Key",
+   "query:decision",
+   "query:limit",
+   "query:slice",
+   "query:tenant_id"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/evaluations/sampling/summary": {
+  "params": [
+   "header:X-API-Key",
+   "query:tenant_id",
+   "query:window_days"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/governance/events": {
+  "params": [
+   "header:X-API-Key",
+   "query:event_type",
+   "query:tenant_id"
+  ],
+  "request": "",
+  "response_200": "27af918c34668fcb"
+ },
+ "GET /v1/governance/summary": {
+  "params": [
+   "header:X-API-Key",
+   "query:tenant_id"
+  ],
+  "request": "",
+  "response_200": "7ac0f03bb664a04e"
+ },
+ "GET /v1/healthz": {
+  "params": [],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/honeypots": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/honeypots/results": {
+  "params": [
+   "header:X-API-Key",
+   "query:agent_id",
+   "query:limit",
+   "query:model_name",
+   "query:probe_id",
+   "query:tenant_id"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/honeypots/{probe_id}/package": {
+  "params": [
+   "header:X-API-Key",
+   "path:probe_id"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/incidents": {
+  "params": [
+   "header:X-API-Key",
+   "query:limit",
+   "query:offset",
+   "query:severity",
+   "query:tenant_id"
+  ],
+  "request": "",
+  "response_200": "900c7ab628006a9e"
+ },
+ "GET /v1/metrics": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/observability/summary": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/operations/evidence": {
+  "params": [
+   "header:X-API-Key",
+   "query:evidence_type"
+  ],
+  "request": "",
+  "response_200": "e2e8bc292af40a1d"
+ },
+ "GET /v1/operations/readiness": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "c045807a7763636d"
+ },
+ "GET /v1/operations/release-gates": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "c5054befa6379e16"
+ },
+ "GET /v1/operations/release-gates/{gate_id}": {
+  "params": [
+   "header:X-API-Key",
+   "path:gate_id"
+  ],
+  "request": "",
+  "response_200": "7ce069fb4d6e2077"
+ },
+ "GET /v1/pricing": {
+  "params": [
+   "header:X-API-Key",
+   "query:active_only"
+  ],
+  "request": "",
+  "response_200": "93fefd94f70cb051"
+ },
+ "GET /v1/readyz": {
+  "params": [],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/reviews": {
+  "params": [
+   "header:X-API-Key",
+   "query:category",
+   "query:limit",
+   "query:order",
+   "query:priority",
+   "query:run_id",
+   "query:status",
+   "query:tenant_id"
+  ],
+  "request": "",
+  "response_200": "31b9a49e0ccb7880"
+ },
+ "GET /v1/reviews/{review_id}": {
+  "params": [
+   "header:X-API-Key",
+   "path:review_id"
+  ],
+  "request": "",
+  "response_200": "6ce5fd2b93d581dc"
+ },
+ "GET /v1/reviews/{review_id}/judge-assessments": {
+  "params": [
+   "header:X-API-Key",
+   "path:review_id"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/runs": {
+  "params": [
+   "header:X-API-Key",
+   "query:limit",
+   "query:offset",
+   "query:status",
+   "query:task_type",
+   "query:tenant_id"
+  ],
+  "request": "",
+  "response_200": "38d4fe023687d9c2"
+ },
+ "GET /v1/runs/{run_id}": {
+  "params": [
+   "header:X-API-Key",
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "f736bdf7689a06dd"
+ },
+ "GET /v1/runs/{run_id}/checkpoints": {
+  "params": [
+   "header:X-API-Key",
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "2ab36326d4296e36"
+ },
+ "GET /v1/runs/{run_id}/execution-plan": {
+  "params": [
+   "header:X-API-Key",
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "8e5dd58eda23c39e"
+ },
+ "GET /v1/runs/{run_id}/incidents": {
+  "params": [
+   "header:X-API-Key",
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "578182d248654d1e"
+ },
+ "GET /v1/runs/{run_id}/outcomes": {
+  "params": [
+   "header:X-API-Key",
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "d814ed0f6c9b6051"
+ },
+ "GET /v1/runs/{run_id}/replay-bundle": {
+  "params": [
+   "header:X-API-Key",
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "f5fcd6d0b8c30def"
+ },
+ "GET /v1/runs/{run_id}/tool-executions": {
+  "params": [
+   "header:X-API-Key",
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "a7e543e6fb771ace"
+ },
+ "GET /v1/runs/{run_id}/trace": {
+  "params": [
+   "header:X-API-Key",
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "7827ebe643968c09"
+ },
+ "GET /v1/runs/{run_id}/worker-attempts": {
+  "params": [
+   "header:X-API-Key",
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "9f2deb76910a03b8"
+ },
+ "GET /v1/tenants": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "eee14c42263a0e57"
+ },
+ "GET /v1/tenants/{tenant_id}/api-keys": {
+  "params": [
+   "header:X-API-Key",
+   "path:tenant_id"
+  ],
+  "request": "",
+  "response_200": "8145267170522baa"
+ },
+ "GET /v1/tenants/{tenant_id}/attestation-keys": {
+  "params": [
+   "header:X-API-Key",
+   "path:tenant_id"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "GET /v1/tenants/{tenant_id}/evaluation-policy": {
+  "params": [
+   "header:X-API-Key",
+   "path:tenant_id"
+  ],
+  "request": "",
+  "response_200": "d7aa73c849cf5345"
+ },
+ "GET /v1/usage-events/runs/{run_id}": {
+  "params": [
+   "header:X-API-Key",
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "f4ad0844f0db6ee7"
+ },
+ "GET /v1/usage-events/tenants/{tenant_id}": {
+  "params": [
+   "header:X-API-Key",
+   "path:tenant_id"
+  ],
+  "request": "",
+  "response_200": "9d8bc615bd673489"
+ },
+ "GET /v1/worker/dlq": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "30f66d7ac616f517"
+ },
+ "PATCH /v1/admin/finops/pricing/{pricing_id}": {
+  "params": [
+   "header:X-API-Key",
+   "path:pricing_id"
+  ],
+  "request": "ddcfcfc65303f4e3",
+  "response_200": "0ac03f03994d3816"
+ },
+ "PATCH /v1/budgets/{budget_id}": {
+  "params": [
+   "header:X-API-Key",
+   "path:budget_id"
+  ],
+  "request": "ee9b2720ca9c77b8",
+  "response_200": "38e6de1b73d79dc4"
+ },
+ "PATCH /v1/pricing/{pricing_id}": {
+  "params": [
+   "header:X-API-Key",
+   "path:pricing_id"
+  ],
+  "request": "ddcfcfc65303f4e3",
+  "response_200": "0ac03f03994d3816"
+ },
+ "PATCH /v1/tenants/{tenant_id}": {
+  "params": [
+   "header:X-API-Key",
+   "path:tenant_id"
+  ],
+  "request": "c142673521e5f007",
+  "response_200": "2d02ec1cdbef7ec9"
+ },
+ "POST /dashboard/admin/finops/budgets": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/admin/finops/budgets/{budget_id}/disable": {
+  "params": [
+   "path:budget_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/admin/finops/pricing/import": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/admin/finops/pricing/{pricing_id}/disable": {
+  "params": [
+   "path:pricing_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/admin/finops/pricing/{pricing_id}/edit": {
+  "params": [
+   "path:pricing_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/approvals/expire-stale": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/approvals/{run_id}/decision": {
+  "params": [
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/benchmark/attestation-keys": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/benchmark/attestation-keys/{key_id}/revoke": {
+  "params": [
+   "path:key_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/benchmark/imports/inspect": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/benchmark/runs": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/control-plane/mcp-servers": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/control-plane/mcp-servers/{mcp_server_id}/breaker/close": {
+  "params": [
+   "path:mcp_server_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/control-plane/mcp-servers/{mcp_server_id}/breaker/open": {
+  "params": [
+   "path:mcp_server_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/control-plane/tools": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/control-plane/tools/{tool_name}/breaker/close": {
+  "params": [
+   "path:tool_name"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/control-plane/tools/{tool_name}/breaker/open": {
+  "params": [
+   "path:tool_name"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/control-plane/workflows": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/costs/adjustments": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/costs/leases/{run_id}/release": {
+  "params": [
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/costs/violations/{violation_id}/acknowledge": {
+  "params": [
+   "path:violation_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/costs/violations/{violation_id}/resolve": {
+  "params": [
+   "path:violation_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/governance/api-keys": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/governance/evaluation-policy": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/governance/tenants": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/governance/tenants/{tenant_id}/api-keys": {
+  "params": [
+   "path:tenant_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/governance/tenants/{tenant_id}/api-keys/{key_id}/revoke": {
+  "params": [
+   "path:key_id",
+   "path:tenant_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/honeypots/launch": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/judge-profiles": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/judge-profiles/deactivate": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/judge-profiles/{name}/activate": {
+  "params": [
+   "path:name"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/judge-profiles/{name}/delete": {
+  "params": [
+   "path:name"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/judge-profiles/{name}/probe": {
+  "params": [
+   "path:name"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/judge-profiles/{name}/update": {
+  "params": [
+   "path:name"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/judge/consent": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/judge/profiles/{name}/probe": {
+  "params": [
+   "path:name"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/judge/profiles/{name}/zero-cost-pricing": {
+  "params": [
+   "path:name"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/judge/sweep": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/operations/evidence": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/operations/release-gates": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/playground": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/reviews/preview": {
+  "params": [],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/reviews/{review_id}/decision": {
+  "params": [
+   "path:review_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/reviews/{review_id}/export-benchmark": {
+  "params": [
+   "path:review_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/reviews/{review_id}/judge-assessments": {
+  "params": [
+   "path:review_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/runs/{run_id}/outcome": {
+  "params": [
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/runs/{run_id}/replay": {
+  "params": [
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/runs/{run_id}/resume": {
+  "params": [
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/worker/dlq/{run_id}/requeue": {
+  "params": [
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /dashboard/worker/dlq/{run_id}/resolve": {
+  "params": [
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "799695019cd83493"
+ },
+ "POST /v1/admin/finops/pricing/import/apply": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "29b2ad7b0e206174",
+  "response_200": "efe829bcea5ceb1e"
+ },
+ "POST /v1/admin/finops/pricing/import/dry-run": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "29b2ad7b0e206174",
+  "response_200": "efe829bcea5ceb1e"
+ },
+ "POST /v1/admin/finops/pricing/{pricing_id}/disable": {
+  "params": [
+   "header:X-API-Key",
+   "path:pricing_id"
+  ],
+  "request": "",
+  "response_200": "0ac03f03994d3816"
+ },
+ "POST /v1/agent/submit": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "a29c31ca20fdbba2",
+  "response_200": "c2bcf06cfd84f240"
+ },
+ "POST /v1/agent/submit-with-details": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "a29c31ca20fdbba2",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "POST /v1/approvals/expire-stale": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "9d242a4564e0f8e3"
+ },
+ "POST /v1/approvals/{run_id}/decision": {
+  "params": [
+   "header:X-API-Key",
+   "path:run_id"
+  ],
+  "request": "634fa6e8207ec21d",
+  "response_200": "f736bdf7689a06dd"
+ },
+ "POST /v1/benchmark/imports/inspect": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "155efd383efceb6e",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "POST /v1/benchmark/runs": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "8bdb75a4e0ec7a00",
+  "response_200": ""
+ },
+ "POST /v1/benchmark/samples/export-reviews": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "dd3a76b13ed390ca",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "POST /v1/benchmark/samples/{sample_id}/relabel": {
+  "params": [
+   "header:X-API-Key",
+   "path:sample_id"
+  ],
+  "request": "3834666754c39b7b",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "POST /v1/benchmark/samples/{sample_id}/retire": {
+  "params": [
+   "header:X-API-Key",
+   "path:sample_id"
+  ],
+  "request": "b24f1bddef3ed8ae",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "POST /v1/budget-violations/{violation_id}/acknowledge": {
+  "params": [
+   "header:X-API-Key",
+   "path:violation_id"
+  ],
+  "request": "b9aa6243acc4dfea",
+  "response_200": "8453e5c098a2c7ad"
+ },
+ "POST /v1/budget-violations/{violation_id}/resolve": {
+  "params": [
+   "header:X-API-Key",
+   "path:violation_id"
+  ],
+  "request": "e3a1e5ab54f460f7",
+  "response_200": "8453e5c098a2c7ad"
+ },
+ "POST /v1/budgets": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "212672c59427c9cf",
+  "response_200": "38e6de1b73d79dc4"
+ },
+ "POST /v1/budgets/{budget_id}/disable": {
+  "params": [
+   "header:X-API-Key",
+   "path:budget_id"
+  ],
+  "request": "",
+  "response_200": "38e6de1b73d79dc4"
+ },
+ "POST /v1/control-plane/mcp-servers": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "e967e9bce437a411",
+  "response_200": "7f721cc8b464a6db"
+ },
+ "POST /v1/control-plane/mcp-servers/{mcp_server_id}/breaker/close": {
+  "params": [
+   "header:X-API-Key",
+   "path:mcp_server_id"
+  ],
+  "request": "e051f15061f8499d",
+  "response_200": "e4773d200a94424e"
+ },
+ "POST /v1/control-plane/mcp-servers/{mcp_server_id}/breaker/open": {
+  "params": [
+   "header:X-API-Key",
+   "path:mcp_server_id"
+  ],
+  "request": "e051f15061f8499d",
+  "response_200": "e4773d200a94424e"
+ },
+ "POST /v1/control-plane/tools": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "5fc36f98e73076f5",
+  "response_200": "ad94705de2506eb1"
+ },
+ "POST /v1/control-plane/tools/{tool_name}/breaker/close": {
+  "params": [
+   "header:X-API-Key",
+   "path:tool_name"
+  ],
+  "request": "e051f15061f8499d",
+  "response_200": "ec73674fc9ad6dfd"
+ },
+ "POST /v1/control-plane/tools/{tool_name}/breaker/open": {
+  "params": [
+   "header:X-API-Key",
+   "path:tool_name"
+  ],
+  "request": "e051f15061f8499d",
+  "response_200": "ec73674fc9ad6dfd"
+ },
+ "POST /v1/control-plane/tools/{tool_name}/validate-arguments": {
+  "params": [
+   "header:X-API-Key",
+   "path:tool_name"
+  ],
+  "request": "23b355a048e09be6",
+  "response_200": "926dcfe7a3522153"
+ },
+ "POST /v1/control-plane/workflows": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "a0e033d2a2a07eb8",
+  "response_200": "d863bcb58a823352"
+ },
+ "POST /v1/cost/adjustments": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "b3a2bebd97fb336f",
+  "response_200": "979d692bd10cc2ff"
+ },
+ "POST /v1/cost/leases/{run_id}/release": {
+  "params": [
+   "header:X-API-Key",
+   "path:run_id"
+  ],
+  "request": "1c591bd6de867cd0",
+  "response_200": "25f56514d17293ea"
+ },
+ "POST /v1/evaluations/judge/deactivate": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "POST /v1/evaluations/judge/profiles": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "d79b68a4897c445d",
+  "response_200": ""
+ },
+ "POST /v1/evaluations/judge/profiles/{name}/activate": {
+  "params": [
+   "header:X-API-Key",
+   "path:name"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "POST /v1/evaluations/judge/profiles/{name}/probe": {
+  "params": [
+   "header:X-API-Key",
+   "path:name"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "POST /v1/evaluations/judge/profiles/{name}/zero-cost-pricing": {
+  "params": [
+   "header:X-API-Key",
+   "path:name"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "POST /v1/evaluations/judge/sweep": {
+  "params": [
+   "header:X-API-Key",
+   "query:older_than_seconds"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "POST /v1/evaluations/preview": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "1af5250d242cdebc",
+  "response_200": "688cbc586535cd1f"
+ },
+ "POST /v1/honeypots/{probe_id}/enabled": {
+  "params": [
+   "header:X-API-Key",
+   "path:probe_id"
+  ],
+  "request": "018d535b5b3d2045",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "POST /v1/honeypots/{probe_id}/launch": {
+  "params": [
+   "header:X-API-Key",
+   "path:probe_id"
+  ],
+  "request": "f2dd885c88de369d",
+  "response_200": ""
+ },
+ "POST /v1/operations/evidence": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "a28688e86a098624",
+  "response_200": "3c6768da8d620981"
+ },
+ "POST /v1/operations/release-gates": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "369a69093fa91709",
+  "response_200": "7ce069fb4d6e2077"
+ },
+ "POST /v1/pricing": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "91542266ae716bf2",
+  "response_200": "0ac03f03994d3816"
+ },
+ "POST /v1/reviews/{review_id}/decision": {
+  "params": [
+   "header:X-API-Key",
+   "path:review_id"
+  ],
+  "request": "c59bcccb53650fbf",
+  "response_200": "6ce5fd2b93d581dc"
+ },
+ "POST /v1/reviews/{review_id}/export-benchmark": {
+  "params": [
+   "header:X-API-Key",
+   "path:review_id"
+  ],
+  "request": "888bde23dd6d9963",
+  "response_200": ""
+ },
+ "POST /v1/reviews/{review_id}/judge-assessments": {
+  "params": [
+   "header:X-API-Key",
+   "path:review_id"
+  ],
+  "request": "",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "POST /v1/runs/{run_id}/outcome": {
+  "params": [
+   "header:X-API-Key",
+   "path:run_id"
+  ],
+  "request": "b232232026bf490f",
+  "response_200": "1b944c79dfb3395d"
+ },
+ "POST /v1/runs/{run_id}/replay": {
+  "params": [
+   "header:X-API-Key",
+   "path:run_id"
+  ],
+  "request": "93e434ac769d7c77",
+  "response_200": "73011ff9d26cbe8a"
+ },
+ "POST /v1/runs/{run_id}/resume": {
+  "params": [
+   "header:X-API-Key",
+   "path:run_id"
+  ],
+  "request": "db9b88e9dd3753cf",
+  "response_200": "677d602f8256129f"
+ },
+ "POST /v1/tenants": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "88cfe13d9204414e",
+  "response_200": "2d02ec1cdbef7ec9"
+ },
+ "POST /v1/tenants/{tenant_id}/api-keys": {
+  "params": [
+   "header:X-API-Key",
+   "path:tenant_id"
+  ],
+  "request": "57838cbceaebf98e",
+  "response_200": "e59a11b7847bf553"
+ },
+ "POST /v1/tenants/{tenant_id}/api-keys/{key_id}/revoke": {
+  "params": [
+   "header:X-API-Key",
+   "path:key_id",
+   "path:tenant_id"
+  ],
+  "request": "",
+  "response_200": "6781a55721c3be06"
+ },
+ "POST /v1/tenants/{tenant_id}/attestation-keys": {
+  "params": [
+   "header:X-API-Key",
+   "path:tenant_id"
+  ],
+  "request": "64d9563bee248a3f",
+  "response_200": ""
+ },
+ "POST /v1/tenants/{tenant_id}/attestation-keys/{key_id}/revoke": {
+  "params": [
+   "header:X-API-Key",
+   "path:key_id",
+   "path:tenant_id"
+  ],
+  "request": "d6cfd9ecfc5ec57f",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "POST /v1/usage-events": {
+  "params": [
+   "header:X-API-Key"
+  ],
+  "request": "db2d6b376cba65f3",
+  "response_200": "cb0e3bf227f0c718"
+ },
+ "POST /v1/worker/dlq/{run_id}/requeue": {
+  "params": [
+   "header:X-API-Key",
+   "path:run_id"
+  ],
+  "request": "",
+  "response_200": "f736bdf7689a06dd"
+ },
+ "POST /v1/worker/dlq/{run_id}/resolve": {
+  "params": [
+   "header:X-API-Key",
+   "path:run_id"
+  ],
+  "request": "4379e64fa49a9fdd",
+  "response_200": "de22614bb30e427f"
+ },
+ "PUT /v1/evaluations/judge/profiles/{name}": {
+  "params": [
+   "header:X-API-Key",
+   "path:name"
+  ],
+  "request": "27743161c12161f5",
+  "response_200": "a1527cd998d0ec47"
+ },
+ "PUT /v1/tenants/{tenant_id}/evaluation-policy": {
+  "params": [
+   "header:X-API-Key",
+   "path:tenant_id"
+  ],
+  "request": "9a453d0c33baea2b",
+  "response_200": "d7aa73c849cf5345"
+ }
+}

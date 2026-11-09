@@ -19,7 +19,6 @@ import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +34,12 @@ from app.observability.metrics import (
 from app.schemas.agent import AgentRequest
 from app.schemas.control_plane import MCP_SERVER_TOOL_PREFIX
 from app.services.run_state import QuotaResult, RunStateStore
+from app.services.network_policy import is_external_endpoint as is_external_endpoint
+from app.services.sensitive_data import (
+    SENSITIVE_KEY_NAMES as SENSITIVE_KEY_NAMES,
+    SENSITIVE_KEY_SUFFIXES as SENSITIVE_KEY_SUFFIXES,
+    SENSITIVE_VALUE_PATTERNS as SENSITIVE_VALUE_PATTERNS,
+)
 
 MCP_GATEWAY_VERSION = "v1.5.7"
 DEFAULT_MCP_SERVER_ID = "mcp-core-local"
@@ -117,32 +122,6 @@ BUILTIN_MCP_SERVERS: list[dict[str, Any]] = [
     },
 ]
 
-SENSITIVE_KEY_NAMES = frozenset(
-    {
-        "api_key",
-        "apikey",
-        "secret",
-        "password",
-        "passwd",
-        "token",
-        "access_token",
-        "refresh_token",
-        "authorization",
-        "private_key",
-        "client_secret",
-        "credential",
-        "credentials",
-    }
-)
-SENSITIVE_KEY_SUFFIXES = ("_token", "_secret", "_password", "_passwd", "_api_key", "_apikey", "_credential")
-
-SENSITIVE_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"rk_[A-Za-z0-9_-]{6,}"),
-    re.compile(r"rg_[A-Za-z0-9_-]{6,}"),
-    re.compile(r"sk-[A-Za-z0-9_-]{12,}"),
-    re.compile(r"Bearer\s+[A-Za-z0-9._\-~+/]+=*"),
-    re.compile(r"AKIA[0-9A-Z]{16}"),
-)
 EMAIL_PATTERN = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
 SCAN_PROFILE_PATTERNS: dict[str, tuple[tuple[str, re.Pattern[str]], ...]] = {
@@ -261,38 +240,6 @@ class McpPreflightResult:
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
-
-
-def is_external_endpoint(transport: str, endpoint: str, internal_suffixes: list[str]) -> bool:
-    """Return True when the endpoint leaves the internal network.
-
-    Uses parsed hostnames (never string prefixes), so ``http://localhost.evil.com``
-    is external. Unparseable endpoints fail closed (external).
-    """
-    if transport == "stdio":
-        return False
-    raw = (endpoint or "").strip()
-    if not raw:
-        return True
-    try:
-        parts = urlsplit(raw)
-    except ValueError:
-        return True
-    if parts.scheme == "local":
-        return False
-    try:
-        host = (parts.hostname or "").lower().rstrip(".")
-    except ValueError:
-        return True
-    if not host:
-        return True
-    if host in {"localhost", "127.0.0.1", "::1"}:
-        return False
-    for suffix in internal_suffixes:
-        suffix = suffix.lower()
-        if suffix and host.endswith(suffix) and len(host) > len(suffix):
-            return False
-    return True
 
 
 def normalize_mcp_server(raw: dict[str, Any], settings: Settings, *, source: str = "custom") -> dict[str, Any]:

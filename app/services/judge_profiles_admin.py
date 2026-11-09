@@ -170,7 +170,7 @@ async def _pricing_rows(session: AsyncSession, provider: str, model: str) -> lis
 
 async def ensure_zero_cost_pricing(session: AsyncSession, settings: Settings, name: str) -> dict[str, Any]:
     from app.schemas.finops import PricingCatalogCreateRequest
-    from app.services.finops import create_pricing_item
+    from app.services.finops.pricing import create_pricing_item
 
     profile = _profile_or_error(settings, name)
     if profile.provider == "deterministic":

@@ -224,7 +224,7 @@ def key_env_allowed(api_key_env: str, settings: Settings | None) -> bool:
 def url_is_external(base_url: str, external: str, settings: Settings) -> bool:
     """Same rule as the HTTP judges (v1.5.11 D14): ``external: true`` forces external; exact internal host names and
     internal suffixes are internal; anything unparseable is external. ``external: false`` cannot downgrade a host."""
-    from app.services.mcp_gateway import is_external_endpoint
+    from app.services.network_policy import is_external_endpoint
 
     if external == "true":
         return True

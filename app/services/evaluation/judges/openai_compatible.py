@@ -29,7 +29,7 @@ from app.services.evaluation.judges.base import JudgeInput, JudgeOutput
 from app.services.evaluation.judges.parsing import JudgeOutputError, parse_judge_output
 from app.services.evaluation.judges.profiles import JudgeProfile, base_url_problem
 from app.services.evaluation.judges.prompt import build_messages, prompt_version
-from app.services.mcp_gateway import is_external_endpoint
+from app.services.network_policy import is_external_endpoint
 
 AUTO_MODE_ORDER: tuple[str, ...] = ("json_schema", "json_object", "none")
 RETRYABLE_STATUS = frozenset({429, 502, 503, 504})  # OpenAI-compatible default; adapters declare their own

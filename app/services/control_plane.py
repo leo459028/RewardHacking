@@ -11,7 +11,8 @@ from app.observability.metrics import CONTROL_PLANE_STEPS_TOTAL
 from app.schemas.agent import AgentRequest
 from app.schemas.control_plane import ExecutionPlanDraft
 from app.schemas.control_plane import MCP_SERVER_TOOL_PREFIX
-from app.services.finops import FINOPS_CALCULATION_VERSION, extract_allocation
+from app.services.finops.core import FINOPS_CALCULATION_VERSION
+from app.services.finops.ledger import extract_allocation
 from app.services.mcp_gateway import DEFAULT_OUTPUT_SCHEMA, build_tool_mcp_map
 
 

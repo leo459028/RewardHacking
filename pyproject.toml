@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.3.0", "pytest-asyncio>=0.23.0", "ruff>=0.6.0", "aiosqlite>=0.20.0"]
+dev = ["pytest>=8.3.0", "pytest-asyncio>=0.23.0", "ruff>=0.6.0", "aiosqlite>=0.20.0", "import-linter>=2.15,<2.16"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -40,3 +40,50 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "W"]
 ignore = ["E501", "B008"]
+
+# v1.6.0 D26: architecture contracts, checked by `lint-imports` (CI and Stage 1).
+[tool.importlinter]
+root_packages = ["app"]
+include_external_packages = false
+
+[[tool.importlinter.contracts]]
+name = "Post-execution review never publishes to Kafka, re-dispatches runs or touches token leases (AGENTS.md 2.3)"
+type = "forbidden"
+source_modules = [
+    "app.services.review_queue",
+    "app.services.outcomes",
+    "app.services.evaluation",
+    "app.services.judge_triage",
+    "app.services.review_sampling",
+]
+forbidden_modules = [
+    "app.services.events",
+    "app.infra.kafka",
+    "app.workers",
+    "app.services.finops.leases",
+]
+
+[[tool.importlinter.contracts]]
+name = "Services do not depend on the HTTP or Dashboard layers"
+type = "forbidden"
+source_modules = ["app.services"]
+forbidden_modules = ["app.api", "app.ui"]
+
+[[tool.importlinter.contracts]]
+name = "FinOps submodules are layered (higher layers may import lower ones, never the reverse)"
+type = "layers"
+containers = ["app.services.finops"]
+layers = [
+    "export",
+    "adjustments | reporting",
+    "recording",
+    "budget_enforcement",
+    "leases",
+    "forecast",
+    "budget_policies",
+    "ledger",
+    "pricing",
+    "serializers",
+    "settlement",
+    "core",
+]

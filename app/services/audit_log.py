@@ -24,6 +24,7 @@ from app.observability.metrics import INCIDENTS_TOTAL
 from app.schemas.agent import AgentRequest
 from app.schemas.audit import ApprovalDecisionRequest
 from app.services.control_plane import get_execution_plan_for_run, sync_execution_plan_on_approval
+from app.services.governance_audit import persist_governance_event as persist_governance_event
 from app.services.orchestrator import OrchestrationResult
 from app.services.review_queue import open_or_merge_review
 
@@ -330,38 +331,6 @@ async def list_evaluation_results(
             AgentRun.tenant_id == tenant_id
         )
     return list((await session.scalars(stmt)).all())
-
-
-async def persist_governance_event(
-    session: AsyncSession,
-    *,
-    tenant_id: str,
-    user_id: str = "",
-    run_id: str = "",
-    event_type: str,
-    decision: str,
-    reason: str,
-    limit_value: int = 0,
-    used: int = 0,
-    remaining: int = 0,
-    details: dict[str, Any] | None = None,
-) -> GovernanceEvent:
-    event = GovernanceEvent(
-        tenant_id=tenant_id,
-        user_id=user_id,
-        run_id=run_id,
-        event_type=event_type,
-        decision=decision,
-        reason=reason,
-        limit_value=limit_value,
-        used=used,
-        remaining=remaining,
-        details=details or {},
-    )
-    session.add(event)
-    await session.commit()
-    await session.refresh(event)
-    return event
 
 
 async def list_governance_events(

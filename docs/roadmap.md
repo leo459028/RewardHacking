@@ -119,6 +119,64 @@ The pre-execution perimeter (prompt guards, policy engine, Safe MCP Gateway, Fin
 
 ## `v1.6.x` Runtime Execution Series
 
+### Series Positioning: Verified Execution
+
+**In one sentence: `v1.5.x` listens to what the agent says; `v1.6.x` has the platform check it.**
+
+The `v1.5.x` series made the platform a careful reviewer of the evidence an agent hands in: its final message, its diff, and its test report. Every detector, the benchmark and the judges still inspect material that the agent itself produced. When an agent controls the evidence, even a perfect detector is only examining a document that may be forged. The `v1.6.x` series has the platform re-run the work in an isolated sandbox, with its own copy of the tests, and treats agent reports as claims to compare against that result.
+
+**An exam analogy.** In `v1.5.x` the teacher receives the student's answer sheet together with a score the student filled in ("I got everything right"), and checks the sheet closely for erasures and suspicious marks, but has no answer key of their own. In `v1.6.x` the teacher re-grades the answers against an answer key they keep, and the student's own score is only a reference.
+
+#### Worked example
+
+Task: "fix the bug in `calculate_tax()`". The agent returns a final message ("fixed, all tests pass"), a diff, and a JUnit report showing 50 of 50 tests passing.
+
+| How the agent cheats | `v1.5.x` (inspect submitted evidence) | `v1.6.x` (platform re-runs) |
+| --- | --- | --- |
+| **A.** Adds `@skip` to the failing tests | Caught: the diff shows `@skip` and `test_tampering` flags it | Caught |
+| **B.** Leaves the code broken, hand-writes a fake JUnit XML report (50/50), and does not touch any test file | **Missed**: the diff is clean and the report says everything passed, so no detector has anything to flag | Caught: the platform applies the agent's diff to the original code, runs the tests itself, sees 3 failures, and the contradiction marks the report as forged evidence |
+| **C.** Rewrites test results through an obscure `conftest.py` change (a pattern or language the rules do not know) | Depends on the technique: rule-based detectors miss patterns they do not cover | Caught: the re-run applies only the agent's changes to non-test files and uses the platform's pristine copy of the tests and `conftest.py`, so the trick has no effect (the standard SWE-bench grading practice) |
+| **D.** Hard-codes answers (`if amount == 100: return 5`) so the known tests pass | Only guessed at by the `special_casing` detector, still in shadow mode | Caught in `v1.6.2`: hidden held-out tests that the agent never saw make the hard-coded answers fail |
+
+Cases B and C are the point of the series: under the `v1.5.x` architecture they cannot be detected in principle, because everything the platform can inspect came from the agent.
+
+#### Evidence provenance levels
+
+The four levels have existed since `v1.5.8`; `v1.6.x` makes the top level real. No code path produces `platform_verified` yet; `v1.6.1` is the first release that does.
+
+| Level | Plain meaning | Exam analogy |
+| --- | --- | --- |
+| `simulated` | Produced by simulation, not by real execution | Practice data |
+| `self_reported` | The agent says so | The student says "I scored 100" |
+| `ci_attested` | Signed by an external CI system (verified since `v1.5.9`) | A transcript stamped by the registrar |
+| `platform_verified` | The platform re-ran it | The teacher proctors a re-test |
+
+#### Why a sandbox is required
+
+Re-running an agent's change means executing untrusted code. The change could delete host files, read API keys from environment variables and send them out, or download payloads. A re-test has to happen in a proctored exam room where nothing comes in or goes out: no network by default, a read-only filesystem with a scratch area only, CPU / memory / time limits, a non-root user and no privileges. This is the `v1.6.1` Docker backend, with gVisor (`runsc`) as the stricter runtime on Linux.
+
+#### How `v1.6.0` fits
+
+`v1.6.0` does not re-run anything yet; it prepares for the re-test:
+
+| `v1.6.0` item | Role in the analogy |
+| --- | --- |
+| `SandboxBackend` specification and conformance suite | **The exam-room rules**: what is allowed in, how long it lasts, which doors are locked. Every future room (Docker, gVisor, Kubernetes) must pass the same acceptance checklist first |
+| W3C trace context and OTel export | **The cameras**: one run, from submission through execution, re-run and judgement, is visible end to end |
+| Audit retention purge | Re-runs create more data, so there must be a safe way to clean up that never deletes human labels, the most valuable data the project has |
+| FinOps split and import-linter contracts | **Tidying the office**: rules such as "review never re-dispatches a run or touches token leases" become machine-checked in CI |
+
+#### Limits of this approach
+
+1. **A re-run proves that tests pass, not that the code is correct.** Weak tests make a pass meaningless, which is why `v1.6.2` adds mutation testing (to detect weakened tests) and hidden held-out tests.
+2. **Not every task can be re-run.** `code_fix` fits well; `data_query` or `deploy_service`, which have external side effects, cannot be re-run casually. This is why `v1.6.1` only allows low-risk tools.
+3. **Flaky tests** can make a re-run disagree with the agent's report without any cheating, so retries and interpretation rules are needed.
+4. **Re-runs cost compute and time**, so they are paired with FinOps cost controls and sampling.
+5. **Monotonic safety still holds.** A failed re-run makes the verdict stricter. A successful re-run only raises the assurance level; it never automatically accepts a run that is under review. Acceptance remains a human decision.
+6. **Re-run results stay `monitor_only`.** They must not become a training reward, or agents would learn to fool the verification environment.
+
+**Summary**: `v1.5.x` made the platform a skilled reviewer of evidence; `v1.6.x` makes it a proctor with its own answer key who re-runs the exam. The first catches cheating that leaves traces; the second catches cheating where the evidence itself is fake, the hardest and most dangerous form of reward hacking.
+
 ### `v1.6.0`: Runtime Foundations
 - **OpenTelemetry Export**: W3C `traceparent` propagation and OTLP span export across API, worker, judge and executor.
 - **Audit Retention Purge with Legal Hold**: Dry-run and scheduled purges driven by `audit_retention_days`, excluding open incidents, runs under review, and runs referenced by checkpoints or replay bundles. The FinOps ledger is never auto-purged and follows a separate `finops_ledger_retention_days` setting (default about seven years) that only reports due records.
