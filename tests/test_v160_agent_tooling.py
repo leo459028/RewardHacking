@@ -88,6 +88,8 @@ def test_bump_rejects_bad_version(tmp_path):
         ("wip(v1.6.0): P3 retention service", True),
         ("wip(v1.6.0): P1.5a agent tooling scripts", True),
         ("wip(v1.6.0): P2b OTel export", True),
+        ("wip(v1.6.0): P2b-1 OTel export core", True),
+        ("wip(v1.6.0): P2b- missing number", False),
         ("feat(v1.6.0): runtime foundations", True),
         ("fix: something", False),
         ("wip(1.6.0): P3 missing v", False),

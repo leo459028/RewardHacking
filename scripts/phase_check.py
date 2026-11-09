@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MESSAGE_RE = re.compile(r"^(wip\(v\d+\.\d+\.\d+\): P\d+[a-z]?(\.\d+[a-z]?)? \S.*|feat\(v\d+\.\d+\.\d+\): \S.*)$")
+MESSAGE_RE = re.compile(r"^(wip\(v\d+\.\d+\.\d+\): P\d+[a-z]?([.-]\d+[a-z]?)? \S.*|feat\(v\d+\.\d+\.\d+\): \S.*)$")
 FORBIDDEN_PREFIXES = ("docs/plan/",)
 FORBIDDEN_FILES = ("docs/handoff.md",)
 _ENV_RE = re.compile(r"(^|/)\.env(\..+)?$")

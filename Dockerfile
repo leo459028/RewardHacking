@@ -9,8 +9,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential curl && \
     rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY requirements.txt requirements-otel.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
+# v1.6.0 D5: optional OpenTelemetry export; the app stays a no-op unless OTEL_ENABLED=true.
+ARG INSTALL_OTEL=1
+RUN if [ "$INSTALL_OTEL" = "1" ]; then pip install --no-cache-dir -r requirements-otel.txt; fi
 
 COPY app ./app
 COPY alembic.ini ./

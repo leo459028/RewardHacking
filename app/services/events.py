@@ -30,13 +30,17 @@ def _publish_parent(event: BaseEvent | dict[str, Any]) -> trace_context.TraceCon
     return trace_context.new_root()
 
 
+def _messaging(topic: str, operation: str) -> dict[str, str]:
+    return {"messaging.system": "kafka", "messaging.destination.name": topic, "messaging.operation.type": operation}
+
+
 class InMemoryEventPublisher:
     def __init__(self) -> None:
         self.events: list[dict[str, Any]] = []
 
     async def publish(self, topic: str, key: str, event: BaseEvent | dict[str, Any]) -> None:
         payload = event.model_dump() if isinstance(event, BaseEvent) else event
-        with tracing.start_span(f"{topic} publish", kind=tracing.SPAN_KIND_PRODUCER, context=_publish_parent(event)) as span:
+        with tracing.start_span(f"{topic} publish", kind=tracing.SPAN_KIND_PRODUCER, context=_publish_parent(event), attributes=_messaging(topic, "send")) as span:
             headers = span.context.headers()
         self.events.append({"topic": topic, "key": key, "event": payload, "headers": headers})
 
@@ -50,7 +54,7 @@ class KafkaEventPublisher:
         payload = event.model_dump_json() if isinstance(event, BaseEvent) else BaseEvent.model_validate(event).model_dump_json()
         await producer.start()
         try:
-            with tracing.start_span(f"{topic} publish", kind=tracing.SPAN_KIND_PRODUCER, context=_publish_parent(event)) as span:
+            with tracing.start_span(f"{topic} publish", kind=tracing.SPAN_KIND_PRODUCER, context=_publish_parent(event), attributes=_messaging(topic, "send")) as span:
                 await producer.send_and_wait(
                     topic,
                     key=key,

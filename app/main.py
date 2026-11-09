@@ -31,11 +31,13 @@ async def lifespan(app: FastAPI):
     # v1.5.11: invalid judge profiles (secrets inline, unknown fields, bad values) fail fast at startup.
     load_profiles(get_settings())
     init_engine(settings)
+    tracing.configure(get_settings(), service_name="rewardhacking-api")
     # v1.5.12 (D2, D7): load probe / activation state; auto-probe the environment-selected profile in the background.
     if judge_activation.RUN_ON_STARTUP:
         await judge_activation.startup(get_settings())
     yield
     await close_engine()
+    tracing.shutdown()
 
 
 app = FastAPI(
@@ -58,8 +60,16 @@ async def trace_id_middleware(request: Request, call_next):
     request.state.trace_id = trace_id
     request.state.trace_context = context
     start = perf_counter()
-    with tracing.start_span(f"{request.method} {request.url.path}", kind=tracing.SPAN_KIND_SERVER, context=context, new_span=False):
+    with tracing.start_span(f"{request.method} {request.url.path}", kind=tracing.SPAN_KIND_SERVER, context=context, new_span=False) as span:
         response = await call_next(request)
+        span.set_attributes(
+            {
+                "http.request.method": request.method,
+                "url.path": request.url.path,
+                "http.response.status_code": response.status_code,
+                "rh.legacy_trace_id": context.display_id or None,
+            }
+        )
     response.headers["X-Trace-Id"] = trace_id
     response.headers[trace_context.TRACEPARENT_HEADER] = context.traceparent
     duration = perf_counter() - start

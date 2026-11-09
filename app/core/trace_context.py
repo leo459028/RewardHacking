@@ -33,6 +33,8 @@ class TraceContext:
     # The value stored in ``trace_id`` columns and echoed as ``X-Trace-Id`` (D2). Usually ``trace_<trace_id>``;
     # a client-supplied non-W3C ``X-Trace-Id`` is kept here unchanged for backward compatibility.
     display_id: str = ""
+    # Span id of this span's parent ("" for a root or a context rebuilt from an id only); used by the OTel exporter.
+    parent_span_id: str = ""
 
     @property
     def traceparent(self) -> str:
@@ -48,7 +50,7 @@ class TraceContext:
 
     def child(self) -> "TraceContext":
         """A new span in the same trace (this context becomes the parent)."""
-        return replace(self, span_id=new_span_id())
+        return replace(self, span_id=new_span_id(), parent_span_id=self.span_id)
 
     def headers(self) -> dict[str, str]:
         out = {TRACEPARENT_HEADER: self.traceparent}

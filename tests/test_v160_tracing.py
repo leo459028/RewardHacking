@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-import sys
 
 import pytest
 
@@ -231,5 +230,15 @@ def test_start_span_sets_and_restores_current_context():
     assert trace_context.current() is None
 
 
-def test_tracing_imports_no_opentelemetry():
-    assert not any(name == "opentelemetry" or name.startswith("opentelemetry.") for name in sys.modules)
+def test_only_tracing_module_imports_opentelemetry():
+    # Third-party packages (redis-py's observability module) may import opentelemetry on their own when it is
+    # installed, so check our own sources instead of sys.modules.
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "app"
+    offenders = [
+        str(path.relative_to(root)) for path in root.rglob("*.py")
+        if "opentelemetry" in path.read_text(encoding="utf-8") and path.name != "tracing.py"
+    ]
+    assert offenders == []
+    assert tracing.enabled() is False

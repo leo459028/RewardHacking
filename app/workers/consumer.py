@@ -116,7 +116,7 @@ def _missing_execution_plan_result(run_id: str) -> OrchestrationResult:
     return OrchestrationResult(response=response, execution_output="", evaluation_summary=summary)
 
 
-async def process_run_by_id(
+async def _process_run_by_id(
     session,
     *,
     run_id: str,
@@ -288,6 +288,30 @@ async def process_run_by_id(
     return updated
 
 
+async def process_run_by_id(
+    session,
+    *,
+    run_id: str,
+    state_store: RunStateStore,
+    event_publisher: EventPublisher,
+    orchestrator: AgentOrchestrator | None = None,
+    max_attempts: int | None = None,
+):
+    """Worker entry point for one queued run, inside a ``worker.process_run`` span (v1.6.0 D8)."""
+    with tracing.start_span("worker.process_run", attributes={"rh.run_id": run_id}) as span:
+        updated = await _process_run_by_id(
+            session,
+            run_id=run_id,
+            state_store=state_store,
+            event_publisher=event_publisher,
+            orchestrator=orchestrator,
+            max_attempts=max_attempts,
+        )
+        if updated is not None:
+            span.set_attributes({"rh.status": str(getattr(updated, "status", "")), "rh.tenant_id": str(getattr(updated, "tenant_id", ""))})
+        return updated
+
+
 async def process_message(
     value: dict,
     headers,
@@ -302,7 +326,13 @@ async def process_message(
     if not run_id:
         return None
     context = trace_context.context_from_message(headers, value.get("trace_id"))
-    with tracing.start_span(f"{topic} process", kind=tracing.SPAN_KIND_CONSUMER, context=context, new_span=False):
+    with tracing.start_span(
+        f"{topic} process",
+        kind=tracing.SPAN_KIND_CONSUMER,
+        context=context,
+        new_span=False,
+        attributes={"messaging.system": "kafka", "messaging.destination.name": topic, "messaging.operation.type": "process"},
+    ):
         async with session_factory() as session:
             return await process_run_by_id(
                 session,
@@ -315,6 +345,7 @@ async def process_message(
 async def run_worker() -> None:
     settings = get_settings()
     init_engine(settings)
+    tracing.configure(settings, service_name="rewardhacking-worker")
     state_store = RedisRunStateStore(get_redis(settings))
     event_publisher = KafkaEventPublisher(settings)
     consumer = AIOKafkaConsumer(
@@ -339,6 +370,7 @@ async def run_worker() -> None:
     finally:
         await consumer.stop()
         await close_engine()
+        tracing.shutdown()
 
 
 if __name__ == "__main__":

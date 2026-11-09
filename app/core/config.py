@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     mcp_tool_arguments_max_depth: int = 8
     mcp_tool_arguments_max_bytes: int = 65536
     audit_retention_days: int = 90
+    # v1.6.0 D5: optional OpenTelemetry export (endpoint / service name / sampler use the standard OTEL_* variables)
+    otel_enabled: bool = False
+    otel_trace_ui_url_template: str = ""
     operations_evidence_max_age_days: int = 30
     secret_rotation_max_age_days: int = 90
     release_gate_max_queued_age_minutes: int = 15
