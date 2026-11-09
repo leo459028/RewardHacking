@@ -95,7 +95,9 @@ def test_v1512_migration_is_single_head_after_v1511():
         mod = _load_migration(path.name)
         revisions[mod.revision] = mod.down_revision
     referenced = {down for down in revisions.values() if down}
-    assert sorted(set(revisions) - referenced) == ["202611120001"]
+    heads = sorted(set(revisions) - referenced)
+    # Later releases extend the chain (v1.6.0: 202611130001); there is still exactly one head.
+    assert len(heads) == 1 and (heads == ["202611120001"] or "202611120001" in referenced)
 
 
 def test_v1512_tables_and_defaults(session_factory):

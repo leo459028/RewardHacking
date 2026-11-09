@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     mcp_tool_arguments_max_depth: int = 8
     mcp_tool_arguments_max_bytes: int = 65536
     audit_retention_days: int = 90
+    # v1.6.0 D11 / D14 / D16: retention purge (plan -> apply). off | plan | apply; unknown values behave as off.
+    audit_retention_purge_mode: str = "plan"
+    audit_retention_purge_batch_size: int = 500
+    audit_retention_plan_ttl_minutes: int = 60
+    finops_ledger_retention_days: int = 2555  # report only; the FinOps ledger is never deleted
     # v1.6.0 D5: optional OpenTelemetry export (endpoint / service name / sampler use the standard OTEL_* variables)
     otel_enabled: bool = False
     otel_trace_ui_url_template: str = ""

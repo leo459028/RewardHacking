@@ -17,6 +17,7 @@ from app.models.finops import BudgetViolation, CostEvent
 from app.models.governance_event import GovernanceEvent
 from app.models.judge import JudgeAssessment, ReviewSamplingDecision  # noqa: F401
 from app.models.incident import Incident
+from app.models.retention import LegalHold, RetentionPurge, RetentionTombstone  # noqa: F401 (v1.6.0 metadata registration)
 from app.models.tenant import Tenant, TenantApiKey
 from app.models.tool_execution import ToolExecution
 from app.models.worker_attempt import WorkerAttempt
