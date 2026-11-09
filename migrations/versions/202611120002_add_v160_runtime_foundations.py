@@ -1,13 +1,13 @@
 """add v1.6.0 runtime foundations: legal holds, retention purges (plan / receipt) and retention tombstones
 
-Revision ID: 202611130001
+Revision ID: 202611120002
 Revises: 202611120001
-Create Date: 2026-11-13 09:00:00
+Create Date: 2026-11-09 15:03:20
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "202611130001"
+revision = "202611120002"
 down_revision = "202611120001"
 branch_labels = None
 depends_on = None

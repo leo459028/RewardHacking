@@ -96,7 +96,7 @@ def test_v1512_migration_is_single_head_after_v1511():
         revisions[mod.revision] = mod.down_revision
     referenced = {down for down in revisions.values() if down}
     heads = sorted(set(revisions) - referenced)
-    # Later releases extend the chain (v1.6.0: 202611130001); there is still exactly one head.
+    # Later releases extend the chain (v1.6.0: 202611120002); there is still exactly one head.
     assert len(heads) == 1 and (heads == ["202611120001"] or "202611120001" in referenced)
 
 

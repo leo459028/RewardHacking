@@ -158,14 +158,14 @@ def _load_migration(name: str):
 
 
 def test_v160_migration_is_single_head_after_v1512():
-    module = _load_migration("202611130001_add_v160_runtime_foundations.py")
-    assert module.revision == "202611130001" and module.down_revision == "202611120001"
+    module = _load_migration("202611120002_add_v160_runtime_foundations.py")
+    assert module.revision == "202611120002" and module.down_revision == "202611120001"
     revisions = {}
     for path in MIGRATIONS_DIR.glob("*.py"):
         mod = _load_migration(path.name)
         revisions[mod.revision] = mod.down_revision
     heads = set(revisions) - {down for down in revisions.values() if down}
-    assert len(heads) == 1 and (heads == {"202611130001"} or "202611130001" in revisions.values())
+    assert len(heads) == 1 and (heads == {"202611120002"} or "202611120002" in revisions.values())
     columns = {c.name: c for c in RetentionTombstone.__table__.columns}
     assert columns["run_id"].unique and columns["prev_hash"].nullable and columns["entry_hash"].nullable
     assert {"legal_holds", "retention_purges", "retention_tombstones"} <= set(RetentionPurge.metadata.tables)

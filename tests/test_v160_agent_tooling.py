@@ -194,7 +194,7 @@ def test_release_gate_extracts_facts():
         "summary": "470 passed in 247.77s (0:04:07)", "passed": "470", "failed": "0"}
     facts = release_gate.extract_facts(step["pytest_full"], "== 2 failed, 468 passed in 250.00s ==")
     assert facts["failed"] == "2" and facts["passed"] == "468"
-    assert release_gate.extract_facts(step["alembic_current"], "202611130001 (head)\n") == {"head": "202611130001"}
+    assert release_gate.extract_facts(step["alembic_current"], "202611120002 (head)\n") == {"head": "202611120002"}
     assert release_gate.extract_facts(step["import_contracts"], "Contracts: 3 kept, 0 broken.") == {"kept": "3", "broken": "0"}
 
 
