@@ -248,6 +248,13 @@ def shutdown() -> None:
             logger.debug("tracer provider shutdown failed", exc_info=True)
 
 
+def exemplar(context: trace_context.TraceContext | None) -> dict[str, str] | None:
+    """Prometheus exemplar labels linking a histogram observation to its trace (only while exporting, D8)."""
+    if context is None or not enabled():
+        return None
+    return {"trace_id": context.trace_id}
+
+
 def status(settings: Any) -> dict[str, Any]:
     """Tracing status for the Observability page and API (no endpoint secrets: host only)."""
     import os

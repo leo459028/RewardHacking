@@ -79,7 +79,8 @@ async def trace_id_middleware(request: Request, call_next):
         "status": str(response.status_code),
     }
     HTTP_REQUESTS_TOTAL.labels(**labels).inc()
-    HTTP_REQUEST_DURATION_SECONDS.labels(**labels).observe(duration)
+    # v1.6.0 D8: exemplar (trace id) only when exporting; visible in the OpenMetrics format of /v1/metrics.
+    HTTP_REQUEST_DURATION_SECONDS.labels(**labels).observe(duration, exemplar=tracing.exemplar(context))
     return response
 
 

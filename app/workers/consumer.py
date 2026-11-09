@@ -280,7 +280,7 @@ async def _process_run_by_id(
     if payload.get("verdict"):
         EVALUATOR_VERDICTS_TOTAL.labels(verdict=payload["verdict"]).inc()
     WORKER_JOBS_TOTAL.labels(status=updated.status).inc()
-    WORKER_DURATION_SECONDS.observe(time.perf_counter() - started_at)
+    WORKER_DURATION_SECONDS.observe(time.perf_counter() - started_at, exemplar=tracing.exemplar(trace_context.current()))
     await state_store.set_run_state(run_id, updated.status)
 
     for topic, event_payload in _events_for_topics(updated.evaluation_summary):

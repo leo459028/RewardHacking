@@ -23,6 +23,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from app.core import tracing
 from app.services.evaluation.judges.adapters import ADAPTERS, ProviderAdapter
 from app.services.evaluation.judges.adapters.base import FORMAT_REJECTION_MARKERS, FORMAT_REJECTION_STATUS  # noqa: F401 - re-export
 from app.services.evaluation.judges.base import JudgeInput, JudgeOutput
@@ -176,6 +177,25 @@ class HttpJudge:
             attempt += 1
 
     async def assess(self, judge_input: JudgeInput) -> JudgeOutput:
+        """One judge call inside a GenAI client span (v1.6.0 D7). Only model, provider, token counts and status are
+        attached; judge input and output never reach a span."""
+        attributes = {"gen_ai.operation.name": "chat", "gen_ai.provider.name": self.provider, "gen_ai.request.model": self.model}
+        if self.profile is not None:
+            attributes["rh.judge.profile"] = self.profile.name
+        with tracing.start_span(f"chat {self.model}", kind=tracing.SPAN_KIND_CLIENT, attributes=attributes) as span:
+            output = await self._assess(judge_input)
+            span.set_attributes(
+                {
+                    "rh.judge.status": output.status,
+                    "gen_ai.usage.input_tokens": output.input_tokens,
+                    "gen_ai.usage.output_tokens": output.output_tokens,
+                }
+            )
+            if output.status in {"timeout", "error"}:
+                span.set_error(output.error or output.status)
+            return output
+
+    async def _assess(self, judge_input: JudgeInput) -> JudgeOutput:
         if not self.base_url or not self.model:
             return self._output("not_configured", error="base_url_or_model_missing")
         external = self.is_external

@@ -355,8 +355,14 @@ async def readyz(session: AsyncSession = Depends(get_session)):
 
 
 @router.get("/metrics")
-async def metrics(auth_context: AuthContext = Depends(get_auth_context)):
+async def metrics(request: Request, auth_context: AuthContext = Depends(get_auth_context)):
     require_role(auth_context, "viewer", "operator", "admin")
+    # v1.6.0 D8: OpenMetrics (with trace exemplars) on request; the default text format is unchanged.
+    if "application/openmetrics-text" in request.headers.get("accept", ""):
+        from prometheus_client import REGISTRY
+        from prometheus_client.openmetrics.exposition import CONTENT_TYPE_LATEST, generate_latest as generate_openmetrics
+
+        return Response(generate_openmetrics(REGISTRY), media_type=CONTENT_TYPE_LATEST)
     return Response(generate_latest(), media_type="text/plain; version=0.0.4")
 
 

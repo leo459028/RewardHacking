@@ -27,6 +27,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import trace_context, tracing
 from app.core.config import Settings
 from app.models.evaluation_review import EvaluationReview
 from app.models.judge import JudgeAssessment
@@ -75,7 +76,25 @@ def pending_profile(review: EvaluationReview) -> str:
     return (review.triage_source or "")[len(PENDING_PREFIX):] if is_pending(review) else ""
 
 
-async def _run_background(review_id: str, profile_name: str, settings: Settings, factory: Callable[[], Any]) -> None:
+async def _run_background(
+    review_id: str,
+    profile_name: str,
+    settings: Settings,
+    factory: Callable[[], Any],
+    trigger: trace_context.TraceContext | None = None,
+) -> None:
+    # v1.6.0 D4: background triage is its own trace, linked (not parented) to the span that scheduled it.
+    with tracing.start_span(
+        "judge.triage.background",
+        context=trace_context.new_root(),
+        new_span=False,
+        links=[trigger] if trigger is not None else None,
+        attributes={"rh.review_id": review_id, "rh.judge.profile": profile_name},
+    ):
+        await _run_background_inner(review_id, profile_name, settings, factory)
+
+
+async def _run_background_inner(review_id: str, profile_name: str, settings: Settings, factory: Callable[[], Any]) -> None:
     from app.services.judge_triage import triage_review
 
     async with _semaphore(int(settings.evaluation_judge_background_concurrency)):
@@ -101,7 +120,9 @@ def schedule_triage(review_id: str, profile_name: str, settings: Settings) -> as
     factory = _session_factory()
     if factory is None:
         return None
-    task = asyncio.get_running_loop().create_task(_run_background(review_id, profile_name, settings, factory))
+    task = asyncio.get_running_loop().create_task(
+        _run_background(review_id, profile_name, settings, factory, trace_context.current())
+    )
     _TASKS.add(task)
     _IN_FLIGHT.add(review_id)
 

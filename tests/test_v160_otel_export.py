@@ -139,3 +139,89 @@ def test_status_reports_exporting(exporter, monkeypatch):
     status = tracing.status(ENABLED)
     assert status["exporting"] is True and status["exporter_host"] == "jaeger"
     assert "pw" not in repr(status)
+
+
+# ---------------------------------------------------------------------------
+# P2b-2: GenAI judge span (D7), background span link (D4), exemplars (D8)
+# ---------------------------------------------------------------------------
+
+
+def test_judge_call_emits_genai_client_span(exporter):
+    import json
+
+    import httpx
+
+    from app.services.evaluation.judges.base import JudgeInput
+    from app.services.evaluation.judges.openai_compatible import OpenAICompatibleJudge
+
+    def handler(request):
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": json.dumps({"suspicion": 0.7, "categories": ["grader_tampering"], "rationale": CANARY})}}],
+            "usage": {"prompt_tokens": 50, "completion_tokens": 10},
+        })
+
+    judge = OpenAICompatibleJudge(base_url="http://localhost:1234/v1", model="tiny-judge", transport=httpx.MockTransport(handler))
+    output = asyncio.run(judge.assess(JudgeInput(diff=f"+x = '{CANARY}'\n", final_message=CANARY, findings=[])))
+    assert output.status == "ok"
+    span = next(s for s in exporter.get_finished_spans() if s.name == "chat tiny-judge")
+    attrs = dict(span.attributes)
+    assert span.kind == SpanKind.CLIENT
+    assert attrs["gen_ai.operation.name"] == "chat" and attrs["gen_ai.request.model"] == "tiny-judge"
+    assert attrs["gen_ai.provider.name"] == "openai_compatible"
+    assert attrs["gen_ai.usage.input_tokens"] == 50 and attrs["gen_ai.usage.output_tokens"] == 10
+    assert attrs["rh.judge.status"] == "ok"
+    assert CANARY not in repr(attrs)
+
+
+def test_failed_judge_call_marks_span_error(exporter):
+    import httpx
+
+    from app.services.evaluation.judges.base import JudgeInput
+    from app.services.evaluation.judges.openai_compatible import OpenAICompatibleJudge
+
+    judge = OpenAICompatibleJudge(
+        base_url="http://localhost:1234/v1", model="tiny-judge", transport=httpx.MockTransport(lambda r: httpx.Response(500))
+    )
+    output = asyncio.run(judge.assess(JudgeInput(diff="+x\n", final_message="", findings=[])))
+    span = next(s for s in exporter.get_finished_spans() if s.name == "chat tiny-judge")
+    assert output.status == "error" and span.status.status_code.name == "ERROR"
+
+
+def test_background_triage_span_is_linked_not_parented(exporter, monkeypatch):
+    from app.services import judge_background
+
+    async def fake_inner(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(judge_background, "_run_background_inner", fake_inner)
+    trigger = trace_context.TraceContext(trace_id=TRACE, span_id=SPAN)
+    asyncio.run(judge_background._run_background("review_x", "local-small", SimpleNamespace(), lambda: None, trigger))
+    span = next(s for s in exporter.get_finished_spans() if s.name == "judge.triage.background")
+    assert span.parent is None
+    assert _hex(span.context.trace_id, 32) != TRACE
+    assert [_hex(link.context.span_id, 16) for link in span.links] == [SPAN]
+    assert span.attributes["rh.review_id"] == "review_x"
+
+
+def test_exemplar_only_while_exporting():
+    ctx = trace_context.TraceContext(trace_id=TRACE, span_id=SPAN)
+    tracing.shutdown()
+    assert tracing.exemplar(ctx) is None
+    memory = InMemorySpanExporter()
+    tracing.configure(ENABLED, exporter=memory)
+    try:
+        assert tracing.exemplar(ctx) == {"trace_id": TRACE}
+        assert tracing.exemplar(None) is None
+    finally:
+        tracing.shutdown()
+
+
+def test_metrics_openmetrics_has_trace_exemplar(traced_client):
+    client, _ = traced_client
+    client.get("/v1/healthz", headers={"traceparent": f"00-{TRACE}-{SPAN}-01"})
+    plain = client.get("/v1/metrics")
+    assert plain.status_code == 200 and plain.headers["content-type"].startswith("text/plain")
+    open_metrics = client.get("/v1/metrics", headers={"Accept": "application/openmetrics-text; version=1.0.0"})
+    assert open_metrics.status_code == 200
+    assert open_metrics.headers["content-type"].startswith("application/openmetrics-text")
+    assert f'trace_id="{TRACE}"' in open_metrics.text
