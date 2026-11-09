@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from aiokafka import AIOKafkaConsumer
 
+from app.core import trace_context, tracing
 from app.core.config import get_settings
 from app.infra import postgres
 from app.infra.postgres import close_engine, init_engine
@@ -287,6 +288,30 @@ async def process_run_by_id(
     return updated
 
 
+async def process_message(
+    value: dict,
+    headers,
+    *,
+    session_factory,
+    state_store: RunStateStore,
+    event_publisher: EventPublisher,
+    topic: str,
+):
+    """Process one request-topic message inside a consumer span (v1.6.0 D3: trace continues from the producer)."""
+    run_id = value.get("run_id") or (value.get("payload") or {}).get("run_id")
+    if not run_id:
+        return None
+    context = trace_context.context_from_message(headers, value.get("trace_id"))
+    with tracing.start_span(f"{topic} process", kind=tracing.SPAN_KIND_CONSUMER, context=context, new_span=False):
+        async with session_factory() as session:
+            return await process_run_by_id(
+                session,
+                run_id=run_id,
+                state_store=state_store,
+                event_publisher=event_publisher,
+            )
+
+
 async def run_worker() -> None:
     settings = get_settings()
     init_engine(settings)
@@ -301,18 +326,16 @@ async def run_worker() -> None:
     await consumer.start()
     try:
         async for message in consumer:
-            run_id = message.value.get("run_id") or message.value.get("payload", {}).get("run_id")
-            if not run_id:
-                continue
             if postgres.SessionLocal is None:
                 raise RuntimeError("SessionLocal is not initialized")
-            async with postgres.SessionLocal() as session:
-                await process_run_by_id(
-                    session,
-                    run_id=run_id,
-                    state_store=state_store,
-                    event_publisher=event_publisher,
-                )
+            await process_message(
+                message.value,
+                message.headers,
+                session_factory=postgres.SessionLocal,
+                state_store=state_store,
+                event_publisher=event_publisher,
+                topic=settings.kafka_request_topic,
+            )
     finally:
         await consumer.stop()
         await close_engine()

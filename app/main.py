@@ -1,6 +1,5 @@
 from contextlib import asynccontextmanager
 from time import perf_counter
-import uuid
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
@@ -11,6 +10,7 @@ from app.api.routers.benchmark import router as benchmark_router
 from app.api.routers.evaluations import router as evaluations_router
 from app.api.routers.finops import router as finops_router
 from app.api.routes import router
+from app.core import trace_context, tracing
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.infra.postgres import close_engine, init_engine
@@ -48,11 +48,20 @@ app = FastAPI(
 
 @app.middleware("http")
 async def trace_id_middleware(request: Request, call_next):
-    trace_id = request.headers.get("X-Trace-Id") or f"trace_{uuid.uuid4().hex}"
+    # v1.6.0 D2: W3C ``traceparent`` wins; a client ``X-Trace-Id`` is still echoed unchanged (v0.8 behaviour).
+    context = trace_context.context_from_http(
+        request.headers.get(trace_context.TRACEPARENT_HEADER),
+        request.headers.get(trace_context.TRACESTATE_HEADER),
+        request.headers.get("X-Trace-Id"),
+    )
+    trace_id = context.public_id
     request.state.trace_id = trace_id
+    request.state.trace_context = context
     start = perf_counter()
-    response = await call_next(request)
+    with tracing.start_span(f"{request.method} {request.url.path}", kind=tracing.SPAN_KIND_SERVER, context=context, new_span=False):
+        response = await call_next(request)
     response.headers["X-Trace-Id"] = trace_id
+    response.headers[trace_context.TRACEPARENT_HEADER] = context.traceparent
     duration = perf_counter() - start
     labels = {
         "method": request.method,

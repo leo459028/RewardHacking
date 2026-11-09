@@ -175,6 +175,7 @@ pytest tests/test_v15x_<new_feature>.py -q -W error::DeprecationWarning
   5. Report the merge commit and confirm `main` matches `origin/main`.
 - **Never Upload `docs/plan/*.md` or `docs/handoff.md`**: Ensure `docs/plan/`, `docs/plan/*.md` and `docs/handoff.md` remain in `.gitignore` and are never staged (`git add`) or committed to GitHub.
 - **Pre-Commit Disclosure**: State clearly which files will be staged and verify that unrelated changes are not commingled.
+- **Verify Before Committing**: Run `git diff --cached --stat` and confirm the staged files before every commit. Make the commit conditional on staging succeeding (`git add ... && git commit ...`; in PowerShell 5.1 use `if ($?) { ... }`), never chained with `;`.
 - **Protect Working Tree**: If the working tree contains pre-existing user changes, preserve them untouched.
 
 ---
