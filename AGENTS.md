@@ -37,7 +37,7 @@ To minimize exploratory file reads and maximize iteration speed and model quota 
 | **Judge Activation & Provider Adapters (v1.5.12)** | `app/services/judge_activation.py`<br>`app/services/evaluation/judges/activation_state.py`<br>`app/services/evaluation/judges/adapters/`<br>`app/services/evaluation/judges/templates.py`<br>`app/services/judge_profiles_admin.py`<br>`app/ui/routers/judges.py` | D2 `resolve_active()` (Dashboard activation with matching fingerprint → `EVALUATION_JUDGE_PROFILE` with a matching `ok` probe → rule-based), `config_fingerprint()`, in-process snapshot refreshed by `refresh_activation_cache()` / `maybe_refresh()` (dispatch, ≤ 30 s), `readiness_reasons()`, `record_probe()`, background `startup()` probe, judge breaker (`breaker_state()` / `record_result()`, Redis `circuit:judge:{profile}`), `run_judge(resilient=True)` fallback chain + per-profile `daily_token_cap` (live triage only), `ProviderAdapter` (`OpenAICompatibleAdapter`, `AnthropicAdapter`: `output_config.format`, no `temperature`, `anthropic-version: 2026-10-21`), profile CRUD / activate / deactivate / `profiles_overview()` / `dashboard_editing()`, `*_API_KEY` and `base_url` rules in `profiles.py`. Tables `judge_profile_configs`, `judge_profile_states`. Endpoints: `/v1/evaluations/judge/profiles` (CRUD, `/{name}/activate`), `/v1/evaluations/judge/deactivate`, `/v1/evaluations/judge/templates`; Dashboard `/dashboard/judge-profiles`. |
 | **Control Plane & Step Audit** | `app/services/control_plane.py`<br>`app/models/control_plane.py`<br>`app/schemas/control_plane.py` | `ControlPlanePlanner.plan()`, workflow/tool registries, `ExecutionPlan` & `ExecutionPlanStep` persistence, and lifecycle synchronization (`sync_execution_plan_on_approval`, `sync_execution_plan_on_worker_completion`). |
 | **Checkpoints & Replay** | `app/services/checkpoint.py`<br>`app/models/checkpoint.py`<br>`app/schemas/checkpoint.py` | `RunCheckpoint` (`ckpt_...`) and `ReplayAttempt` (`replay_...`) persistence, checkpoint resume re-dispatch, and dry-run replay. |
-| **Agent FinOps Engine** | `app/services/finops.py`<br>`app/services/pricing_import.py`<br>`app/models/finops.py`<br>`app/schemas/finops.py`<br>`app/seeds/model_pricing_seed.yaml` | 149-entry official model pricing catalog, context-tier resolution, settled ledger deduplication (`_settled_cost_events`), multi-currency FX & tax accounting (`resolve_fx_rate`, `_compute_tax`), `cost_center`/`org_id` attribution, manual adjustments (`create_cost_adjustment`), CSV/JSON ledger export (`export_tenant_cost_ledger`), burn-rate & exhaustion forecasting (`compute_tenant_burn_rate_forecast`), Dynamic Token Broker pre-execution leasing (`acquire_run_budget_lease`, `settle_run_budget_lease`, `release_run_budget_lease`), multi-scope (`run`/`tenant`/`workflow`/`user`/`project`/`model`) & multi-period budget enforcement (`fail_closed`, `require_approval`, `degrade_model`, `dry_run_only`, `warn`), `failed_retry` cost accounting, and violation triage. |
+| **Agent FinOps Engine** | `app/services/finops/` (package, v1.6.0)<br>`app/services/pricing_import.py`<br>`app/models/finops.py`<br>`app/schemas/finops.py`<br>`app/seeds/model_pricing_seed.yaml` | 149-entry official model pricing catalog, context-tier resolution, settled ledger deduplication (`_settled_cost_events`), multi-currency FX & tax accounting (`resolve_fx_rate`, `_compute_tax`), `cost_center`/`org_id` attribution, manual adjustments (`create_cost_adjustment`), CSV/JSON ledger export (`export_tenant_cost_ledger`), burn-rate & exhaustion forecasting (`compute_tenant_burn_rate_forecast`), Dynamic Token Broker pre-execution leasing (`acquire_run_budget_lease`, `settle_run_budget_lease`, `release_run_budget_lease`), multi-scope (`run`/`tenant`/`workflow`/`user`/`project`/`model`) & multi-period budget enforcement (`fail_closed`, `require_approval`, `degrade_model`, `dry_run_only`, `warn`), `failed_retry` cost accounting, and violation triage. |
 | **Audit, DLQ & Operations** | `app/services/audit_log.py`<br>`app/services/operations.py`<br>`app/workers/consumer.py` | `AgentRun`, `ApprovalEvent` (including `expire_stale_approvals`), `WorkerAttempt` (including `requeue_dlq_run`, `resolve_dlq_run`), `GovernanceEvent`, `Incident`, `process_run_by_id()`, and release readiness gate checks. |
 | **Database & Migrations** | `migrations/versions/`<br>`app/models/` | Current Alembic Head: `202611120001` (`202611120001_add_v1512_judge_activation.py`). Check if existing columns/JSONB fields suffice before creating new migrations. |
 
@@ -79,13 +79,8 @@ Do not write vague conceptual sketches; ensure the plan provides actionable step
   - **Budget Policy API**: `POST /v1/budgets` (primary name field is `policy_name`, with `name` accepted as an alias); UI admin route is `/dashboard/admin/finops/budgets`.
   - **Approval Decision API**: `POST /v1/approvals/{run_id}/decision` (`decision` in `approve_once`, `deny`, `request_changes`); only for `awaiting_approval` runs, otherwise `409 run_not_awaiting_approval`.
   - **Review Decision API**: `POST /v1/reviews/{review_id}/decision` (`label` in `confirmed_hacking`, `false_positive`, `accepted`, `needs_info`). Error bodies use `{"error": {"code": ...}}`.
-  - **Triggering `review_required` in Tests**: a goal containing `bypass` makes the simulated executor output trip the legacy heuristic (P3); outcome evidence with `tests/fixtures/v158/grader_tampering_eq_true.diff` yields a P0 review.
-  - **Triggering `awaiting_approval` in Tests**: In `PolicyEngine`, `constraints.requires_human_approval=True` indicates approval is already satisfied for non-destructive tasks unless a tool in `allowed_tools` has `requires_approval=True` (e.g., `deploy_service`) or `allow_destructive_actions=True` is set.
   - **Entity ID Prefixes**: `plan_` (`ExecutionPlan`), `ckpt_` (`RunCheckpoint`), `replay_` (`ReplayAttempt`), `usage_` (`UsageEvent`), `cost_` / `cost_adj_` (`CostEvent` / adjustment `CostEvent`), `budget_` (`BudgetPolicy`), `bv_` (`BudgetViolation`), `pib_` (`PricingImportBatch`), `outcome_` (`RunOutcome`), `review_` (`EvaluationReview`), `fnd_` (evaluation finding, deterministic), `bms_` (`BenchmarkSample`, deterministic), `bmr_` (`BenchmarkRun`), `hp_` (`HoneypotProbe`), `attk_` (`TenantAttestationKey`), `jdg_` (`JudgeAssessment`), `smp_` (`ReviewSamplingDecision`).
-  - **Triggering honeypot / attestation paths in tests**: record a launch with `honeypot.record_launch()` for a completed run (or `POST /v1/honeypots/{probe_id}/launch`), then submit outcome evidence; generate signing keys at runtime with `cryptography` and never commit private keys (summary report digest = canonical JSON, see `docs/evaluation.md` §2.1).
-  - **Triggering judge / sampling paths in tests**: the suite sets `EVALUATION_SAMPLE_RANDOM_RATE=0` in `tests/conftest.py`; set `EVALUATION_SAMPLE_SECRET` and the rate explicitly to exercise random audits. A rule-passed outcome with `tests/fixtures/v1510/special_casing_shadow_only.diff` (shadow `SP-001`, score 0.6) is threshold-sampled. Exercise `openai_compatible` only through `httpx.MockTransport` (monkeypatch `app.services.evaluation.judges._TEST_TRANSPORT`); never call a real LLM in tests. Background triage in tests: the `client` fixture points `judge_background._SESSION_FACTORY_OVERRIDE` at the test database (the lifespan would otherwise create a real Postgres `SessionLocal`); wait with `client.portal.call(judge_background.drain_background, 15.0)` instead of polling over HTTP (in-memory SQLite shares one connection). Judge profiles in tests: pass `evaluation_judge_profiles_file=""` (or set `EVALUATION_JUDGE_PROFILES_FILE=`) so a developer's local `config/judge_profiles.yaml` does not leak in.
-  - **Judge activation in tests (v1.5.12)**: `tests/conftest.py` (autouse) resets `activation_state`, sets `activation_state.TRUST_ENV_PROFILE_WITHOUT_PROBE=True` so older tests can select a judge through environment variables without probing, sets `judge_activation.RUN_ON_STARTUP=False` (the lifespan never reaches a real database) and gives `judge_activation._BREAKER_STORE_OVERRIDE` an in-memory store. Use the `activation_gate` fixture to enforce the real probe gate. After writing `judge_profile_states` / `judge_profile_configs` rows directly, call `await judge_activation.refresh_activation_cache(session)`; or `activation_state.install(states, configs)` for pure unit tests. Dashboard judge forms need an `Origin: http://testserver` header and `EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev`.
-
+  - **Test Conventions**: how to trigger `review_required`, `awaiting_approval`, honeypot / attestation, judge / sampling and judge-activation paths in tests (conftest switches, fixtures, `httpx.MockTransport`, never a real LLM) lives in `docs/testing_guide.md` § Agent Test Conventions. Read it before writing tests for those paths.
 ### 2.3 Evaluation & Review Invariants (Apply From `v1.5.8` Onward)
 These rules protect the project's core purpose (reward-hacking detection). A change that would break one of them needs explicit user approval and a plan section explaining why.
 - **Monotonic Safety**: Automated components (rules, detectors, LLM judges, sampling) may only make a verdict stricter or reorder review work. Only a human review decision may accept a run under review. An LLM judge never turns `review` into `pass` and never participates in hard-deny decisions.
@@ -103,10 +98,11 @@ These rules protect the project's core purpose (reward-hacking detection). A cha
 To keep iteration fast while maintaining 100% release quality, follow a **Two-Stage Verification Workflow**:
 
 ### Stage 1: Fast Inner Loop During Development (`< 10s`)
-While implementing and debugging new features, run only the targeted test file(s) and linter:
+While implementing and debugging new features, run only the targeted test file(s), the linter and the architecture contracts. `python scripts/phase_check.py <test files>` runs all of them in order:
 ```bash
 ruff check app tests scripts
-pytest tests/test_v15x_<new_feature>.py -q -W error::DeprecationWarning
+lint-imports
+pytest tests/test_v16x_<new_feature>.py -q -W error::DeprecationWarning
 ```
 
 ### Phased Implementation & Resumption (Large Releases)
@@ -115,6 +111,7 @@ pytest tests/test_v15x_<new_feature>.py -q -W error::DeprecationWarning
 - When resuming (new session, context summary, or after a quota reset): read the progress log, run `git status` and `git diff`, and re-run the Stage 1 tests **before** editing anything. If a phase is incomplete, finish it before starting the next one.
 
 ### Stage 2: Full Release Gate Verification (Run Once After Stage 1 Passes)
+`python scripts/release_gate.py --out <summary.md>` runs steps 1–3 in order and writes a Markdown summary to review before recording it (step 4).
 1. **Automated Suite & Secret Scan**:
    ```bash
    python scripts/security_check.py
@@ -142,12 +139,13 @@ pytest tests/test_v15x_<new_feature>.py -q -W error::DeprecationWarning
 ## 4. Release Version Bump & Documentation Synchronization Checklist
 
 ### 4.1 Code Version Anchors (Update All 6 When Bumping Release Version `vX.Y.Z`)
+Use `python scripts/bump_version.py X.Y.Z` (and `--check` to verify); it fails instead of guessing when an anchor is missing or duplicated.
 1. `pyproject.toml`: `version = "X.Y.Z"`
 2. `app/main.py`: `FastAPI(..., version="X.Y.Z")`
 3. `scripts/security_check.py`: Banner print string `(vX.Y.Z)`
 4. `app/ui/routes.py` & `app/ui/templates/operations.html`: Default `release_version` (`"vX.Y.Z"`)
 5. `scripts/browser_manual_test.py`: Operations release version assertion (`assert release_ver == "vX.Y.Z"`)
-6. `app/services/finops.py`: `FINOPS_CALCULATION_VERSION = "vX.Y.Z"`
+6. `app/services/finops/core.py`: `FINOPS_CALCULATION_VERSION = "vX.Y.Z"`
 
 ### 4.2 Documentation Synchronization & Language Policy
 - **Language Policy**:
@@ -164,7 +162,7 @@ pytest tests/test_v15x_<new_feature>.py -q -W error::DeprecationWarning
 
 - **No Unauthorized Git Mutations**: Do not execute `git commit`, `git push`, or `git reset` unless explicitly commanded by the user, except for the phase and release commits described below.
 - **Release Branch & Commit Authorization**: Implement each release on a local branch named after the version (e.g., `v1.5.8`), never directly on `main`. The user has authorized these commits on that branch:
-  - **Phase commits**: one local commit per implementation phase, made only after that phase's Stage 1 checks (`ruff check app tests scripts` and the targeted pytest files with `-W error::DeprecationWarning`) pass and the plan's progress log is updated. Message format: `wip(vX.Y.Z): P<n> <phase summary>`.
+  - **Phase commits**: one local commit per implementation phase, made only after that phase's Stage 1 checks (`ruff check app tests scripts` and the targeted pytest files with `-W error::DeprecationWarning`) pass and the plan's progress log is updated. Message format: `wip(vX.Y.Z): P<n> <phase summary>`. `python scripts/phase_check.py <tests> --commit "<message>" --paths <files> --trailer "<attribution>"` runs the checks and the guarded commit.
   - **Release commit**: a final commit once the full Stage 2 gate (secret scan, ruff, `git diff --check`, full pytest, Docker migration check, browser E2E) passes with zero failures and the results are recorded in `docs/test_report.md`. Message format: `feat(vX.Y.Z): <release title>`.
   - Never commit while a required check fails or was skipped, and never stage `docs/plan/*.md`. `git push`, opening pull requests, merging, rebasing/squashing, and `git reset` still require an explicit user command.
 - **Merge PR → Sync Local `main`**: When the user says to merge a PR ("合併PR" / "merge the PR"), merge it only if its required CI checks pass and GitHub reports it mergeable; otherwise stop and report. Use the repository's existing merge style (merge commit). After the PR state is confirmed `MERGED`, sync local `main` without asking again:
@@ -181,6 +179,8 @@ pytest tests/test_v15x_<new_feature>.py -q -W error::DeprecationWarning
 ---
 
 ## 6. Special Project Notices
+
+- **Project Skills (Claude Code)**: `.claude/skills/` holds `rh-plan-new-version`, `rh-phase-commit`, `rh-version-bump`, `rh-release-gate` and `rh-testing-conventions`. They only point to the scripts and documents above; the rules in this file stay authoritative for every tool.
 
 - **Primary Entrance**: The root `README.md` serves as the primary gateway for users and external contributors.
 - **Image Generation**: If generating diagrams, infographics, or mockups, default to ChatGPT Image2, save assets with versioned identifiers under `docs/assets/`, and avoid overwriting historical assets.

@@ -200,3 +200,64 @@ def test_release_gate_summary_marks_failures():
     step = release_gate.STEPS[2]
     text = release_gate.render([release_gate.Result(step, 1, 0.5, ["E501 boom"], {})], [release_gate.STEPS[-1]])
     assert "FAILED" in text and "E501 boom" in text and "browser_e2e | skipped" in text
+
+
+# ---------------------------------------------------------------------------
+# D29 project skills and D33 AGENTS.md slimming
+# ---------------------------------------------------------------------------
+
+SKILLS = ("rh-plan-new-version", "rh-phase-commit", "rh-version-bump", "rh-release-gate", "rh-testing-conventions")
+
+
+def _frontmatter(text: str) -> dict[str, str]:
+    assert text.startswith("---\n"), "SKILL.md must start with YAML frontmatter"
+    block = text.split("---\n", 2)[1]
+    fields = {}
+    for line in block.splitlines():
+        key, _, value = line.partition(":")
+        fields[key.strip()] = value.strip()
+    return fields
+
+
+@pytest.mark.parametrize("name", SKILLS)
+def test_skill_frontmatter(name):
+    path = ROOT / ".claude" / "skills" / name / "SKILL.md"
+    text = path.read_text(encoding="utf-8")
+    fields = _frontmatter(text)
+    assert fields.get("name") == name
+    assert len(fields.get("description", "")) >= 80, "description must say when to use the skill"
+    assert len(text.splitlines()) <= 60
+    for script in ("phase_check.py", "bump_version.py", "release_gate.py"):
+        if script in text:
+            assert (ROOT / "scripts" / script).exists()
+
+
+def test_plan_template_has_every_mandatory_section():
+    template = (ROOT / ".claude" / "skills" / "rh-plan-new-version" / "template.md").read_text(encoding="utf-8")
+    for heading in ("## 2. 功能目標與驗收標準", "## 3. UI / Dashboard 驗證指引", "## 4. 實作設計與受影響模組",
+                    "## 5. 驗證測試套件與指令", "## 6. 實作後需同步更新的文件", "## 7. 需記錄至 `docs/test_report.md` 的測試數據",
+                    "## 9. 實作進度紀錄（Implementation Progress Log）", "### 1.4 設計決議"):
+        assert heading in template
+
+
+def test_agents_md_keeps_every_rule():
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    for keyword in ("**Monotonic Safety**", "**Approval ≠ Review**", "**Evidence over Claims**", "**Tampering Outranks Gaming**",
+                    "**Deterministic, Versioned Detectors**", "**Every Detector Rule Has Negative Fixtures**",
+                    "**Monitor-Only Signals**", "**No Unauthorized Git Mutations**", "**Verify Before Committing**",
+                    "**Never Upload `docs/plan/*.md` or `docs/handoff.md`**", "**Router Split Rule", "-W error::DeprecationWarning",
+                    "**Entity ID Prefixes**", "docs/handoff.md"):
+        assert keyword in agents, keyword
+    for script in ("scripts/phase_check.py", "scripts/release_gate.py", "scripts/bump_version.py"):
+        assert script in agents
+    assert "app/services/finops/core.py" in agents
+
+
+def test_test_conventions_moved_not_lost():
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    guide = (ROOT / "docs" / "testing_guide.md").read_text(encoding="utf-8")
+    assert "## Agent Test Conventions" in guide and "§ Agent Test Conventions" in agents
+    for marker in ("**Triggering `review_required` in Tests**", "**Triggering `awaiting_approval` in Tests**",
+                   "**Triggering honeypot / attestation paths in tests**", "**Triggering judge / sampling paths in tests**",
+                   "**Judge activation in tests (v1.5.12)**"):
+        assert marker in guide and marker not in agents

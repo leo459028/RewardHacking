@@ -79,6 +79,16 @@ The test suite incorporates a deterministic red-team adversarial corpus covering
 
 ---
 
+## Agent Test Conventions
+
+How to reach specific code paths in tests. Moved from `AGENTS.md` §2.2 in v1.6.0 so the always-loaded agent file stays short; the rules themselves (zero `DeprecationWarning`, never a real LLM in tests, never commit private keys) still apply.
+
+- **Triggering `review_required` in Tests**: a goal containing `bypass` makes the simulated executor output trip the legacy heuristic (P3); outcome evidence with `tests/fixtures/v158/grader_tampering_eq_true.diff` yields a P0 review.
+- **Triggering `awaiting_approval` in Tests**: In `PolicyEngine`, `constraints.requires_human_approval=True` indicates approval is already satisfied for non-destructive tasks unless a tool in `allowed_tools` has `requires_approval=True` (e.g., `deploy_service`) or `allow_destructive_actions=True` is set.
+- **Triggering honeypot / attestation paths in tests**: record a launch with `honeypot.record_launch()` for a completed run (or `POST /v1/honeypots/{probe_id}/launch`), then submit outcome evidence; generate signing keys at runtime with `cryptography` and never commit private keys (summary report digest = canonical JSON, see `docs/evaluation.md` §2.1).
+- **Triggering judge / sampling paths in tests**: the suite sets `EVALUATION_SAMPLE_RANDOM_RATE=0` in `tests/conftest.py`; set `EVALUATION_SAMPLE_SECRET` and the rate explicitly to exercise random audits. A rule-passed outcome with `tests/fixtures/v1510/special_casing_shadow_only.diff` (shadow `SP-001`, score 0.6) is threshold-sampled. Exercise `openai_compatible` only through `httpx.MockTransport` (monkeypatch `app.services.evaluation.judges._TEST_TRANSPORT`); never call a real LLM in tests. Background triage in tests: the `client` fixture points `judge_background._SESSION_FACTORY_OVERRIDE` at the test database (the lifespan would otherwise create a real Postgres `SessionLocal`); wait with `client.portal.call(judge_background.drain_background, 15.0)` instead of polling over HTTP (in-memory SQLite shares one connection). Judge profiles in tests: pass `evaluation_judge_profiles_file=""` (or set `EVALUATION_JUDGE_PROFILES_FILE=`) so a developer's local `config/judge_profiles.yaml` does not leak in.
+- **Judge activation in tests (v1.5.12)**: `tests/conftest.py` (autouse) resets `activation_state`, sets `activation_state.TRUST_ENV_PROFILE_WITHOUT_PROBE=True` so older tests can select a judge through environment variables without probing, sets `judge_activation.RUN_ON_STARTUP=False` (the lifespan never reaches a real database) and gives `judge_activation._BREAKER_STORE_OVERRIDE` an in-memory store. Use the `activation_gate` fixture to enforce the real probe gate. After writing `judge_profile_states` / `judge_profile_configs` rows directly, call `await judge_activation.refresh_activation_cache(session)`; or `activation_state.install(states, configs)` for pure unit tests. Dashboard judge forms need an `Origin: http://testserver` header and `EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev`.
+
 ## CI / CD Verification Gate
 
 Every GitHub pull request and commit to `main` triggers automated verification via `.github/workflows/ci.yml`:
