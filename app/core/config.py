@@ -71,6 +71,14 @@ class Settings(BaseSettings):
     audit_retention_purge_batch_size: int = 500
     audit_retention_plan_ttl_minutes: int = 60
     finops_ledger_retention_days: int = 2555  # report only; the FinOps ledger is never deleted
+    # v1.6.0 D21 / D23: sandbox spec. "simulated" (nothing is executed) is the only backend in this release;
+    # the isolation requirement is recorded in the tool transcript and enforced from v1.6.1.
+    sandbox_backend: str = "simulated"
+    sandbox_high_risk_threshold: float | None = None  # None -> DEFAULT_RISK_THRESHOLD
+    sandbox_min_isolation_default: str = "container"
+    sandbox_min_isolation_high_risk: str = "gvisor"
+    sandbox_max_timeout_seconds: int = 300
+    sandbox_max_output_bytes: int = 1048576
     # v1.6.0 D5: optional OpenTelemetry export (endpoint / service name / sampler use the standard OTEL_* variables)
     otel_enabled: bool = False
     otel_trace_ui_url_template: str = ""

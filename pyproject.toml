@@ -71,6 +71,12 @@ source_modules = ["app.services"]
 forbidden_modules = ["app.api", "app.ui"]
 
 [[tool.importlinter.contracts]]
+name = "The sandbox package is independent of the HTTP, Dashboard and worker layers"
+type = "forbidden"
+source_modules = ["app.services.sandbox"]
+forbidden_modules = ["app.api", "app.ui", "app.workers"]
+
+[[tool.importlinter.contracts]]
 name = "FinOps submodules are layered (higher layers may import lower ones, never the reverse)"
 type = "layers"
 containers = ["app.services.finops"]

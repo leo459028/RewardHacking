@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
+from app.core import tracing
 from app.schemas.agent import AgentRequest
+from app.services.sandbox import ExecutionSpec, Limits, Mount, SandboxBackend, get_backend, isolation_satisfied, required_isolation
 
 
 TASK_TOOL_ALLOWLIST: dict[str, set[str]] = {
@@ -42,14 +45,71 @@ def _tool_allowed(
     return tool_name in task_allowlist
 
 
+def _sandbox_execution(
+    backend: SandboxBackend,
+    settings: Any,
+    *,
+    tool_name: str,
+    tool_def: dict | None,
+    simulated_output: dict[str, str],
+    risk_score: float | None,
+    labels: dict[str, str],
+) -> dict[str, object]:
+    """v1.6.0 D23: run one allowed tool through the sandbox backend and describe it for the transcript.
+
+    Hashes and identifiers only. The isolation requirement is recorded, not enforced, in this release (D21).
+    """
+    caps = backend.capabilities()
+    cap = caps.max_limits
+    spec = ExecutionSpec(
+        tool_name=tool_name,
+        argv=(tool_name,),
+        limits=Limits(
+            timeout_seconds=min(60, cap.get("timeout_seconds", 60)),
+            cpu_millis=min(1000, cap.get("cpu_millis", 1000)),
+            memory_mb=min(512, cap.get("memory_mb", 512)),
+            pids=min(64, cap.get("pids", 64)),
+            max_output_bytes=min(65536, cap.get("max_output_bytes", 65536)),
+            max_output_files_bytes=min(1_048_576, cap.get("max_output_files_bytes", 1_048_576)),
+        ),
+        mounts=(Mount(source_ref="workspace", target="/workspace"),),
+        labels=labels,
+        simulation={"stdout": json.dumps(simulated_output, sort_keys=True)},
+    )
+    required = required_isolation(risk_score, tool_def, settings)
+    with tracing.start_span("sandbox.run", attributes={"rh.tool_name": tool_name, "rh.sandbox.backend": caps.backend_id}) as span:
+        result = backend.run(spec)
+        span.set_attributes({"rh.sandbox.status": result.status, "rh.sandbox.isolation_level": result.isolation_level})
+    entry: dict[str, object] = {
+        "backend_id": result.backend_id,
+        "backend_version": result.backend_version,
+        "isolation_level": result.isolation_level,
+        "status": result.status,
+        "spec_digest": result.spec_digest,
+        "output_sha256": result.stdout_sha256,
+        "required_isolation": required.label,
+        "isolation_satisfied": isolation_satisfied(result.isolation_level, required),
+    }
+    if result.rejection_reasons:
+        entry["rejection_reasons"] = list(result.rejection_reasons)
+    return entry
+
+
 class BoundedToolExecutor:
     def execute(
         self,
         request: AgentRequest,
         *,
         allowed_tool_map: dict[str, dict] | None = None,
+        risk_score: float | None = None,
+        run_id: str = "",
     ) -> ToolExecutionResult:
+        from app.core.config import get_settings
         from app.services.mcp_gateway import resolve_tool_mcp_server, validate_tool_output
+
+        settings = get_settings()
+        backend = get_backend(settings)
+        labels = {"run_id": run_id, "tenant_id": request.tenant_id or "default"}
 
         if isinstance(request.metadata, dict) and request.metadata.get("simulate_worker_failure"):
             reason = str(request.metadata.get("failure_reason") or "Simulated worker tool execution failure.")
@@ -117,6 +177,15 @@ class BoundedToolExecutor:
                     "artifact_refs": [],
                     "schema_validation": schema_status,
                     **mcp_meta,
+                    "sandbox_execution": _sandbox_execution(
+                        backend,
+                        settings,
+                        tool_name=tool_name,
+                        tool_def=tool_def,
+                        simulated_output=simulated_output,
+                        risk_score=risk_score,
+                        labels=labels,
+                    ),
                 }
             )
 

@@ -192,9 +192,11 @@ class AgentOrchestrator:
 
         with tracing.start_span("executor.execute", attributes={"rh.run_id": run_id, "rh.task_type": cleaned_request.task_type}) as span:
             if allowed_tool_map is not None:
-                execution: ToolExecutionResult = self.executor.execute(cleaned_request, allowed_tool_map=allowed_tool_map)
+                execution: ToolExecutionResult = self.executor.execute(
+                    cleaned_request, allowed_tool_map=allowed_tool_map, risk_score=policy.risk_score, run_id=run_id
+                )
             else:
-                execution = self.executor.execute(cleaned_request)
+                execution = self.executor.execute(cleaned_request, risk_score=policy.risk_score, run_id=run_id)
             span.set_attributes({"rh.tool_count": len(execution.tool_transcript)})
         with tracing.start_span("evaluation.evaluate", attributes={"rh.run_id": run_id}) as span:
             evaluation = self.evaluator.evaluate(cleaned_request, execution.output, policy.flags)
