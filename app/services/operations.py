@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
+from app.models.access import DashboardUser
 from app.models.agent_run import AgentRun
 from app.models.approval_event import ApprovalEvent
 from app.models.evaluation_review import EvaluationReview
@@ -399,6 +400,43 @@ async def _retention_policy_check(session: AsyncSession, *, settings: Settings) 
     )
 
 
+async def _dashboard_auth_mode_check(session: AsyncSession, *, settings: Settings) -> OperationsCheck:
+    """v1.6.1 D9 / D14: Dashboard sign-in must be on in production; deprecated Basic Auth settings are flagged."""
+    mode = settings.dashboard_auth_mode
+    prod = (settings.app_env or "").strip().lower() == "prod"
+    admins = int(
+        await session.scalar(
+            select(func.count()).select_from(DashboardUser).where(DashboardUser.role == "admin", DashboardUser.status == "active")
+        )
+        or 0
+    )
+    problems: list[str] = []
+    if mode == "off":
+        status = "fail" if prod else "pass"
+        detail = "Dashboard sign-in is off (DASHBOARD_AUTH_MODE=off): no accounts, local development only."
+        if prod:
+            problems.append("auth_off_in_prod")
+    else:
+        status = "pass"
+        detail = f"Dashboard sign-in is on (session mode); {admins} active admin account(s)."
+        if admins == 0:
+            status = "warn"
+            problems.append("no_active_admin")
+            detail += " Create one with: python -m app.jobs.users create --role admin ..."
+    if settings.dashboard_legacy_credentials_set:
+        problems.append("legacy_basic_auth_settings")
+        detail += " DASHBOARD_USERNAME / DASHBOARD_PASSWORD are deprecated and ignored; remove them."
+        if status == "pass":
+            status = "warn"
+    return OperationsCheck(
+        check_key="dashboard_auth_mode",
+        status=status,
+        title="Dashboard sign-in",
+        detail=detail,
+        metadata={"mode": mode, "app_env": settings.app_env, "active_admins": admins, "problems": problems},
+    )
+
+
 def _sandbox_backend_health_check(settings: Settings) -> OperationsCheck:
     """v1.6.0 D24: the configured backend must load and pass the conformance smoke cases."""
     report = sandbox_health.status_report(settings)
@@ -550,6 +588,7 @@ async def compute_operations_readiness(
     checks = [
         await _retention_policy_check(session, settings=settings),
         _sandbox_backend_health_check(settings),
+        await _dashboard_auth_mode_check(session, settings=settings),
         OperationsCheck(
             check_key="stale_queued_runs",
             status="fail" if stale_queued else "pass",

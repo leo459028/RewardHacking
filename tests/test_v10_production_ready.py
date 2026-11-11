@@ -54,6 +54,22 @@ def reset_v10_settings(monkeypatch, **env):
     get_settings.cache_clear()
 
 
+def _seed_dashboard_admin(session_factory) -> None:
+    import asyncio
+    import secrets
+
+    from app.services.access import users
+
+    async def scenario():
+        async with session_factory() as session:
+            await users.create_user(
+                session, get_settings(), username="gate-admin", password="pw-" + secrets.token_hex(8), role="admin", actor="test"
+            )
+            await session.commit()
+
+    asyncio.run(scenario())
+
+
 def _create_active_tenant_key(client: TestClient) -> None:
     tenant = client.post(
         "/v1/tenants",
@@ -133,7 +149,11 @@ def test_prod_readiness_passes_with_fresh_safety_regression_evidence(
         AUTH_ENABLED="false",
         API_KEYS="",
         QUOTA_ENABLED="false",
+        # v1.6.1 D9: a production gate also needs Dashboard sign-in with an active admin account.
+        DASHBOARD_AUTH_MODE="session",
+        DASHBOARD_PASSWORD_SCRYPT_N="16",
     )
+    _seed_dashboard_admin(session_factory)
 
     with v10_client(session_factory) as client:
         _create_active_tenant_key(client)

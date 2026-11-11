@@ -32,9 +32,9 @@
 
 <section class="panel" id="judge-editing">
   {% if editing.allowed %}
-    {% if editing.warning %}<div class="error" role="alert" id="judge-insecure-dev">⚠ {{ editing.reason }}</div>{% else %}<p class="muted">Editing enabled (Dashboard Basic Auth with non-default credentials).</p>{% endif %}
+    {% if editing.warning %}<div class="error" role="alert" id="judge-insecure-dev">⚠ {{ editing.reason }}</div>{% else %}<p class="muted">Editing enabled (Dashboard sign-in is on).{% if editing.reason %} {{ editing.reason }}{% endif %}</p>{% endif %}
   {% else %}
-  <p id="judge-read-only"><strong>Read-only | 唯讀</strong> — {{ editing.reason }} Enable Dashboard Basic Auth with your own credentials, or set <code>EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev</code> on a local machine only.</p>
+  <p id="judge-read-only"><strong>Read-only | 唯讀</strong> — {{ editing.reason }} Turn on Dashboard sign-in (<code>DASHBOARD_AUTH_MODE=session</code>), or set <code>EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev</code> on a local machine only.</p>
   {% endif %}
   <p class="muted">API keys are never entered or shown here: a profile names the environment variable that holds its key (<code>api_key_env</code>, ending in <code>_API_KEY</code>). Entering keys in the page waits for Dashboard RBAC (v1.6.x).</p>
 </section>

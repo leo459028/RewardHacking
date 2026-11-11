@@ -200,24 +200,24 @@ def test_governance_summary_and_dashboard_render(monkeypatch, session_factory, l
         assert "tenant-a" in runs.text
 
 
-def test_dashboard_basic_auth_can_protect_dashboard(monkeypatch, session_factory):
-    reset_settings(
-        monkeypatch,
-        QUOTA_ENABLED="false",
-        DASHBOARD_AUTH_ENABLED="true",
-        DASHBOARD_USERNAME="operator",
-        DASHBOARD_PASSWORD="secret",
-    )
+def test_dashboard_sign_in_protects_dashboard(monkeypatch, session_factory):
+    # v1.6.1 D9 / D10: HTTP Basic Auth was removed; DASHBOARD_AUTH_ENABLED=true now means session sign-in.
+    # tests/conftest.py pins DASHBOARD_AUTH_MODE=off, so drop it to let the old flag derive the mode.
+    monkeypatch.delenv("DASHBOARD_AUTH_MODE", raising=False)
+    reset_settings(monkeypatch, QUOTA_ENABLED="false", DASHBOARD_AUTH_ENABLED="true")
 
     with governance_client(session_factory) as client:
-        missing = client.get("/dashboard")
+        missing = client.get("/dashboard", follow_redirects=False)
         token = base64.b64encode(b"operator:secret").decode("ascii")
-        accepted = client.get("/dashboard", headers={"Authorization": f"Basic {token}"})
+        basic = client.get("/dashboard", headers={"Authorization": f"Basic {token}"}, follow_redirects=False)
+        login = client.get(missing.headers["location"])
 
-        assert missing.status_code == 401
-        assert missing.headers["www-authenticate"] == "Basic"
-        assert accepted.status_code == 200
-        assert "Guardrail Overview" in accepted.text
+        assert missing.status_code == 303
+        assert missing.headers["location"] == "/dashboard/login?next=%2Fdashboard"
+        assert "www-authenticate" not in missing.headers
+        assert basic.status_code == 303  # Basic credentials are no longer accepted
+        assert login.status_code == 200 and 'action="/dashboard/login"' in login.text
+    get_settings.cache_clear()
 
 
 def test_quota_counter_uses_in_memory_store_directly(monkeypatch):

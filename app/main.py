@@ -4,7 +4,7 @@ from time import perf_counter
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from app.api.routers.benchmark import router as benchmark_router
 from app.api.routers.evaluations import router as evaluations_router
@@ -22,12 +22,14 @@ from app.services import judge_activation
 from app.services.retention import RetentionError
 from app.services.evaluation.judges.profiles import load_profiles
 from app.observability.metrics import HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_TOTAL
+from app.ui.routers.access import router as access_ui_router
 from app.ui.routers.benchmark import router as benchmark_ui_router
 from app.ui.routers.judges import router as judges_ui_router
 from app.ui.routers.operations import router as operations_ui_router
 from app.ui.routers.retention import router as retention_ui_router
 from app.ui.routers.reviews import router as reviews_ui_router
 from app.ui.routes import router as ui_router
+from app.ui.security import ACCOUNT_PATH, DashboardSignInRequired, PasswordChangeRequired, login_redirect_url
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -145,6 +147,28 @@ async def retention_exception_handler(request: Request, exc: RetentionError):
     return JSONResponse(status_code=exc.status_code, content={"error": error})
 
 
+@app.exception_handler(DashboardSignInRequired)
+async def dashboard_sign_in_required_handler(request: Request, exc: DashboardSignInRequired):
+    """v1.6.1 feature five: pages redirect to the sign-in page; any other method gets 401 and nothing runs."""
+    if request.method in {"GET", "HEAD"}:
+        return RedirectResponse(login_redirect_url(exc.next_path), status_code=303)
+    return JSONResponse(
+        status_code=401,
+        content={"error": {"code": "dashboard_sign_in_required", "message": "Sign in to the Dashboard first."}},
+    )
+
+
+@app.exception_handler(PasswordChangeRequired)
+async def password_change_required_handler(request: Request, exc: PasswordChangeRequired):
+    """v1.6.1 D13: until the password is changed, only the account page and sign-out are reachable."""
+    if request.method in {"GET", "HEAD"}:
+        return RedirectResponse(f"{ACCOUNT_PATH}?must_change=1", status_code=303)
+    return JSONResponse(
+        status_code=403,
+        content={"error": {"code": "password_change_required", "message": "Change your password first."}},
+    )
+
+
 @app.exception_handler(RunPurgedError)
 async def run_purged_exception_handler(request: Request, exc: RunPurgedError):
     """v1.6.0 D17: a purged run answers 410 with its hash-only tombstone summary."""
@@ -177,6 +201,7 @@ app.include_router(benchmark_router)
 app.include_router(operations_router)
 app.include_router(retention_router)
 app.include_router(sandbox_router)
+app.include_router(access_ui_router)
 app.include_router(ui_router)
 app.include_router(reviews_ui_router)
 app.include_router(benchmark_ui_router)

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Account | 帳號 - Reward Guardrail{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Account<span class="heading-note">我的帳號</span></h1>
+  </div>
+</div>
+
+{% if principal.synthetic %}
+<section class="panel">
+  <p>Dashboard sign-in is off (<code>DASHBOARD_AUTH_MODE=off</code>), so there is no personal account. Local development only. | Dashboard 驗證關閉，沒有個人帳號，僅供本機開發。</p>
+</section>
+{% else %}
+{% if must_change %}<div class="error" role="alert" data-testid="must-change">You must change your password before using the Dashboard. | 第一次登入或密碼被重設，請先修改密碼。</div>{% endif %}
+{% if notice == "password_changed" %}<div class="success">Password changed. Other sessions were signed out. | 密碼已修改，其他工作階段已登出。</div>{% endif %}
+{% if error %}<div class="error" role="alert" data-testid="account-error">Password not changed: <code>{{ error }}</code></div>{% endif %}
+
+<section class="panel">
+  <h2>Profile<span class="heading-note">基本資料</span></h2>
+  <table>
+    <tr><th>Username | 帳號</th><td data-testid="account-username">{{ principal.username }}</td></tr>
+    <tr><th>Display name | 顯示名稱</th><td>{{ principal.display_name or "-" }}</td></tr>
+    <tr><th>Role | 角色</th><td data-testid="account-role">{{ principal.role }}</td></tr>
+    <tr><th>Tenant | 租戶</th><td>{{ principal.tenant_id or "platform | 平台層" }}</td></tr>
+    <tr><th>Audit actor | 稽核身分</th><td><code>{{ principal.actor }}</code></td></tr>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Change password<span class="heading-note">修改密碼</span></h2>
+  <p class="muted">At least {{ min_length }} characters, not your username and not a common password. Changing it signs out your other sessions. | 至少 {{ min_length }} 個字元，不可與帳號相同或是常見密碼；修改後其他工作階段會登出。</p>
+  <form method="post" action="/dashboard/account/password" class="form-grid">
+    <input type="hidden" name="next" value="{{ next_path }}">
+    <label>Current password | 目前密碼<input name="current_password" type="password" autocomplete="current-password" required></label>
+    <label>New password | 新密碼<input name="new_password" type="password" autocomplete="new-password" minlength="{{ min_length }}" required></label>
+    <label>Repeat new password | 再輸入一次<input name="confirm_password" type="password" autocomplete="new-password" minlength="{{ min_length }}" required></label>
+    <div class="checkline"><button class="button" type="submit">Change password | 修改密碼</button></div>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Active sessions<span class="heading-note">登入中的工作階段</span></h2>
+  <table>
+    <thead><tr><th>Session</th><th>Signed in | 登入時間</th><th>Last seen | 最近活動</th><th>Expires | 到期</th></tr></thead>
+    <tbody>
+    {% for item in sessions %}
+      <tr><td><code>{{ item.session_id }}</code>{% if item.session_id == principal.session_id %} <span class="flag">this browser</span>{% endif %}</td>
+        <td>{{ item.created_at }}</td><td>{{ item.last_seen_at }}</td><td>{{ item.expires_at }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}

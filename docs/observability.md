@@ -53,6 +53,8 @@ RewardHacking provides deep observability across API gateways, background worker
 | `agent_evaluation_judge_latency_seconds` | Histogram | `provider` | Judge primary-provider latency (observed for network providers) |
 | `agent_evaluation_judge_tokens_total` | Counter | `provider`, `direction` | Judge tokens (`input`, `output`) |
 | `agent_evaluation_review_sampling_total` | Counter | `slice`, `decision`, `reason` | Sampling decisions for rule-passed runs (`threshold` / `random` / `none`; `sampled` / `skipped` / `not_selected`; skip reason or `none`) |
+| `dashboard_logins_total` | Counter | `result` | `v1.6.1` Dashboard sign-in attempts: `success`, `unknown_user`, `wrong_password`, `lockout`, `locked`, `disabled` (internal detail; the sign-in page always shows one generic message) |
+| `dashboard_access_denied_total` | Counter | `reason` | `v1.6.1` requests refused by the Dashboard access layer (`sign_in_required`, `password_change_required`; permission and CSRF reasons from P3 / P4) |
 | `agent_evaluation_triage_precision_at_k` | Gauge | `ranking`, `k` | Latest benchmark triage precision@K (`rule_only`, `judge_only`, `combined`; `5`, `10`, `20`, `budget_0.01`, `budget_0.05`, `budget_0.10`) |
 
 ---

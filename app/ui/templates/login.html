@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Sign in | 登入 - Reward Guardrail{% endblock %}
+{% block content %}
+<section class="auth-card panel">
+  <h1>Sign in<span class="heading-note">登入 Reward Guardrail Dashboard</span></h1>
+  {% if error %}<div class="error" role="alert" data-testid="login-error">{{ error }}</div>{% endif %}
+  {% for provider in providers %}
+    {% if provider.kind == "password" %}
+    <form method="post" action="/dashboard/login" class="grid" data-provider="{{ provider.name }}">
+      <input type="hidden" name="provider" value="{{ provider.name }}">
+      <input type="hidden" name="next" value="{{ next_path }}">
+      <label>Username | 帳號
+        <input name="username" autocomplete="username" value="{{ username }}" required autofocus>
+      </label>
+      <label>Password | 密碼
+        <input name="password" type="password" autocomplete="current-password" required>
+      </label>
+      <button class="button" type="submit">Sign in | 登入</button>
+    </form>
+    {% endif %}
+  {% endfor %}
+  <p class="muted">Accounts are created by an administrator. Forgot your password? Ask an administrator to reset it. | 帳號由管理員建立；忘記密碼請洽管理員重設。</p>
+</section>
+{% endblock %}

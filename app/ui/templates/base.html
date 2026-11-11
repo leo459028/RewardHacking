@@ -179,6 +179,13 @@
     .success { background: #ecfdf3; border: 1px solid #abefc6; border-radius: 8px; color: var(--ok); padding: 12px; margin-bottom: 12px; }
     .error { background: #fef3f2; border: 1px solid #fecdca; border-radius: 8px; color: var(--danger); padding: 12px; }
     .decision-form { display: grid; gap: 8px; min-width: 220px; }
+    .app-shell.bare { grid-template-columns: 1fr; }
+    .auth-card { margin: 8vh auto 0; max-width: 420px; }
+    .sidebar-user { border-top: 1px solid #344054; margin-top: 16px; padding-top: 12px; font-size: 13px; color: #cdd7d6; }
+    .sidebar-user strong { color: #ffffff; display: block; }
+    .sidebar-user form { margin-top: 8px; }
+    .sidebar-user .button { min-height: 30px; padding: 4px 10px; font-size: 13px; }
+    .auth-off-banner { background: #fffaeb; border: 1px solid #fedf89; border-radius: 8px; color: var(--warning); font-size: 13px; font-weight: 700; margin-bottom: 14px; padding: 8px 12px; }
     @media (max-width: 980px) {
       .app-shell { grid-template-columns: 1fr; }
       .sidebar { height: auto; position: static; }
@@ -188,7 +195,9 @@
   </style>
 </head>
 <body>
-  <div class="app-shell">
+  {% set principal_ = dashboard_user(request) if request is defined else none %}
+  <div class="app-shell{{ ' bare' if bare else '' }}">
+    {% if not bare %}
     <aside class="sidebar">
       <div class="brand">Reward Guardrail<span>Operational Dashboard</span></div>
       <nav class="nav">
@@ -207,10 +216,25 @@
         <a class="{{ 'active' if active == 'operations' else '' }}" href="/dashboard/operations">Operations</a>
         <a class="{{ 'active' if active == 'retention' else '' }}" href="/dashboard/retention">Retention | 資料保留</a>
         <a class="{{ 'active' if active == 'playground' else '' }}" href="/dashboard/playground">Playground</a>
+        {% if principal_ and not principal_.synthetic %}
+        <a class="{{ 'active' if active == 'users' else '' }}" href="/dashboard/admin/users">Users | 使用者</a>
+        {% endif %}
         <a href="/docs">OpenAPI</a>
       </nav>
+      {% if principal_ and not principal_.synthetic %}
+      <div class="sidebar-user" data-testid="sidebar-user">
+        <strong>{{ principal_.username }}</strong>
+        {{ principal_.role }}{% if principal_.tenant_id %} · {{ principal_.tenant_id }}{% endif %}
+        <div><a href="/dashboard/account">Account | 我的帳號</a></div>
+        <form method="post" action="/dashboard/logout"><button class="button secondary" type="submit">Sign out | 登出</button></form>
+      </div>
+      {% endif %}
     </aside>
+    {% endif %}
     <main>
+      {% if not bare and principal_ and principal_.synthetic %}
+      <div class="auth-off-banner" data-testid="auth-off-banner">Dashboard sign-in is off (DASHBOARD_AUTH_MODE=off): local development only. | Dashboard 驗證關閉，僅供本機開發。</div>
+      {% endif %}
       {% block content %}{% endblock %}
     </main>
   </div>

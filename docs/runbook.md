@@ -183,7 +183,7 @@ docker compose logs --tail=100 -f worker
   2. **`probe_failed` / `not_probed`**: fix the endpoint (see §10), then **Test**. The row lists every remaining activation condition (key, HTTPS, external switch, pricing or cap).
   3. **Breaker open** (*Offline (breaker)*, `open_breakers` in the health check): the profile failed `EVALUATION_JUDGE_BREAKER_FAILURE_THRESHOLD` times in a row; triage uses its fallback chain or the rule-based judge. It retries automatically after `EVALUATION_JUDGE_BREAKER_TTL_SECONDS`. Fix the backend; no manual reset is needed.
   4. **Stop using an LLM judge now**: **Use rule-based judge** on the page (or `POST /v1/evaluations/judge/deactivate`). If `EVALUATION_JUDGE_PROFILE` selects the profile, change `.env` and restart.
-  5. **Page is read-only**: enable Dashboard Basic Auth with non-default credentials, or set `EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev` on a local machine only.
+  5. **Page is read-only**: turn on Dashboard sign-in (`DASHBOARD_AUTH_MODE=session`, `v1.6.1`), or set `EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev` on a local machine with sign-in off.
 
 ### 12. Audit Retention Purge, Legal Holds & Purged Runs (`v1.6.0`)
 - **Default is safe**: `AUDIT_RETENTION_PURGE_MODE=plan` creates dry-run plans only; `apply` answers `409 retention_apply_disabled`. `off` refuses both. Nothing is ever deleted automatically by the application.
@@ -199,3 +199,13 @@ docker compose logs --tail=100 -f worker
 - **A run returns `410 run_purged`**: it was purged; the body carries the tombstone (purge id, time, record counts, `content_digest`). Run Detail shows the same notice with HTTP 200. Its FinOps ledger (`/v1/cost/runs/{run_id}`, `/v1/usage-events/runs/{run_id}`) is kept.
 - **FinOps ledger**: never deleted. `GET /v1/retention/finops-ledger-report` lists rows past `FINOPS_LEDGER_RETENTION_DAYS` (default 2555) for an external archival decision.
 - **Why a run is never purged**: high or critical incidents (no closure workflow yet), honeypot launches, active benchmark references, open reviews and decided reviews whose label was not exported to the benchmark (export it first).
+
+### 13. Dashboard Sign-In and Accounts (`v1.6.1`)
+- **Turn sign-in on**: set `DASHBOARD_AUTH_MODE=session` (or the older `DASHBOARD_AUTH_ENABLED=true`), restart the api, then create the first admin. Remove `DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD`; they are ignored and the `dashboard_auth_mode` operations check warns while they are set.
+- **Create the first admin** (the password never goes on the command line): `docker compose exec -e RH_NEW_PASSWORD -T api python -m app.jobs.users create --username alice --role admin --password-env RH_NEW_PASSWORD`, or pipe it on standard input. The first sign-in asks for a new password. Output is one JSON line; exit `2` means refused (`error.code`).
+- **Locked account** (5 wrong passwords, 15 minutes): wait, or **Unlock** on `/dashboard/admin/users`, or `python -m app.jobs.users unlock --username <name>`. The sign-in page never says an account is locked (no account enumeration); look for `access.lockout` events on `/dashboard/governance` (tenant `system`).
+- **Forgotten password**: an admin uses **Reset password** (or `python -m app.jobs.users reset-password --username <name>` with standard input or `--password-env`); the user must change it at the next sign-in. Every session of that user ends.
+- **Lost the only admin password**: `python -m app.jobs.users reset-password --username <admin>` on the server.
+- **Suspected stolen session**: **Sign out everywhere** for that user on `/dashboard/admin/users`, or disable the account (`python -m app.jobs.users disable --username <name>`); both revoke every session at once.
+- **Other CLI commands**: `list`, `enable`, `set-role --role <role> [--tenant-id <id>]` (a role change signs the user out).
+- **`dashboard_auth_mode` check**: `fail` = sign-in is off in `APP_ENV=prod`; `warn` = no active admin account yet, or the deprecated Basic Auth variables are still set.

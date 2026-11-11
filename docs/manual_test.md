@@ -34,7 +34,7 @@ Open your web browser (Chrome, Edge, or Firefox) and navigate to:
 - **Dashboard Home**: `http://localhost:8000/dashboard`
 - **Swagger UI (Interactive API)**: `http://localhost:8000/docs`
 
-> **Note on Dashboard Authentication**: By default in `.env.example`, `DASHBOARD_AUTH_ENABLED=false`. If you set `DASHBOARD_AUTH_ENABLED=true`, your browser will prompt for HTTP Basic Auth credentials (`DASHBOARD_USERNAME=admin`, `DASHBOARD_PASSWORD=admin`).
+> **Note on Dashboard Authentication**: By default in `.env.example`, `DASHBOARD_AUTH_ENABLED=false` (`DASHBOARD_AUTH_MODE=off`, no sign-in). Since `v1.6.1`, `DASHBOARD_AUTH_ENABLED=true` (or `DASHBOARD_AUTH_MODE=session`) shows the `/dashboard/login` page instead of an HTTP Basic Auth prompt; create an account first with `python -m app.jobs.users create --username <name> --role admin --password-env <VAR>`.
 
 ---
 

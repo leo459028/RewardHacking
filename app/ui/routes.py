@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import json
 import re
-import secrets
 import uuid
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
@@ -120,29 +118,15 @@ from app.schemas.finops import (
 )
 from app.services.pricing_import import apply_pricing_seed, dry_run_pricing_seed, load_pricing_seed
 from app.services.run_state import RunStateStore
+from app.services.access.principal import Principal
+from app.ui.security import dashboard_principal, install_template_globals
 from app.workers.producer import make_event
 
-security = HTTPBasic(auto_error=False)
 
-
-def dashboard_auth(credentials: HTTPBasicCredentials | None = Depends(security)) -> None:
-    settings = get_settings()
-    if not settings.dashboard_auth_enabled:
-        return
-    if credentials is None:
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "dashboard_auth_required", "message": "Dashboard auth is required."},
-            headers={"WWW-Authenticate": "Basic"},
-        )
-    valid_user = secrets.compare_digest(credentials.username, settings.dashboard_username)
-    valid_password = secrets.compare_digest(credentials.password, settings.dashboard_password)
-    if not (valid_user and valid_password):
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "invalid_dashboard_credentials", "message": "Dashboard credentials are invalid."},
-            headers={"WWW-Authenticate": "Basic"},
-        )
+async def dashboard_auth(principal: Principal = Depends(dashboard_principal)) -> Principal:
+    """v1.6.1: kept under its old name for the routers that import it; the identity logic lives in
+    ``app.ui.security.dashboard_principal`` (HTTP Basic Auth was removed, plan D9 / Q1)."""
+    return principal
 
 
 router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth)])
@@ -155,6 +139,7 @@ def _json_pretty(value: object) -> str:
 
 templates.env.filters["json_pretty"] = _json_pretty
 templates.env.filters["decimal_plain"] = format_decimal_plain
+install_template_globals(templates)
 
 
 async def _attach_execution_plan(

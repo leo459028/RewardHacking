@@ -20,6 +20,10 @@ from app.services.run_state import InMemoryRunStateStore
 # tests enable it explicitly with a fixed EVALUATION_SAMPLE_SECRET. Settings are read lazily, so this
 # takes effect before any test builds them.
 os.environ.setdefault("EVALUATION_SAMPLE_RANDOM_RATE", "0")
+# v1.6.1 D48: the suite runs with Dashboard sign-in off, whatever a developer's .env says (the browser E2E stack sets
+# DASHBOARD_AUTH_ENABLED=true locally). Tests for session mode set DASHBOARD_AUTH_MODE=session themselves, usually
+# through the ``signed_in`` fixture.
+os.environ["DASHBOARD_AUTH_MODE"] = "off"
 
 
 @pytest.fixture(autouse=True)
@@ -129,3 +133,59 @@ def high_risk_payload():
             "allow_pii_access": True,
         },
     }
+
+
+class SignedIn:
+    """A Dashboard user signed in on the shared test client (v1.6.1 D48). ``password`` is generated at run time."""
+
+    def __init__(self, client, user, password: str, token: str, session_id: str) -> None:
+        self.client = client
+        self.user = user
+        self.user_id = user.user_id
+        self.username = user.username
+        self.password = password
+        self.token = token
+        self.session_id = session_id
+
+
+@pytest.fixture
+def signed_in(client, session_factory, monkeypatch):
+    """Switch the app to ``DASHBOARD_AUTH_MODE=session`` (cheap scrypt) and return ``sign_in(role=..., tenant_id=...)``.
+
+    Each call creates a user plus a live session directly in the test database and puts its ``rh_session`` cookie on
+    ``client`` (one cookie jar: the latest call wins). P4 adds the CSRF token to this wrapper.
+    """
+    import secrets as _secrets
+
+    from app.services.access import sessions as access_sessions
+    from app.services.access import users as access_users
+
+    monkeypatch.setenv("DASHBOARD_AUTH_MODE", "session")
+    monkeypatch.setenv("DASHBOARD_PASSWORD_SCRYPT_N", "16")
+    monkeypatch.setenv("DASHBOARD_PASSWORD_SCRYPT_R", "1")
+    monkeypatch.setenv("DASHBOARD_PASSWORD_SCRYPT_P", "1")
+    get_settings.cache_clear()
+    counter = {"n": 0}
+
+    def sign_in(role: str = "admin", tenant_id: str | None = None, username: str | None = None, must_change_password: bool = False):
+        counter["n"] += 1
+        name = username or f"{role.replace('_', '-')}-{counter['n']}"
+        password = "pw-" + _secrets.token_hex(8)
+        settings = get_settings()
+
+        async def scenario():
+            async with session_factory() as session:
+                user = await access_users.create_user(
+                    session, settings, username=name, password=password, role=role, tenant_id=tenant_id,
+                    actor="test", must_change_password=must_change_password,
+                )
+                token, row = await access_sessions.create_session(session, settings, user, auth_method="local_password")
+                await session.commit()
+                return user, token, row.session_id
+
+        user, token, session_id = asyncio.run(scenario())
+        client.cookies.set(access_sessions.COOKIE_NAME, token)
+        return SignedIn(client, user, password, token, session_id)
+
+    yield sign_in
+    get_settings.cache_clear()

@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Users | 使用者管理 - Reward Guardrail{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Users<span class="heading-note">使用者管理</span></h1>
+    <div class="title-note">Personal Dashboard accounts. New and reset accounts must change their password at first sign-in. | 個人帳號；新建或重設密碼的帳號首次登入必須改密碼。</div>
+  </div>
+</div>
+
+{% if not session_mode %}
+<section class="panel">
+  <p>Dashboard sign-in is off (<code>DASHBOARD_AUTH_MODE=off</code>). Accounts can only be managed in <code>session</code> mode; create the first admin with the CLI: | Dashboard 驗證關閉；帳號只能在 session 模式管理，第一位管理員請用 CLI 建立：</p>
+  <pre>python -m app.jobs.users create --username &lt;name&gt; --role admin --password-env &lt;VARIABLE&gt;</pre>
+</section>
+{% else %}
+{% if notice %}<div class="success" data-testid="users-notice">Done: <code>{{ notice }}</code></div>{% endif %}
+{% if error %}<div class="error" role="alert" data-testid="users-error">Refused: <code>{{ error }}</code></div>{% endif %}
+
+<section class="panel">
+  <h2>Create user<span class="heading-note">建立使用者</span></h2>
+  <p class="muted">Password: at least {{ min_length }} characters; share it out of band. <code>tenant_admin</code> needs a tenant; <code>admin</code> cannot have one. | 密碼至少 {{ min_length }} 個字元並以其他管道交付；tenant_admin 必須指定租戶，admin 不可指定。</p>
+  <form method="post" action="/dashboard/admin/users" class="form-grid">
+    <label>Username | 帳號<input name="username" required autocomplete="off"></label>
+    <label>Display name | 顯示名稱<input name="display_name" autocomplete="off"></label>
+    <label>Role | 角色
+      <select name="role">{% for role in roles %}<option value="{{ role }}">{{ role }}</option>{% endfor %}</select>
+    </label>
+    <label>Tenant (optional) | 租戶<input name="tenant_id" autocomplete="off"></label>
+    <label>Initial password | 初始密碼<input name="password" type="password" autocomplete="new-password" minlength="{{ min_length }}" required></label>
+    <div class="checkline"><button class="button" type="submit">Create | 建立</button></div>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Accounts<span class="heading-note">帳號列表</span></h2>
+  <table data-testid="users-table">
+    <thead><tr><th>Username</th><th>Role | Tenant</th><th>Status</th><th>Last sign-in</th><th>Actions | 操作</th></tr></thead>
+    <tbody>
+    {% for user in users %}
+      <tr data-username="{{ user.username }}">
+        <td><strong>{{ user.username }}</strong><div class="muted">{{ user.display_name }}</div><div class="muted"><code>{{ user.user_id }}</code></div></td>
+        <td>{{ user.role }}<div class="muted">{{ user.tenant_id or "platform" }}</div></td>
+        <td><span class="status {{ 'completed' if user.status == 'active' else 'failed' }}">{{ user.status }}</span>
+          {% if user.locked_until %}<div class="muted">locked until {{ user.locked_until }}</div>{% endif %}
+          {% if user.must_change_password %}<div class="muted">must change password</div>{% endif %}</td>
+        <td>{{ user.last_login_at or "-" }}</td>
+        <td>
+          {% if user.user_id != principal.user_id %}
+          <form method="post" action="/dashboard/admin/users/{{ user.user_id }}/role" class="inline-form">
+            <select name="role">{% for role in roles %}<option value="{{ role }}" {{ 'selected' if role == user.role else '' }}>{{ role }}</option>{% endfor %}</select>
+            <input name="tenant_id" value="{{ user.tenant_id or '' }}" placeholder="tenant">
+            <button class="button secondary" type="submit">Set role | 改角色</button>
+          </form>
+          <form method="post" action="/dashboard/admin/users/{{ user.user_id }}/status" class="inline-form">
+            <input type="hidden" name="status" value="{{ 'disabled' if user.status == 'active' else 'active' }}">
+            <button class="button {{ 'danger' if user.status == 'active' else 'secondary' }}" type="submit">{{ 'Disable | 停用' if user.status == 'active' else 'Enable | 啟用' }}</button>
+          </form>
+          <form method="post" action="/dashboard/admin/users/{{ user.user_id }}/password" class="inline-form">
+            <input name="new_password" type="password" autocomplete="new-password" minlength="{{ min_length }}" placeholder="new password" required>
+            <button class="button secondary" type="submit">Reset password | 重設密碼</button>
+          </form>
+          {% if user.locked_until %}
+          <form method="post" action="/dashboard/admin/users/{{ user.user_id }}/unlock" class="inline-form">
+            <button class="button secondary" type="submit">Unlock | 解鎖</button>
+          </form>
+          {% endif %}
+          <form method="post" action="/dashboard/admin/users/{{ user.user_id }}/sessions/revoke" class="inline-form">
+            <button class="button secondary" type="submit">Sign out everywhere | 撤銷工作階段</button>
+          </form>
+          {% else %}
+          <span class="muted">This is you; use the account page. | 這是你自己的帳號。</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}

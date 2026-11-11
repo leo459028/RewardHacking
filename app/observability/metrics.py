@@ -260,3 +260,17 @@ TRACING_DROPPED_ATTRIBUTES_TOTAL = Counter(
     "tracing_dropped_attributes_total",
     "Span attributes dropped because their key is not on the allowlist.",
 )
+
+# v1.6.1 Enterprise Access (plan D17, D18). ``result`` is internal (it may reveal why a sign-in failed); the
+# sign-in page itself always answers with the same generic message.
+DASHBOARD_LOGINS_TOTAL = Counter(
+    "dashboard_logins_total",
+    "Dashboard sign-in attempts by result",
+    ["result"],
+)
+
+DASHBOARD_ACCESS_DENIED_TOTAL = Counter(
+    "dashboard_access_denied_total",
+    "Dashboard requests refused by the access layer, by reason",
+    ["reason"],
+)

@@ -125,6 +125,30 @@ Risk scores range deterministically from `0.0` to `1.0`:
 | Benchmark runs cause side effects | Runs call the pure evaluation engine only: no evaluation results, reviews, incidents, Kafka events or lease changes |
 | Malicious Inspect logs | JSON only (`.eval` zip archives rejected), size and sample-count limits, redaction, admin-only, dry run by default |
 
+## Dashboard Sign-In & Sessions (`v1.6.1`)
+
+`v1.6.1` replaces the single shared Basic Auth account with personal accounts and server-side sessions. Roles are
+applied per route from P3, CSRF tokens and re-authentication from P4; until then every signed-in user acts with
+`admin` power.
+
+| Threat | Control |
+| :--- | :--- |
+| Shared credentials hide who did what | Personal accounts (`dashboard_users`); HTTP Basic Auth was removed. `DASHBOARD_AUTH_MODE=off` (local development only, synthetic `local-admin`, banner on every page) fails the `dashboard_auth_mode` operations check in `APP_ENV=prod` |
+| Unauthenticated access | In `session` mode every `/dashboard` route needs a live session: pages redirect (303) to `/dashboard/login?next=...`, other methods answer `401 dashboard_sign_in_required` and nothing runs |
+| Password database theft | Standard-library scrypt (`scrypt$n$r$p$salt$hash`, default N=2^15, r=8, p=3, 16-byte salt, constant-time comparison); weaker stored hashes are upgraded at the next sign-in. Minimum 12 characters, not the username, not on the built-in common-password list; no composition rules |
+| Session token theft from the database | Only the SHA-256 of the 256-bit cookie token is stored. Cookie `rh_session`: `HttpOnly`, `SameSite=Lax`, `Path=/dashboard`, `Secure` unless `APP_ENV=dev` (`DASHBOARD_COOKIE_SECURE`) |
+| Session fixation and long-lived sessions | Every sign-in creates a new session; idle timeout 30 minutes, absolute timeout 8 hours; sign-out, disabling the user, a password change or a role change revoke the user's sessions immediately |
+| Password guessing and account enumeration | 5 consecutive failures lock the account for 15 minutes (even the right password is refused while locked); unknown users, wrong passwords, disabled and locked accounts get the same page and the same scrypt work. Failures are counted in `dashboard_logins_total`, not written one by one as events (only the lockout is) |
+| Open redirect after sign-in | `next` must be a relative `/dashboard` path (no scheme, host, `//`, backslash, `..`, or the sign-in / sign-out pages); anything else goes to `/dashboard` |
+| Initial or reset passwords reused | Accounts created by the CLI or an admin, and admin resets, must change the password at first sign-in; until then only the account page and sign-out are reachable (`403 password_change_required` for other actions) |
+| Losing the last administrator | The last active `admin` cannot be disabled or demoted; nobody changes their own role or disables themselves |
+| Passwords in shell history or logs | The CLI (`python -m app.jobs.users`) reads passwords only from standard input or `--password-env`; argument abbreviation is disabled so `--password` is rejected. Events carry no password, hash, token or cookie |
+| Accounts created without signing in | In `off` mode the user-management actions are refused (`403`); the first admin is created with the CLI |
+
+Access events are governance events with tenant `system`: `access.login`, `access.logout`, `access.lockout`,
+`access.password_changed`, `access.user_created`, `access.user_updated`, `access.user_disabled`,
+`access.role_changed`, `access.session_revoked` (`access.reauth` and `access.denied` arrive with P4 / P3).
+
 ## Runtime Foundations Threat Model (`v1.6.0`)
 
 | Threat | Control |
@@ -149,12 +173,12 @@ Risk scores range deterministically from `0.0` to `1.0`:
 | Keys or evidence sent in clear text, to cloud metadata services or via URL credentials | External hosts must use HTTPS; `169.254.169.254`, `fd00:ec2::254`, `metadata.google.internal`, userinfo, query strings and fragments are refused at load time and re-checked before every request (`blocked_insecure_url`) |
 | "Just testing a connection" silently switches the live judge | A probe never activates a Dashboard profile; activation is explicit, needs a matching successful probe, and is audited |
 | A configuration or key change keeps using an untested judge | Activation and probes are bound to a configuration fingerprint (endpoint, model, key digest, request format, output budget); any change falls back to the rule-based judge until re-tested |
-| Anyone with Dashboard access rewires the judge | Dashboard editing is off unless Basic Auth uses non-default credentials (`auto`), or explicitly `insecure_dev` (local only, red warning); API writes need the `admin` role |
+| Anyone with Dashboard access rewires the judge | Dashboard editing is off unless Dashboard sign-in is on (`auto` with `DASHBOARD_AUTH_MODE=session`, `v1.6.1`), or explicitly `insecure_dev` in `off` mode (local only, red warning; ignored in `session` mode); API writes need the `admin` role |
 | Cross-site form submission | Every new Dashboard form checks that `Origin` (else `Referer`) matches the request host; missing both is refused (403). A full CSRF token scheme is planned with Dashboard RBAC (`v1.6.x`) |
 | Keys leak through APIs, pages, audits or error bodies | Only the variable name, a set flag and a 6-hex fingerprint are shown; audits carry fingerprint prefixes and field names; `422` responses drop the value of forbidden fields such as `api_key` |
 | A failing cloud judge stalls triage or drives costs | Per-profile breaker (half-open retry), fallback chain ending in the rule-based judge, per-profile and global daily token caps; none of these can change verdicts, priorities or statuses |
 
-**Why keys are not entered in the page yet**: the Dashboard has a single Basic Auth account (default off, default `admin/admin`), runs every action as one administrator, and has no roles or CSRF tokens. Storing secrets behind that would add an attack surface; encrypted, write-only key entry bound to a host waits for Dashboard RBAC, CSRF and re-authentication (`v1.6.x`). With `AUTH_ENABLED=false` (the default) the judge profile API, like every other admin endpoint, is open to anyone who can reach it.
+**Why keys are not entered in the page yet**: before `v1.6.1` the Dashboard had a single Basic Auth account and ran every action as one administrator without roles or CSRF tokens; `v1.6.1` adds personal accounts, roles and CSRF, and in-page key entry stays planned for `v1.6.6+`. Storing secrets behind that would add an attack surface; encrypted, write-only key entry bound to a host waits for Dashboard RBAC, CSRF and re-authentication (`v1.6.x`). With `AUTH_ENABLED=false` (the default) the judge profile API, like every other admin endpoint, is open to anyone who can reach it.
 
 ## Judge Profiles Threat Model (`v1.5.11`)
 

@@ -131,7 +131,7 @@ Application configuration is loaded from environment variables and local `.env` 
 | `EVALUATION_JUDGE_KEY_ENV_ALLOWLIST` | *(empty)* | Comma-separated exact variable names allowed as `api_key_env` besides `*_API_KEY` |
 | `EVALUATION_JUDGE_BREAKER_FAILURE_THRESHOLD` | `3` | Consecutive judge timeouts / errors that open a profile's circuit breaker |
 | `EVALUATION_JUDGE_BREAKER_TTL_SECONDS` | `300` | How long a judge breaker stays open before the next call retries (half-open) |
-| `EVALUATION_JUDGE_DASHBOARD_EDITING` | `auto` | `auto`: Dashboard may edit judge profiles only with `DASHBOARD_AUTH_ENABLED=true` and non-default credentials; `off`: read-only; `insecure_dev`: always editable (local development only, red warning) |
+| `EVALUATION_JUDGE_DASHBOARD_EDITING` | `auto` | `auto`: Dashboard may edit judge profiles only with Dashboard sign-in on (`DASHBOARD_AUTH_MODE=session`, `v1.6.1`); `off`: read-only; `insecure_dev`: always editable while sign-in is off (local development only, red warning), ignored in `session` mode |
 | `TOOL_BREAKER_FAILURE_THRESHOLD` | `3` | Consecutive worker execution failures (`1`–`100`) before a tool's circuit breaker automatically trips to `open` |
 | `TOOL_BREAKER_TTL_SECONDS` | `300` | Default TTL in seconds (`30`–`86400`) for an open tool circuit breaker in Redis |
 
@@ -152,14 +152,14 @@ Application configuration is loaded from environment variables and local `.env` 
 ## Production Security Recommendations
 
 1. **Disable Bootstrap Keys**: Set `AUTH_ENABLED=true` and provision hashed API keys in the PostgreSQL database via `/v1/tenants/{tenant_id}/api-keys`. Remove fallback `API_KEYS` from production environment files.
-2. **Dashboard Security**: Set `DASHBOARD_AUTH_ENABLED=true` and supply high-entropy credentials via enterprise secret managers.
+2. **Dashboard Security**: Set `DASHBOARD_AUTH_MODE=session`, create personal accounts with `python -m app.jobs.users` (first admin) and `/dashboard/admin/users`, and serve the Dashboard over HTTPS so the `Secure` session cookie is sent.
 3. **Fail-Closed Thresholds**: Ensure `RELEASE_GATE_FAIL_ON_BOOTSTRAP_KEYS_IN_PROD=true` in `APP_ENV=prod`.
 
 ## Judge Profiles (`v1.5.11`, activation since `v1.5.12`)
 
 Either copy `config/judge_profiles.example.yaml` to `config/judge_profiles.yaml` and set `EVALUATION_JUDGE_PROFILE` (the API probes it at startup and uses it only if the probe succeeds), or create the profile on `/dashboard/judge-profiles` from a template, **Test** it and **Activate** it. Without either, the rule-based judge is used. Fields and semantics: [`docs/evaluation.md`](evaluation.md) §13 and §15.
 
-- **Dashboard editing**: enable Dashboard Basic Auth with your own credentials (`DASHBOARD_AUTH_ENABLED=true`, non-default `DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD`), or set `EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev` on a local machine. Keys are never typed into the page: export them as environment variables named `*_API_KEY` and reference the name.
+- **Dashboard editing**: turn on Dashboard sign-in (`DASHBOARD_AUTH_MODE=session`), or set `EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev` on a local machine. Keys are never typed into the page: export them as environment variables named `*_API_KEY` and reference the name.
 - **Templates**: LM Studio (`http://host.docker.internal:1234/v1`, use the port LM Studio shows), Ollama (`:11434/v1`), OpenAI (`OPENAI_API_KEY`), Gemini (`GEMINI_API_KEY`), DeepSeek (`DEEPSEEK_API_KEY`) and Anthropic (native, `ANTHROPIC_API_KEY`, `max_output_tokens: 4000`). Local templates default to `execution: background` and `pricing_provider: qa_local`; cloud templates to `external: true` and `max_retries: 2`. Model names are examples.
 
 - **LM Studio (local)**: load the model, start the server (Developer tab) and use the port shown under *API Usage*. From the containers use `http://host.docker.internal:<port>/v1` (do not use the `169.254.x.x` address LM Studio may show; link-local addresses are treated as external). For reasoning models (for example Qwen3.5) give reasoning room with `max_output_tokens` ≈ 2000 and a longer `timeout_seconds` (better judgement, ~2.3x slower); set `reasoning_effort: none` only for a fast, weaker profile (`local-small-fast` in the example). Use `execution: background` for slow CPU inference and create zero-cost pricing with **Zero-cost pricing** on `/dashboard/benchmark#judge-profiles`.
