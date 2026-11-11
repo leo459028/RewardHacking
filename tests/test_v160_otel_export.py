@@ -225,3 +225,62 @@ def test_metrics_openmetrics_has_trace_exemplar(traced_client):
     assert open_metrics.status_code == 200
     assert open_metrics.headers["content-type"].startswith("application/openmetrics-text")
     assert f'trace_id="{TRACE}"' in open_metrics.text
+
+
+def test_each_tool_gets_a_span_with_sandbox_run_nested(exporter):
+    """v1.6.0 P4b: one ``tool {name}`` span per tool (deferred from P2b); ``sandbox.run`` only under executed tools."""
+    from app.schemas.agent import AgentRequest
+    from app.services.executor import BoundedToolExecutor
+
+    request = AgentRequest(
+        user_id="u1", task_type="code_fix", prompt="Fix the failing unit test.", goal=f"Make it pass {CANARY}",
+        allowed_tools=["read_repo", "deploy_service", "bad name!"], constraints={"max_tool_calls": 4},
+    )
+    with tracing.start_span("executor.execute"):
+        BoundedToolExecutor().execute(request, risk_score=0.2, run_id="run_spans")
+    spans = exporter.get_finished_spans()
+    by_name = {span.name: span for span in spans}
+    parent = by_name["executor.execute"]
+    tools = [span for span in spans if span.name.startswith("tool ")]
+    assert [span.name for span in tools] == ["tool read_repo", "tool deploy_service", "tool [invalid-name]"]
+    assert all(span.parent.span_id == parent.context.span_id for span in tools)
+    assert [span.attributes["rh.status"] for span in tools] == ["simulated", "blocked", "blocked"]
+    sandbox_spans = [span for span in spans if span.name == "sandbox.run"]
+    assert len(sandbox_spans) == 1 and sandbox_spans[0].parent.span_id == tools[0].context.span_id
+    assert sandbox_spans[0].attributes["rh.sandbox.backend"] == "simulated"
+    assert sandbox_spans[0].attributes["rh.sandbox.status"] == "ok"
+    assert all(CANARY not in span.name + repr(dict(span.attributes)) for span in spans)
+
+
+def test_retention_plan_and_apply_emit_spans(exporter, session_factory):
+    """v1.6.0 P4b: the D8 ``retention.plan`` / ``retention.apply`` spans (missed in P3), counts only."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.core.config import Settings
+    from app.models.agent_run import AgentRun
+    from app.services import retention
+
+    now = datetime(2026, 11, 9, 12, 0, tzinfo=timezone.utc)
+    settings = Settings(_env_file=None, audit_retention_purge_mode="apply")
+
+    async def scenario():
+        async with session_factory() as session:
+            old = now - timedelta(days=200)
+            session.add(AgentRun(run_id="run_span", tenant_id="t1", user_id="u1", task_type="analysis", prompt=CANARY,
+                                 goal="g", status="completed", decision_reason="ok", created_at=old, updated_at=old))
+            await session.commit()
+            purge = await retention.build_plan(session, settings, now=now)
+            with pytest.raises(retention.RetentionError):
+                await retention.apply_plan(session, settings, purge.purge_id, plan_digest="0" * 64, confirm=True, now=now)
+            await retention.apply_plan(session, settings, purge.purge_id, plan_digest=purge.plan_digest, confirm=True, now=now)
+            return purge
+
+    purge = asyncio.run(scenario())
+    spans = exporter.get_finished_spans()
+    plan = next(span for span in spans if span.name == "retention.plan")
+    assert plan.attributes["rh.retention.purge_id"] == purge.purge_id and plan.attributes["rh.retention.candidates"] == 1
+    refused, applied = [span for span in spans if span.name == "retention.apply"]
+    assert refused.attributes["rh.status"] == "refused"
+    assert refused.attributes["rh.retention.error"] == "retention_plan_digest_mismatch"
+    assert applied.attributes["rh.status"] == "applied" and applied.attributes["rh.retention.purged_runs"] == 1
+    assert all(CANARY not in repr(dict(span.attributes)) for span in spans)

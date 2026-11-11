@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -43,6 +44,14 @@ def _tool_allowed(
             return False
         return tool.get("status", "active") == "active" and task_type in list(tool.get("task_types") or [])
     return tool_name in task_allowlist
+
+
+_SPAN_SAFE_TOOL_NAME = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+
+
+def _tool_span_name(tool_name: str) -> str:
+    """Span names are exported verbatim, so only registry-shaped tool names appear in them (D6)."""
+    return f"tool {tool_name}" if _SPAN_SAFE_TOOL_NAME.match(tool_name or "") else "tool [invalid-name]"
 
 
 def _sandbox_execution(
@@ -133,61 +142,64 @@ class BoundedToolExecutor:
         }
 
         for tool_name in requested_tools[:tool_budget]:
-            tool_def = (allowed_tool_map or {}).get(tool_name)
-            mcp_server_id = gateway_map.get(tool_name) or resolve_tool_mcp_server(tool_def)
-            server_info = dict(gateway_servers.get(mcp_server_id) or {})
-            entry_policy = dict(sandbox_policy)
-            entry_policy["mcp_server_id"] = mcp_server_id
-            if tool_name in (request.tool_arguments or {}):
-                # Arguments were already redacted by the Safe MCP Gateway preflight (D7/D14);
-                # input schema is NOT re-validated here because values may be "[REDACTED]".
-                entry_policy["sanitized_arguments"] = request.tool_arguments[tool_name]
-                entry_policy["redacted_fields"] = list(redacted_fields.get(tool_name) or [])
-            mcp_meta = {
-                "mcp_server_id": mcp_server_id,
-                "mcp_transport": str(server_info.get("transport", "")),
-                "mcp_trust_tier": str(server_info.get("trust_tier", "")),
-            }
-            if not _tool_allowed(tool_name, request.task_type, task_allowlist, allowed_tool_map):
+            with tracing.start_span(_tool_span_name(tool_name), attributes={"rh.tool_name": tool_name}) as tool_span:
+                tool_def = (allowed_tool_map or {}).get(tool_name)
+                mcp_server_id = gateway_map.get(tool_name) or resolve_tool_mcp_server(tool_def)
+                server_info = dict(gateway_servers.get(mcp_server_id) or {})
+                entry_policy = dict(sandbox_policy)
+                entry_policy["mcp_server_id"] = mcp_server_id
+                if tool_name in (request.tool_arguments or {}):
+                    # Arguments were already redacted by the Safe MCP Gateway preflight (D7/D14);
+                    # input schema is NOT re-validated here because values may be "[REDACTED]".
+                    entry_policy["sanitized_arguments"] = request.tool_arguments[tool_name]
+                    entry_policy["redacted_fields"] = list(redacted_fields.get(tool_name) or [])
+                mcp_meta = {
+                    "mcp_server_id": mcp_server_id,
+                    "mcp_transport": str(server_info.get("transport", "")),
+                    "mcp_trust_tier": str(server_info.get("trust_tier", "")),
+                }
+                if not _tool_allowed(tool_name, request.task_type, task_allowlist, allowed_tool_map):
+                    transcript.append(
+                        {
+                            "tool_name": tool_name,
+                            "status": "blocked",
+                            "detail": f"Tool is not allowed for task type {request.task_type}.",
+                            "sandbox_policy": entry_policy,
+                            "artifact_refs": [],
+                            **mcp_meta,
+                        }
+                    )
+                    tool_span.set_attributes({"rh.status": "blocked", "rh.mcp_server_id": mcp_server_id})
+                    continue
+                simulated_output = {
+                    "status": "simulated",
+                    "summary": f"Bounded executor simulated {tool_name} via {mcp_server_id} without external side effects.",
+                }
+                schema_status, schema_errors = validate_tool_output(simulated_output, tool_def)
+                entry_policy["schema_validation"] = schema_status
+                if schema_errors:
+                    entry_policy["output_schema_errors"] = schema_errors[:10]
                 transcript.append(
                     {
                         "tool_name": tool_name,
-                        "status": "blocked",
-                        "detail": f"Tool is not allowed for task type {request.task_type}.",
+                        "status": "simulated",
+                        "detail": "Bounded v0.3 executor recorded the tool action without external side effects.",
                         "sandbox_policy": entry_policy,
                         "artifact_refs": [],
+                        "schema_validation": schema_status,
                         **mcp_meta,
+                        "sandbox_execution": _sandbox_execution(
+                            backend,
+                            settings,
+                            tool_name=tool_name,
+                            tool_def=tool_def,
+                            simulated_output=simulated_output,
+                            risk_score=risk_score,
+                            labels=labels,
+                        ),
                     }
                 )
-                continue
-            simulated_output = {
-                "status": "simulated",
-                "summary": f"Bounded executor simulated {tool_name} via {mcp_server_id} without external side effects.",
-            }
-            schema_status, schema_errors = validate_tool_output(simulated_output, tool_def)
-            entry_policy["schema_validation"] = schema_status
-            if schema_errors:
-                entry_policy["output_schema_errors"] = schema_errors[:10]
-            transcript.append(
-                {
-                    "tool_name": tool_name,
-                    "status": "simulated",
-                    "detail": "Bounded v0.3 executor recorded the tool action without external side effects.",
-                    "sandbox_policy": entry_policy,
-                    "artifact_refs": [],
-                    "schema_validation": schema_status,
-                    **mcp_meta,
-                    "sandbox_execution": _sandbox_execution(
-                        backend,
-                        settings,
-                        tool_name=tool_name,
-                        tool_def=tool_def,
-                        simulated_output=simulated_output,
-                        risk_score=risk_score,
-                        labels=labels,
-                    ),
-                }
-            )
+                tool_span.set_attributes({"rh.status": "simulated", "rh.mcp_server_id": mcp_server_id})
 
         output = (
             f"Executed {request.task_type} with {len(transcript)} bounded tool transcript entries. "

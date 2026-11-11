@@ -67,6 +67,35 @@ def test_v160_valid_spec_passes_at_simulated_and_container_levels():
 
 
 @pytest.mark.parametrize(
+    "image",
+    [
+        "my--image@sha256:" + "a" * 64,
+        "my__image@sha256:" + "a" * 64,
+        "docker.io/library/python@sha256:" + "a" * 64,
+        "registry.example.com:443/a.b/c-d__e@sha256:" + "a" * 64,
+    ],
+)
+def test_v160_oci_image_names_are_accepted(image):
+    assert validate_spec(_spec(image=image), CONTAINER_CAPS) == []
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "-image@sha256:" + "a" * 64,
+        "image-@sha256:" + "a" * 64,
+        "my___image@sha256:" + "a" * 64,
+        "my._image@sha256:" + "a" * 64,
+        "Team/image@sha256:" + "a" * 64,
+        "host:abc/image@sha256:" + "a" * 64,
+        "image@sha256:" + "A" * 64,
+    ],
+)
+def test_v160_malformed_image_names_are_rejected(image):
+    assert validate_spec(_spec(image=image), CONTAINER_CAPS) == ["image_not_digest_pinned"]
+
+
+@pytest.mark.parametrize(
     ("overrides", "reason"),
     [
         ({"argv": "pytest -q && curl evil"}, "argv_shell_string"),
@@ -151,6 +180,42 @@ def test_v160_simulated_backend_result_shapes():
     assert rejected.stdout == "" and rejected.exit_code is None
 
 
+@pytest.mark.parametrize(
+    "simulation",
+    [
+        "not a dict",
+        {"duration_ms": "abc"},
+        {"duration_ms": -1},
+        {"exit_code": "1"},
+        {"exit_code": True},
+        {"stdout": 42},
+        {"oom": "yes"},
+        {"output_files": "x"},
+        {"output_files": [1]},
+        {"output_files": [{"content": "no path"}]},
+        {"output_files": [{"path": "a", "content": 7}]},
+    ],
+)
+def test_v160_malformed_simulation_is_rejected_not_raised(simulation):
+    result = SimulatedBackend().run(_spec(simulation=simulation))
+    assert result.status == "rejected" and result.rejection_reasons == ("simulation_invalid",)
+
+
+def test_v160_non_positive_sandbox_maximums_fail_closed():
+    for overrides in ({"sandbox_max_timeout_seconds": 0}, {"sandbox_max_output_bytes": -1}):
+        with pytest.raises(sandbox.SandboxConfigError, match="greater than 0"):
+            sandbox.get_backend(_settings(**overrides))
+
+
+def test_v160_empty_high_risk_threshold_means_default(monkeypatch):
+    monkeypatch.setenv("SANDBOX_HIGH_RISK_THRESHOLD", "")
+    settings = Settings(_env_file=None)
+    assert settings.sandbox_high_risk_threshold is None
+    assert sandbox.policy.high_risk_threshold(settings) == settings.default_risk_threshold
+    monkeypatch.setenv("SANDBOX_HIGH_RISK_THRESHOLD", "0.4")
+    assert Settings(_env_file=None).sandbox_high_risk_threshold == 0.4
+
+
 def test_v160_get_backend_default_and_unknown_backend_fails_closed():
     backend = sandbox.get_backend(_settings(sandbox_max_timeout_seconds=30, sandbox_max_output_bytes=2048))
     caps = backend.capabilities()
@@ -191,6 +256,30 @@ def test_v160_conformance_case_list_and_smoke():
     assert set(conformance.SMOKE_CASES) <= set(conformance.CASE_NAMES)
     smoke = conformance.run_smoke(SimulatedBackend)
     assert smoke["passed"] is True and [c["name"] for c in smoke["cases"]] == list(conformance.SMOKE_CASES)
+
+
+def test_v160_conformance_uses_the_caller_image_everywhere():
+    """A backend that really runs containers passes its own digest-pinned image to every case."""
+    seen: list[str] = []
+
+    class ContainerLevel(SimulatedBackend):
+        def capabilities(self):
+            return replace(super().capabilities(), isolation_level=IsolationLevel.CONTAINER)
+
+        def run(self, spec):
+            seen.append(spec.image)
+            return super().run(spec)
+
+    results = conformance.run_cases(ContainerLevel, image=PINNED)
+    assert len(results) == len(conformance.CASES) and set(seen) == {PINNED}
+    passed = {item.name for item in results if item.passed}
+    # result_identifies_backend fails only because the subclass still reports the simulated level in results.
+    assert passed == set(conformance.CASE_NAMES) - {"result_identifies_backend"}
+    seen.clear()
+    assert conformance.run_smoke(ContainerLevel, image=PINNED)["cases"][0]["passed"] is True and set(seen) == {PINNED}
+    seen.clear()
+    placeholder = {item.name: item.passed for item in conformance.run_cases(ContainerLevel)}
+    assert set(seen) == {conformance.CONFORMANCE_IMAGE} and placeholder["network_none_default"] is True
 
 
 def test_v160_conformance_detects_a_broken_backend():

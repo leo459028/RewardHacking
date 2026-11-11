@@ -15,7 +15,10 @@ from typing import Any
 
 from app.services.sandbox.base import LIMIT_FIELDS, NETWORK_MODES, BackendCapabilities, IsolationLevel
 
-_IMAGE_DIGEST = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::\d+(?=/))?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*@sha256:[0-9a-f]{64}$")
+# OCI distribution reference: path components are lowercase alphanumerics joined by ".", "_", "__" or "-"+;
+# the first component may be a registry host with a port. Tags are not allowed: the digest is the identity.
+_COMPONENT = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
+_IMAGE_DIGEST = re.compile(rf"^{_COMPONENT}(?::\d+(?=/))?(?:/{_COMPONENT})*@sha256:[0-9a-f]{{64}}$")
 _ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _ARTIFACT_REF = re.compile(r"^artifact:sha256:[0-9a-f]{64}$")
 _FORBIDDEN_TARGETS = ("/proc", "/sys", "/dev", "/var/run", "/run")

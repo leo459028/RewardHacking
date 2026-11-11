@@ -25,6 +25,7 @@ from typing import Any, Iterable
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from app.core import tracing
 from app.core.config import Settings
 from app.models.agent_run import AgentRun
 from app.models.approval_event import ApprovalEvent
@@ -306,6 +307,22 @@ async def build_plan(
     session: AsyncSession, settings: Settings, *, actor: str = "system", now: datetime | None = None
 ) -> RetentionPurge:
     """Read-only selection of purge candidates, stored as a ``planned`` RetentionPurge with a TTL (D11)."""
+    with tracing.start_span("retention.plan") as span:
+        purge = await _build_plan(session, settings, actor=actor, now=now)
+        span.set_attributes(
+            {
+                "rh.status": purge.status,
+                "rh.retention.purge_id": purge.purge_id,
+                "rh.retention.candidates": len(purge.candidate_run_ids or []),
+                "rh.retention.excluded_runs": int((purge.scan_summary or {}).get("excluded_runs", 0)),
+            }
+        )
+        return purge
+
+
+async def _build_plan(
+    session: AsyncSession, settings: Settings, *, actor: str, now: datetime | None
+) -> RetentionPurge:
     if purge_mode(settings) == "off":
         raise RetentionError("retention_disabled", "AUDIT_RETENTION_PURGE_MODE is off.", 409)
     now = _aware(now) or _now()
@@ -563,6 +580,36 @@ async def apply_plan(
     state_store: Any = None,
 ) -> RetentionPurge:
     """Apply a stored plan (D11 / D12). Raises ``RetentionError`` for every refused case."""
+    with tracing.start_span("retention.apply", attributes={"rh.retention.purge_id": purge_id}) as span:
+        try:
+            purge = await _apply_plan(
+                session, settings, purge_id, plan_digest=plan_digest, confirm=confirm, actor=actor, now=now, state_store=state_store
+            )
+        except RetentionError as exc:
+            span.set_attributes({"rh.status": "refused", "rh.retention.error": exc.code})
+            raise
+        span.set_attributes(
+            {
+                "rh.status": purge.status,
+                "rh.retention.purged_runs": int((purge.applied_counts or {}).get("runs", 0)),
+                "rh.retention.skipped_runs": len(purge.skipped_at_apply or []),
+                "rh.retention.failed_runs": len(purge.failures or []),
+            }
+        )
+        return purge
+
+
+async def _apply_plan(
+    session: AsyncSession,
+    settings: Settings,
+    purge_id: str,
+    *,
+    plan_digest: str,
+    confirm: bool,
+    actor: str,
+    now: datetime | None,
+    state_store: Any,
+) -> RetentionPurge:
     mode = purge_mode(settings)
     if mode == "off":
         raise RetentionError("retention_disabled", "AUDIT_RETENTION_PURGE_MODE is off.", 409)

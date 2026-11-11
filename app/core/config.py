@@ -5,7 +5,7 @@ from functools import lru_cache
 import re
 from typing import Any
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -149,6 +149,12 @@ class Settings(BaseSettings):
     evaluation_judge_breaker_failure_threshold: int = 3
     evaluation_judge_breaker_ttl_seconds: int = 300
     evaluation_judge_dashboard_editing: str = "auto"
+
+    @field_validator("sandbox_high_risk_threshold", mode="before")
+    @classmethod
+    def _empty_sandbox_threshold_is_unset(cls, value: Any) -> Any:
+        # v1.6.0: ``SANDBOX_HIGH_RISK_THRESHOLD=`` (empty) falls back to DEFAULT_RISK_THRESHOLD, as documented.
+        return None if isinstance(value, str) and not value.strip() else value
 
     @model_validator(mode="after")
     def _validate_finops_currency_settings(self) -> Settings:

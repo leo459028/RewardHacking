@@ -11,16 +11,19 @@ SUPPORTED_BACKENDS = ("simulated",)
 
 
 class SandboxConfigError(RuntimeError):
-    """Unknown ``SANDBOX_BACKEND``: fail closed instead of silently running on another backend."""
+    """Unknown ``SANDBOX_BACKEND`` or a non-positive maximum: fail closed instead of running misconfigured."""
 
 
 def get_backend(settings: Any) -> SandboxBackend:
     name = str(getattr(settings, "sandbox_backend", "simulated") or "").strip().lower()
     if name == "simulated":
-        return SimulatedBackend(
-            max_limits={
-                "timeout_seconds": int(getattr(settings, "sandbox_max_timeout_seconds", 300)),
-                "max_output_bytes": int(getattr(settings, "sandbox_max_output_bytes", 1_048_576)),
-            }
-        )
+        max_limits = {
+            "timeout_seconds": int(getattr(settings, "sandbox_max_timeout_seconds", 300)),
+            "max_output_bytes": int(getattr(settings, "sandbox_max_output_bytes", 1_048_576)),
+        }
+        bad = sorted(key for key, value in max_limits.items() if value <= 0)
+        if bad:
+            # Otherwise every tool would be silently "rejected" while the transcript still reads "simulated".
+            raise SandboxConfigError(f"Sandbox maximums must be greater than 0: {', '.join(bad)}.")
+        return SimulatedBackend(max_limits=max_limits)
     raise SandboxConfigError(f"Unsupported SANDBOX_BACKEND {name!r}; supported: {', '.join(SUPPORTED_BACKENDS)}.")
