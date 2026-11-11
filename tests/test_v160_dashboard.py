@@ -1,8 +1,10 @@
 """v1.6.0 P6: ``/dashboard/retention``, Run Detail (purged notice, trace link, legal hold, sandbox_execution),
 Observability Tracing panel, Operations checks and the operations / observability UI router move.
 
-Dashboard writes here are limited to a dry-run plan and creating a legal hold, both behind the same-origin check;
-applying a plan and releasing a hold have no Dashboard route in this release (v1.6.1 RBAC / CSRF).
+Dashboard writes here are limited to a dry-run plan and creating a legal hold, both behind the same-origin check.
+v1.6.1 P7 (D44) added Dashboard apply / release for signed-in admins (``session`` mode, see
+``tests/test_v161_dashboard_retention_actions.py``); in ``off`` mode (these tests) the page still has no apply or
+release form, shows the API command, and the two routes answer 403 ``dashboard_auth_off``.
 """
 
 from __future__ import annotations
@@ -90,7 +92,7 @@ def _seed_live_run(session_factory, run_id="run_live_dash"):
     asyncio.run(scenario())
 
 
-def test_v160_retention_page_renders_policy_and_has_no_apply_or_release(client, monkeypatch):
+def test_v160_retention_page_renders_policy_and_has_no_apply_or_release_in_off_mode(client, monkeypatch):
     _env(monkeypatch)
     page = client.get("/dashboard/retention")
     assert page.status_code == 200
@@ -103,13 +105,29 @@ def test_v160_retention_page_renders_policy_and_has_no_apply_or_release(client, 
     assert "0E-8" not in html
 
 
-def test_v160_retention_dashboard_routes_exclude_apply_and_release():
+def test_v160_retention_dashboard_routes_apply_and_release_refused_in_off_mode(client, monkeypatch):
+    # v1.6.1 P7: the routes exist (FastAPI registers them once), but off mode refuses both before anything runs.
     paths = {key for key in route_owners(app) if key[0].startswith("/dashboard/retention")}
     assert paths == {
         ("/dashboard/retention", "GET"),
         ("/dashboard/retention/plans", "POST"),
         ("/dashboard/retention/holds", "POST"),
+        ("/dashboard/retention/plans/{purge_id}/apply", "POST"),
+        ("/dashboard/retention/holds/{hold_id}/release", "POST"),
     }
+    _env(monkeypatch, AUDIT_RETENTION_PURGE_MODE="apply")
+    plan = client.post("/v1/retention/plans").json()
+    hold = client.post("/v1/legal-holds", json={"scope_type": "tenant", "scope_id": "t-off", "reason": "x"}).json()
+    applied = client.post(
+        f"/dashboard/retention/plans/{plan['purge_id']}/apply",
+        headers=SAME_ORIGIN,
+        data={"confirm_purge_id": plan["purge_id"], "plan_digest": plan["plan_digest"]},
+    )
+    released = client.post(f"/dashboard/retention/holds/{hold['hold_id']}/release", headers=SAME_ORIGIN, data={"release_reason": "x"})
+    for response in (applied, released):
+        assert response.status_code == 403 and response.json()["error"]["code"] == "dashboard_auth_off"
+    assert client.get(f"/v1/retention/plans/{plan['purge_id']}").json()["status"] == "planned"
+    assert client.get("/v1/legal-holds?status=active").json()[0]["hold_id"] == hold["hold_id"]
 
 
 def test_v160_dashboard_dry_run_plan_lists_candidates_and_api_command(client, monkeypatch, session_factory):
