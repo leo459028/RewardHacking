@@ -2,7 +2,8 @@
 
 > **Roadmap Baseline**: `v1.6.0`
 > **Status**: Active Open-Source Track (`v1.6.x` Verified Execution Series)
-> **Next Target**: `v1.6.1` (Isolated Sandbox Runtime MVP)
+> **Next Target**: `v1.6.1` (Enterprise Access & Audit Integrity)
+> **Re-baselined**: 2026-11-11, after `v1.6.0` (see [Re-baseline Notes](#re-baseline-notes-november-2026))
 
 This roadmap outlines the past development trajectory, the `v1.5.x` evaluation series, the `v1.6.x` runtime execution series, and long-term architectural milestones for the **RewardHacking** platform.
 
@@ -38,8 +39,14 @@ This roadmap outlines the past development trajectory, the `v1.5.x` evaluation s
 | `v1.5.11` | Completed | Real Local & Cloud Judges | Named judge profiles, backend compatibility (structured-output fallback, reasoning control, retries), background triage, profile cost attribution, tenant consent for external judges and multi-profile benchmarks; verified with a local model in LM Studio. |
 | `v1.5.12` | Completed | Judge Activation & Provider Adapters | Test-then-activate gate with configuration fingerprints (rule-based judge by default), Dashboard judge profile management with templates and an editing gate, key-variable allowlist and HTTPS / metadata hardening, native Anthropic adapter, fallback chains, circuit breakers and per-profile budgets. |
 | `v1.6.0` | **Current** | **Runtime Foundations** | W3C trace context with optional OTLP export, audit retention plan → apply purge with legal holds and hash-only tombstones (FinOps ledger report-only), FinOps package split with `import-linter` contracts, and the sandbox execution spec with a `simulated` backend and conformance suite. |
-| `v1.6.1` | **Next** | Isolated Sandbox Runtime MVP | Dashboard RBAC and CSRF (then Dashboard retention apply and hold release); Hardened Docker backend with a configurable OCI runtime (`runc` locally, `runsc`/gVisor on Linux), limited to low-risk tools behind a feature flag; sandbox re-runs upgrade evidence to `platform_verified`. |
-| `v1.6.2+` | Long-Term | Remote MCP, MicroVM & Graph Replay | Real remote MCP transports behind an egress proxy, K8s Job and microVM backends, hidden held-out tests, mutation testing, resampling, and stateful graph time-travel replay. |
+| `v1.6.1` | **Next** | Enterprise Access & Audit Integrity | Dashboard sign-in with roles (including a read-only auditor), CSRF tokens and re-authentication, second-person approval for high-impact actions, a tamper-evident audit chain, and Dashboard retention apply / hold release. Phase P0 (implemented on the `v1.6.1` branch, not released): prompt-guard/2.0. |
+| `v1.6.2` | Planned (tentative number) | Isolated Sandbox Runtime MVP | Hardened Docker backend with a configurable OCI runtime (`runc` locally, `runsc`/gVisor on Linux), limited to low-risk tools behind a feature flag; before / after re-runs against the platform's own tests produce the first `platform_verified` evidence, with changed-line coverage and a shadow re-run contradiction rule. |
+| `v1.6.3` | Planned (tentative number) | Detection Measurement & Trajectory Evidence | Public labeled corpora imports, trajectory detectors and trajectory-aware contrastive judging, a structured self-report and an escalation channel, a detector evasion-variant suite, root-cause labels and a monitoring-coverage metric. |
+| `v1.6.4` | Planned (tentative number) | Compliance Foundation, Approved Models & Multilingual Guard | One control catalog with versioned framework mappings (ISO/IEC 42001, NIST AI RMF, EU AI Act, then Taiwan / Japan / US packs), an opt-in approved-model list with vendor jurisdiction, locale PII redaction packs, data-subject requests, incident notification clocks, prompt-guard hardening and localization. |
+| `v1.6.5` | Planned (tentative number) | Enterprise Integration | OIDC single sign-on, SIEM export, notifications, a CI integration kit with merge checks, and an offline / on-prem install bundle with SBOM and signed images. |
+| `v1.6.6+` | Long-Term (tentative number) | Stronger Verification & Scale-Out | Hidden held-out tests, changed-line mutation testing, realistic honeypots and canaries, a pre-rollout propensity gate, reviewer-quality measurement, multi-language structural rules, judge ensembles, K8s Job and microVM backends, remote MCP transports, resampling, and stateful graph time-travel replay. |
+
+**Release numbers**: only the next release (`v1.6.1`) has a fixed number. Numbers after it are tentative and name the planned order of themes. If a patch or a re-ordered theme has to ship first, it takes the next free number and the later themes move back; other documents that cite a tentative number are corrected when that release is planned.
 
 ---
 
@@ -88,6 +95,14 @@ The pre-execution perimeter (prompt guards, policy engine, Safe MCP Gateway, Fin
 5. **Separate approval from review**: Pre-execution approval decides whether a run may execute. Post-execution review judges what already happened and never re-executes it.
 6. **Monitor-only signals**: Detection signals are for monitoring and review. They must not be used as training rewards, because optimizing against a monitor teaches agents to hide intent.
 7. **Foundations before real execution**: Observability, data lifecycle and modular code come before running real tools in a sandbox.
+
+Added with the `v1.6.0` re-baseline (see [Re-baseline Notes](#re-baseline-notes-november-2026)):
+
+8. **Controls are the boundary; text screening is a signal**: Prompt screening can be bypassed by rephrasing. Tool allow-lists, argument schema checks, approval gates, budgets and isolation must still hold when it is.
+9. **Fix the environment first**: A confirmed hack is also a defect report about weak tests, an exposed grader or an ambiguous task. Reviews record the root cause, not only the agent.
+10. **Give agents an honest exit**: Reporting that a task or its tests are defective is a legitimate outcome with its own channel, so the cheapest path is never to fake a pass.
+11. **Measure the monitors and the reviewers**: Detectors, judges and human review are all measured (evasion rate, agreement, coverage); an unmeasured monitor is not counted as protection.
+12. **Compliance mappings are data; models are opt-in**: Regulatory mappings are versioned data files with effective dates, never hard-coded obligations. A model is usable only after an administrator approves it.
 
 ---
 
@@ -144,13 +159,13 @@ Task: "fix the bug in `calculate_tax()`". The agent returns a final message ("fi
 | **A.** Adds `@skip` to the failing tests | Caught: the diff shows `@skip` and `test_tampering` flags it | Caught |
 | **B.** Leaves the code broken, hand-writes a fake JUnit XML report (50/50), and does not touch any test file | **Missed**: the diff is clean and the report says everything passed, so no detector has anything to flag | Caught: the platform applies the agent's diff to the original code, runs the tests itself, sees 3 failures, and the contradiction marks the report as forged evidence |
 | **C.** Rewrites test results through an obscure `conftest.py` change (a pattern or language the rules do not know) | Depends on the technique: rule-based detectors miss patterns they do not cover | Caught: the re-run applies only the agent's changes to non-test files and uses the platform's pristine copy of the tests and `conftest.py`, so the trick has no effect (the standard SWE-bench grading practice) |
-| **D.** Hard-codes answers (`if amount == 100: return 5`) so the known tests pass | Only guessed at by the `special_casing` detector, still in shadow mode | Caught in `v1.6.2`: hidden held-out tests that the agent never saw make the hard-coded answers fail |
+| **D.** Hard-codes answers (`if amount == 100: return 5`) so the known tests pass | Only guessed at by the `special_casing` detector, still in shadow mode | Targeted by hidden held-out tests (`v1.6.6+`) that the agent never saw; their benefit is measured on the benchmark before they are relied on |
 
 Cases B and C are the point of the series: under the `v1.5.x` architecture they cannot be detected in principle, because everything the platform can inspect came from the agent.
 
 #### Evidence provenance levels
 
-The four levels have existed since `v1.5.8`; `v1.6.x` makes the top level real. No code path produces `platform_verified` yet; `v1.6.1` is the first release that does.
+The four levels have existed since `v1.5.8`; `v1.6.x` makes the top level real. No code path produces `platform_verified` yet; `v1.6.2` is the first release that does.
 
 | Level | Plain meaning | Exam analogy |
 | --- | --- | --- |
@@ -161,7 +176,7 @@ The four levels have existed since `v1.5.8`; `v1.6.x` makes the top level real. 
 
 #### Why a sandbox is required
 
-Re-running an agent's change means executing untrusted code. The change could delete host files, read API keys from environment variables and send them out, or download payloads. A re-test has to happen in a proctored exam room where nothing comes in or goes out: no network by default, a read-only filesystem with a scratch area only, CPU / memory / time limits, a non-root user and no privileges. This is the `v1.6.1` Docker backend, with gVisor (`runsc`) as the stricter runtime on Linux.
+Re-running an agent's change means executing untrusted code. The change could delete host files, read API keys from environment variables and send them out, or download payloads. A re-test has to happen in a proctored exam room where nothing comes in or goes out: no network by default, a read-only filesystem with a scratch area only, CPU / memory / time limits, a non-root user and no privileges. This is the `v1.6.2` Docker backend, with gVisor (`runsc`) as the stricter runtime on Linux.
 
 #### How `v1.6.0` fits
 
@@ -176,8 +191,8 @@ Re-running an agent's change means executing untrusted code. The change could de
 
 #### Limits of this approach
 
-1. **A re-run proves that tests pass, not that the code is correct.** Weak tests make a pass meaningless, which is why `v1.6.2` adds mutation testing (to detect weakened tests) and hidden held-out tests.
-2. **Not every task can be re-run.** `code_fix` fits well; `data_query` or `deploy_service`, which have external side effects, cannot be re-run casually. This is why `v1.6.1` only allows low-risk tools.
+1. **A re-run proves that tests pass, not that the code is correct.** Weak tests make a pass meaningless, which is why `v1.6.2` reports changed-line coverage and later releases (`v1.6.6+`) add mutation testing (to detect weakened tests) and hidden held-out tests.
+2. **Not every task can be re-run.** `code_fix` fits well; `data_query` or `deploy_service`, which have external side effects, cannot be re-run casually. This is why `v1.6.2` only allows low-risk tools.
 3. **Flaky tests** can make a re-run disagree with the agent's report without any cheating, so retries and interpretation rules are needed.
 4. **Re-runs cost compute and time**, so they are paired with FinOps cost controls and sampling.
 5. **Monotonic safety still holds.** A failed re-run makes the verdict stricter. A successful re-run only raises the assurance level; it never automatically accepts a run that is under review. Acceptance remains a human decision.
@@ -191,19 +206,109 @@ Re-running an agent's change means executing untrusted code. The change could de
 - **Modularization**: Split `app/services/finops.py` into domain submodules and continue moving endpoints out of `app/api/routes.py` into per-domain routers.
 - **`SandboxBackend` Interface**: Abstracts tool execution while keeping deterministic simulation as the default backend.
 
-### `v1.6.1` (Next): Isolated Sandbox Runtime MVP
-- **P1 Dashboard RBAC & CSRF**: signed-in Dashboard roles and CSRF tokens on every form; afterwards the Dashboard may apply retention plans and release legal holds (API-only in `v1.6.0`).
-- **Hardened Docker Backend**: Read-only root filesystem, no network by default, all capabilities dropped, non-root user, and pid/memory/CPU limits. The OCI runtime is configurable: `runc` for local Docker Desktop verification, `runsc` (gVisor) on Linux hosts without code changes.
+### `v1.6.1` (Next): Enterprise Access & Audit Integrity
+Split out of the former `v1.6.1` scope: every Dashboard form is touched, and signed-in roles are the entry requirement for regulated customers.
+- **P0 Prompt-Guard 2.0 (implemented on the `v1.6.1` branch, not released)**: brought forward from `v1.6.4` after a review on 2026-11-11 found that prompt flags are the only pre-execution gate for harmful intent expressed in the prompt and carried out with tools the request may already use (constraint flags are declared by the requester; `write_patch` and `query_data` need no approval). Adds Unicode normalization for matching, modern Chinese rules (`zh_*`), the `sensitive_term_mention` tier and the `classical_style_task_mismatch` heuristic. Every signal can only escalate to approval. Still rule-based and evadable by paraphrase; expected misses are kept as tests.
+- **Dashboard Sign-In & Roles**: user sign-in with sessions replaces the single Basic Auth account. Roles: `admin`, `tenant_admin`, `reviewer`, `operator` and a new read-only `auditor`. The session layer is built so OIDC single sign-on (`v1.6.5`) plugs in without rework.
+- **CSRF & Re-Authentication**: CSRF tokens on every Dashboard form; high-impact actions ask the user to authenticate again.
+- **Second-Person Approval**: retention apply, legal-hold release, judge activation and protected-path policy changes can require approval by a second person (configurable per action).
+- **Tamper-Evident Audit Chain**: writes the hash-chain columns reserved on tombstones in `v1.6.0` (`prev_hash`, `entry_hash`, `chain_version`), extends the chain to governance events and review decisions, and adds signed daily checkpoints with a verification command.
+- **Unlocked from `v1.6.0`**: the Dashboard may apply retention plans and release legal holds (API-only in `v1.6.0`).
+
+### `v1.6.2` (tentative number): Isolated Sandbox Runtime MVP
+- **Hardened Docker Backend**: Read-only root filesystem, no network by default, all capabilities dropped, non-root user, and pid/memory/CPU limits. The OCI runtime is configurable: `runc` for local Docker Desktop verification, `runsc` (gVisor) on Linux hosts without code changes. The backend must pass every case in `conformance.CASES` before it can be enabled. Images are digest-pinned and can come from an internal registry, so no outbound network is needed.
 - **Narrow Scope**: Only low-risk tools (for example `read_repo`, `run_tests`) and in-sandbox `stdio` MCP servers, behind a disabled-by-default feature flag.
-- **Platform-Verified Evidence**: Re-running tests inside the sandbox upgrades outcome evidence to `platform_verified`; dry-run replay can optionally re-execute inside the sandbox.
+- **Platform-Verified Evidence**: Re-running tests inside the sandbox against the platform's pristine copy of the tests upgrades outcome evidence to `platform_verified`; dry-run replay can optionally re-execute inside the sandbox.
+- **Before / After Runs**: the platform runs its own copy of the tests before and after applying the agent's change (the fail-to-pass / pass-to-pass practice of SWE-bench), so the baseline is no longer self-reported.
+- **Changed-Line Coverage**: reports whether the changed lines were executed by any test. A pass that never executes the change is recorded as weak evidence.
+- **Re-Run Contradiction Rule (shadow first)**: a platform re-run that contradicts the agent's report produces a finding, with retry and interpretation rules for flaky tests. It ships in `shadow` and is promoted only with benchmark evidence.
+- **Cost & Sampling**: re-run compute is recorded in the FinOps ledger, and sampling decides which runs are re-run.
+- **Capability-Derived Gates**: tools declare what they can do (write, network access, personal data, destructive change) and the platform derives the required gates from the tools a request may use. Today `allow_destructive_actions`, `allow_pii_access` and `no_external_network` are declared by the requester, so they only gate honest requests. This must land before any tool with real side effects is enabled.
+
+### `v1.6.3` (tentative number): Detection Measurement & Trajectory Evidence
+Independent of the sandbox. Every new detector ships in `shadow`; judges stay triage-only.
+- **Public Labeled Corpora**: importers for public reward-hacking datasets (METR MALT, ImpossibleBench, EvilGenie, TRACE) through the existing Inspect import path. `TT-001` tuning, `special_casing` promotion and the judge `triage` mode have waited for non-seed evidence since `v1.5.9`; the seed corpus has 94 samples. Dataset licences and canary rules are honoured, and corpora are used for measurement only, never for training.
+- **Trajectory Detectors**: `tool_transcript` is checked today only for presence and for injection markers. New detectors read the action trajectory (reading expected-output files, editing and then restoring tests, narrowing test selection). The focus is on actions, because reasoning traces add little for reward-hacking detection.
+- **Trajectory-Aware, Contrastive Judging**: judge input gains the trajectory and a few benign trajectories of the same task type for comparison. The judge prompt states that an in-trajectory "the user accepted this shortcut" is not evidence.
+- **Structured Self-Report & Escalation Channel**: each outcome carries a fixed-question declaration (were tests modified, was anything skipped), recorded as `self_reported` claims and compared with the evidence. A gateway tool lets an agent report that a task or its tests are defective; the report opens a defect item for reviewers instead of a faked pass. Reports are authenticated like any other tool call.
+- **Evasion-Variant Suite**: deterministic transformations of seed positives (for example a lambda `__eq__`, or a dynamically built skip marker) report an evasion rate per rule.
+- **Root-Cause Labels**: a review decision can record whether the cause was agent behaviour, weak tests or an ambiguous specification.
+- **Monitoring Coverage**: the share of completed runs that submitted an outcome and were evaluated; runs without evidence are shown, not silently ignored. Sampling rates can rise with task duration or difficulty.
+
+### `v1.6.4` (tentative number): Compliance Foundation, Approved Models & Multilingual Guard
+Customers are expected in Taiwan, the EU, the United States and Japan. The platform describes its controls once and maps them to each framework through data files.
+- **Control Catalog & Framework Mappings**: versioned mapping files with effective dates, staged provisions, source and last-review date. Anchor mappings: ISO/IEC 42001, NIST AI RMF and the EU AI Act; then Taiwan, Japan and US state packs. A one-click evidence pack exports human-review rate, sampling rate, incidents, and retention and purge records. Obligations are never hard-coded (see the regulatory snapshot below: one US state law was replaced within a year).
+- **Approved-Model List (opt-in)**: pricing-catalog entries gain a vendor jurisdiction and an *approved* flag that is off by default. Administrators tick the models that may be used; a tenant can only narrow the list. The list is enforced when usage is recorded, when FinOps degrades to a cheaper model, when a run declares its model, and for judge profiles (test, activation, fallback and benchmark); judge templates are filtered by it. Today `is_active` on a pricing row controls pricing only, and every seeded model is active. Limit: the platform is not a model gateway, so it refuses usage and outcomes that report an unapproved model but cannot stop a call made outside the platform.
+- **Locale PII Redaction Packs**: pluggable packs applied before persistence, before judges and before trace export: Taiwan (national ID, resident certificate and unified business numbers with checksum validation, phone numbers), Japan (My Number, phone numbers), United States (SSN) and EU (IBAN, national IDs). Each rule has negative fixtures.
+- **Data-Subject Requests**: find, export and erase records by person, with defined behaviour when a legal hold applies.
+- **Incident Notification Clocks**: detection time plus configurable notification deadlines per regime.
+- **Cross-Border Transfer Records & Retention Presets**: which evidence left for which region (extends tenant consent for external judges), and retention presets per jurisdiction.
+- **Semantic Prompt Screening**: prompt-guard/2.0 (`v1.6.1` P0) added normalization, modern Chinese rules and a classical-style heuristic, but stays rule-based (see `docs/security.md`, Known Boundaries). Remaining here: translate-then-screen with a local model and an optional guard model, in `shadow`, reusing the judge-profile infrastructure; an adversarial regression corpus that reports bypass and false-positive rates per rule; a general Simplified → Traditional and variant-character conversion; and clause-aware matching to cut the known false positives. These signals can only escalate a request to approval, never allow one, and fall back to the rules on failure.
+- **Localization**: TWD base-currency and business-tax presets, dated FX-rate import, department month-end reports, and Dashboard locale switching (English, Traditional Chinese, Japanese).
+
+### `v1.6.5` (tentative number): Enterprise Integration
+- **OIDC Single Sign-On**: Entra ID, AD FS and Keycloak with group-to-role mapping. LDAP is reached through one of these identity providers.
+- **SIEM Export**: governance events, incidents and review decisions as syslog, CEF or JSON webhooks.
+- **Notifications**: SMTP, Microsoft Teams and a generic HMAC-signed webhook. Messages carry IDs and priority only, never evidence.
+- **CI Integration Kit**: templates for self-managed GitLab CI, Jenkins, Azure DevOps and GitHub Actions plus a CLI that collects the diff and test report, signs a DSSE attestation, submits the outcome and writes the verdict back as a merge check. The check can only block a merge; it never approves one.
+- **Offline / On-Prem Bundle**: image archive, pinned packages, SBOM, signed images and a backup / restore drill script.
 
 ---
 
-## Long-Term Horizon: `v1.6.2+`
+## Long-Term Horizon: `v1.6.6+` (tentative number)
 
+- **Stronger Verification**: Hidden held-out tests (a tenant keeps part of its suite unseen by the agent; the benefit is measured on the benchmark first, because published results on held-out tests are mixed), mutation testing limited to changed lines, and resampling of suspicious steps.
+- **Realistic Honeypots & Canaries**: Impossible-task probes derived from real tasks instead of the six toy probes, and canary strings in decoy files whose appearance in a diff shows the answer was read.
+- **Pre-Rollout Propensity Gate**: Run the honeypot suite against a new model, prompt or harness variant before rollout, with the harness variant as a cheat-rate cohort.
+- **Reviewer Quality**: Double-review agreement and known-answer items in the review queue.
+- **Multi-Language Structural Rules**: Structural analysis beyond Python (Java, C#, TypeScript) and skip markers such as JUnit `@Disabled` / `@Ignore`, NUnit `[Ignore]` and xUnit `Skip=`.
 - **Remote MCP Transports**: Real `sse` / `streamable_http` connections behind an egress proxy and allow-lists.
-- **Additional Sandbox Backends**: Kubernetes Job backend (with gVisor `RuntimeClass`) and optional Firecracker microVMs for Linux deployments.
-- **Stronger Verification**: Hidden held-out tests, mutation testing to detect weakened tests, and resampling of suspicious steps.
+- **Additional Sandbox Backends**: Kubernetes Job backend (with gVisor `RuntimeClass`) and, last, optional Firecracker microVMs for Linux deployments.
 - **Closed-Loop Risk Scoring**: Feed confirmed per-agent cheat rates back into pre-execution risk scoring once false-positive rates are stable.
-- **Judge Extensions** (deferred from `v1.5.10`–`v1.5.12`): further native adapters (Azure OpenAI, Gemini native, Bedrock / Vertex identity), per-tenant judge selection, in-page encrypted key entry after Dashboard RBAC / CSRF, multi-judge voting, a cross-process (Kafka) judge queue, real 14B / 27B and Gemini measurements once hardware or keys are available, and evidence-based `TT-001` tuning / `special_casing` promotion once enough sampled, non-seed labels exist.
+- **Judge Extensions** (deferred from `v1.5.10`–`v1.5.12`): judge ensembles and cheap-then-expensive hierarchical monitoring with score calibration, further native adapters (Azure OpenAI, Gemini native, Bedrock / Vertex identity), per-tenant judge selection, in-page encrypted key entry after Dashboard RBAC / CSRF, a cross-process (Kafka) judge queue, real 14B / 27B and Gemini measurements once hardware or keys are available, and evidence-based `TT-001` tuning / `special_casing` promotion once enough sampled, non-seed labels exist.
 - **Stateful Graph Time-Travel & Live Replay**: Full workflow graph checkpointing with isolated sandbox re-execution.
+
+---
+
+## Re-baseline Notes (November 2026)
+
+Recorded on 2026-11-11, after `v1.6.0`. Nothing in this section is implemented yet.
+
+### What changed from the previous roadmap
+
+- The former `v1.6.1` (Dashboard RBAC / CSRF **and** the Docker sandbox) is split: access control and audit integrity stay in `v1.6.1`, the sandbox moves to `v1.6.2`. The first `platform_verified` evidence therefore arrives one release later.
+- Three releases are added between the sandbox and the long-term items: measurement and trajectory evidence (`v1.6.3`), compliance, approved models and the multilingual guard (`v1.6.4`), and enterprise integration (`v1.6.5`).
+- Hidden held-out tests and mutation testing move from `v1.6.2` to `v1.6.6+`.
+- Prompt-guard/2.0 is phase P0 of `v1.6.1` and ships with it (decided 2026-11-11), so no release number moved. It was brought forward from `v1.6.4`; semantic screening stays there.
+- Only the next release number is fixed from now on; later numbers are tentative (see the note under the release table).
+- Not adopted: training-side techniques (the platform does not train models), interpretability probes (they need model weights), and untrusted monitoring with collusion countermeasures (judges here are always trusted and triage-only).
+
+### Research basis
+
+Figures are as reported by the sources or by summaries of them; re-verify before citing them elsewhere.
+
+| Source | Finding used here | Planned in |
+| --- | --- | --- |
+| [METR MALT dataset](https://metr.org/blog/2025-10-14-malt-dataset-of-natural-and-prompted-behaviors/) (2025) | About 10,900 labeled agent transcripts; prompted monitors detect reward hacking well, and reasoning traces add little for it | `v1.6.3` corpora and action-focused trajectory detectors |
+| [METR Frontier Risk Report](https://metr.org/blog/2026-05-19-frontier-risk-report/) (2026) | Cheating rises with task difficulty; monitors can be fooled by human-written jailbreaks; monitoring had coverage gaps | `v1.6.3` monitoring coverage and difficulty-weighted sampling; judges stay triage-only |
+| [TRACE](https://arxiv.org/abs/2601.20103) (ICML 2026) | Comparing a trajectory against similar benign ones improves detection; semantic hacks are much harder than syntactic ones | `v1.6.3` contrastive judging |
+| [EvilGenie](https://arxiv.org/abs/2511.21654) | Test-edit detection catches tampering but not hard-coding; held-out tests help less than expected | Hidden tests measured before adoption (`v1.6.6+`) |
+| [Escalation channels preprint](https://huggingface.co/papers/2608.29460) (2026) | A reporting tool paired with a written policy cut hacking far more than a one-line instruction | `v1.6.3` escalation channel |
+| [CC-BOS](https://arxiv.org/abs/2602.22983) (ICLR 2026) | Classical Chinese jailbreaks replace sensitive terms with allusion and metaphor and still succeed under layered defenses | `v1.6.4` prompt-guard hardening; principle 8 |
+
+### Regulatory snapshot
+
+Status as recorded on 2026-11-11 from secondary sources. This is not legal advice; check official texts before relying on a date.
+
+| Jurisdiction | Instrument | Status and key dates | Use in the mapping |
+| --- | --- | --- | --- |
+| EU | AI Act as amended by Regulation (EU) 2026/1744 (published 2026-07-24, in force 2026-07-27) | General-purpose AI obligations since 2025-08-02; Article 50 transparency from 2026-08-02; Annex III high-risk systems from 2027-12-02; Annex I embedded high-risk systems from 2028-08-02 | Anchor mapping |
+| EU | GDPR; DORA for financial entities; Cyber Resilience Act | In force or phasing in; dates not verified in this snapshot | Data-subject requests, incident clocks, SBOM |
+| International | ISO/IEC 42001, ISO/IEC 27001 | Voluntary standards | Anchor mapping |
+| United States | NIST AI RMF; SOC 2 | Voluntary; no comprehensive federal statute | Anchor mapping |
+| United States | Colorado SB26-189, which repealed and replaced the 2024 Colorado AI Act | Applies to consequential decisions made on or after 2027-01-01; covers automated decision-making about consumers | Low priority: coding-agent monitoring is rarely in scope |
+| Japan | AI Promotion Act (Act No. 53 of 2025); AI Guidelines for Business | In force; the guidelines are non-binding | Japan pack |
+| Japan | APPI amendment (promulgated 2026-07-17) | Penalty provisions from 2027-01-17; main provisions on a date set by cabinet order within two years of promulgation; identifier data such as phone numbers comes into scope | Japan redaction pack |
+| Taiwan | Personal Data Protection Act; Cyber Security Management Act; FSC guidance on AI for financial institutions; AI Basic Act | Dates not verified in this snapshot | First locale pack |
+
+Sources consulted: [AI Act timeline after the omnibus](https://zeelandiaconsulting.com/insights/ai-act-01-timeline-omnibus/), [Colorado repeal and replacement](https://www.goodwinlaw.com/en/insights/publications/2026/06/alerts-technology-fs-colorado-enacts-law-repealing-replacing-landmark-ai-act), [Colorado Attorney General AI page](https://coag.gov/ai/), [Japan APPI 2026 amendment](https://helloworldjapan.com/tw/articles/japan-ai-regulation-appi-2026), [Japan AI Promotion Act](https://www.japaneselawtranslation.go.jp/en/laws/view/5066/en).

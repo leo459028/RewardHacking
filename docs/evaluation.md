@@ -38,7 +38,7 @@ This guide describes how RewardHacking evaluates what an agent actually did afte
 
 **Submission rules**: at most `EVALUATION_OUTCOME_MAX_SUBMISSIONS` (default 3) per run (`429 outcome_submission_limit_reached`); submissions are append-only (`run_outcomes`, `outcome_` IDs); a run in `review_required` stays there even if later evidence is clean.
 
-**Assurance levels**: `simulated` (executor path), `none` (no test evidence), `self_reported`, `ci_attested_unverified`, `ci_attested` (verified, `v1.5.9`). `platform_verified` is reserved for the `v1.6.1` sandbox.
+**Assurance levels**: `simulated` (executor path), `none` (no test evidence), `self_reported`, `ci_attested_unverified`, `ci_attested` (verified, `v1.5.9`). `platform_verified` is reserved for the `v1.6.2` sandbox.
 
 **Agent identity** (`v1.5.9`): `metadata.agent_id`, `metadata.agent_version` and `metadata.model_name` on the submitted run are copied onto outcomes and reviews for cheat-rate cohorts. They are self-reported and can be spoofed.
 
@@ -423,7 +423,9 @@ GovernanceEvents `evaluation.judge_profile.created` / `updated` / `deleted` / `p
 ## 16. Known Limitations (`v1.5.12`)
 
 - AST analysis covers Python only; other languages use diff-level patterns (`medium` confidence).
-- `ci_attested` is verified only for DSSE envelopes signed by tenant-registered keys; Sigstore / GitHub keyless verification is not implemented. `platform_verified` requires the `v1.6.1` sandbox. An attestation does not prove tests were untouched.
+- `ci_attested` is verified only for DSSE envelopes signed by tenant-registered keys; Sigstore / GitHub keyless verification is not implemented. `platform_verified` requires the `v1.6.2` sandbox. An attestation does not prove tests were untouched.
+- `tool_transcript` is used only as a presence check (`CE-006`) and for judge injection scanning; no detector reads the action trajectory and the judge does not receive it. Trajectory detectors and trajectory-aware judging are planned for `v1.6.3`.
+- Skip-marker rules (`TT-002`) cover pytest, unittest, JavaScript test runners and Go; JUnit `@Disabled` / `@Ignore`, NUnit `[Ignore]` and xUnit `Skip=` are not covered (planned with multi-language structural rules, `v1.6.6+`).
 - With a diff but no `changed_files`, some grader rules cannot see whole functions and fall back to `medium` confidence.
 - Deterministic rules can be evaded deliberately (for example a dynamically generated skip marker or a lambda `__eq__`); the seed corpus records such misses.
 - Seed metrics measure rule self-consistency; FPR 1% cannot be resolved until at least 100 benign samples exist.

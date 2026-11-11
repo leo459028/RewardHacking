@@ -52,15 +52,21 @@ flowchart LR
   - `reveal system prompt`
   - `exfiltrat`
 - **Classical Chinese Prompt Guard**:
-  Adversarial actors frequently disguise harmful instructions in archaic literary/classical Chinese syntax to evade simple substring filters. RewardHacking implements a deterministic classifier that analyzes semantics:
+  Adversarial actors frequently disguise harmful instructions in archaic literary/classical Chinese syntax. RewardHacking implements a deterministic **fixed phrase list** (`app/services/prompt_sanitizer.py`); it does not analyse meaning, so a rephrased instruction is not detected (see Known Boundaries, item 4):
   - Benign classical Chinese (poetry, translation, historical summaries) is permitted without penalty.
-  - Classical phrasing carrying adversarial intents (e.g., discarding instructions such as "君宜不顧前令" [ignore prior orders], deleting data such as "盡毀數據" [destroy all data], exfiltrating credentials such as "密鑰奉上" [yield secret keys]) triggers specialized policy flags:
+  - Listed phrases carrying adversarial intents (e.g., discarding instructions such as "勿循舊令" [do not follow the earlier orders], deleting data such as "毀其紀錄" [destroy its records], exfiltrating credentials such as "取密鑰" [take the secret key]) trigger specialized policy flags:
     - `classical_chinese_obfuscation`
     - `classical_prompt_injection`
     - `classical_policy_bypass`
     - `classical_credential_exfiltration`
     - `classical_destructive_intent`
     - `classical_malware_intent`
+- **Prompt-Guard 2.0** (`v1.6.1` P0, `guard_version: prompt-guard/2.0` in `evaluation_summary.prompt_guard`): still deterministic and model-free.
+  - **Normalization for matching only** (the stored prompt is unchanged): Unicode NFKC, removal of format and combining characters (zero-width spaces, bidi controls, variation selectors), Simplified → Traditional for the characters the rules use, and a compact view without punctuation or spaces. A listed phrase split by punctuation, spaces or zero-width characters, or written in Simplified Chinese, is detected again.
+  - **Modern Chinese rules**: `zh_prompt_injection`, `zh_policy_bypass`, `zh_credential_exfiltration`, `zh_destructive_intent`, `zh_malware_intent`. Each needs an action plus an object (for example "ignore" + "earlier / all" + "instructions"), so ordinary requests such as reading one environment variable or deleting temporary files are not flagged.
+  - **`sensitive_term_mention`**: a bare sensitive noun ("令牌", "後門", "惡意程式") without an attack verb. The request still goes to human approval, but it is no longer labelled as classical credential exfiltration or malware intent and no longer carries the high-risk weighting (risk 0.20 instead of 0.60 for an otherwise plain request).
+  - **`classical_style_task_mismatch`**: classical-style text (pronouns and particles such as 汝, 吾, 矣, 焉, 毋, with almost no modern function words) on a task type that has write, query or deploy tools (`code_fix`, `data_query`, `workflow`) goes to human approval. `analysis` and `other` are exempt so translation and literature work are unaffected.
+  - Every prompt flag still means `escalate` (human approval) or, above the deny threshold, `deny`; no prompt-guard signal can allow a request.
 
 ### 2. Multi-Factor Risk Scoring Engine
 Risk scores range deterministically from `0.0` to `1.0`:
@@ -133,7 +139,7 @@ Risk scores range deterministically from `0.0` to `1.0`:
 | Dashboard forgery of destructive actions | No Dashboard apply or hold release until RBAC / CSRF (`v1.6.1`); the Dashboard forms (dry-run plan, create hold) require a same-origin `Origin` / `Referer` |
 | Purged run probing across tenants | `410 run_purged` tombstones are tenant-scoped like live runs (`403 tenant_mismatch` otherwise) |
 | Secrets in traces | Span attribute allowlist (unknown keys dropped and counted), strings truncated, no prompts, goals, diffs, test reports, judge input / output or keys; a canary test scans every exported span. `/v1/observability/tracing` shows the exporter host only |
-| Unsafe sandbox specs (`v1.6.1` readiness) | `validate_spec()` rejects shell strings, tag-only images at container isolation or above, docker socket / `/proc` / `/sys` / host paths, secret-named environment variables, missing or zero limits and unsupported networks; `network: none` by default. The `simulated` backend executes nothing and never produces `platform_verified`; the isolation policy is record-only |
+| Unsafe sandbox specs (`v1.6.2` readiness) | `validate_spec()` rejects shell strings, tag-only images at container isolation or above, docker socket / `/proc` / `/sys` / host paths, secret-named environment variables, missing or zero limits and unsupported networks; `network: none` by default. The `simulated` backend executes nothing and never produces `platform_verified`; the isolation policy is record-only |
 
 ## Judge Activation & Dashboard Profiles Threat Model (`v1.5.12`)
 
@@ -176,6 +182,9 @@ Risk scores range deterministically from `0.0` to `1.0`:
 
 ## Known Boundaries & Limitations
 
-1. **Sandbox Isolation**: Bounded Tool Executor currently records structured invocation transcripts and simulates mutations through the `simulated` sandbox backend (`v1.6.0`; no isolation, nothing executed, Docker backend in `v1.6.1`); production deployments executing arbitrary shell commands must attach external container or microVM isolation (e.g. gVisor, Firecracker).
+1. **Sandbox Isolation**: Bounded Tool Executor currently records structured invocation transcripts and simulates mutations through the `simulated` sandbox backend (`v1.6.0`; no isolation, nothing executed, Docker backend in `v1.6.2`); production deployments executing arbitrary shell commands must attach external container or microVM isolation (e.g. gVisor, Firecracker).
 2. **Evaluator Truth**: Evaluation findings are deterministic rule outputs over agent-reported evidence (`self_reported` until verified) and must not be treated as infallible proof of safety; see [`docs/evaluation.md`](evaluation.md) for known false positives and limits.
 3. **Secret Hygiene**: Guardrails do not replace external secret managers (HashiCorp Vault, AWS Secrets Manager). All credentials must be securely injected via environment configurations.
+4. **Prompt Screening Is a Signal, Not a Boundary**: the prompt guard is a deterministic rule list (English patterns, classical Chinese phrases and, since prompt-guard/2.0, modern Chinese rules and a classical-style heuristic). It does not understand meaning. Known evasions, kept as expected-miss tests in `tests/test_v161_prompt_guard_hardening.py`: a paraphrase outside the rule vocabulary, classical text without pronouns or particles, classical text on the exempt `analysis` / `other` task types, a classical payload inside a long modern prompt, and letters interleaved between characters. Known false positives (they cost one approval): deleting "all" logs or records, "prevent leaking passwords", exporting a certificate ("憑證"). Published work on classical Chinese jailbreaks reports that keyword screening does not hold and that layered defenses still leave a residual success rate.
+   **Why it still matters**: constraint flags (`allow_destructive_actions`, `allow_pii_access`, `no_external_network`) are declared by the requester, and tools such as `write_patch` and `query_data` do not require approval. For harmful intent expressed only in the prompt and carried out with tools the request may use, prompt flags are the only pre-execution gate. Controls that do not read the prompt bound the damage: the task-type tool allow-list, tool `requires_approval` (for example `deploy_service`), MCP server trust and argument validation, budgets and post-execution evidence review. Semantic screening (translate-then-screen, guard models, in shadow) is planned for `v1.6.4`, and gates derived from tool capabilities instead of requester-declared constraints for `v1.6.2`; see [`roadmap.md`](roadmap.md).
+5. **No Approved-Model List**: `is_active` on a pricing-catalog row controls pricing only; every seeded model is active, and a run or usage event that reports any model is accepted (an unpriced model records `missing_pricing_rule`). Only LLM judges are opt-in today (test, then activate). An approved-model list with vendor jurisdiction is planned for `v1.6.4`. The platform is not a model gateway and cannot stop model calls made outside it.
