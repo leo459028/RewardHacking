@@ -50,9 +50,25 @@ class Settings(BaseSettings):
     llm_judge_enabled: bool = False
     auth_enabled: bool = False
     api_keys: str = "demo-key:default"
+    # v1.6.1 D9: DASHBOARD_AUTH_ENABLED only derives DASHBOARD_AUTH_MODE when the mode is unset (true -> session).
     dashboard_auth_enabled: bool = False
+    # Deprecated since v1.6.1 (Basic Auth was removed; D14). Ignored; the operations check warns when still set.
     dashboard_username: str = "admin"
     dashboard_password: str = "admin"
+    # v1.6.1 Enterprise Access (D9, D12, D13, D15, D17, D26): personal accounts and server-side sessions.
+    # off = no sign-in (local development only; a synthetic local-admin principal) | session = sign-in required.
+    dashboard_auth_mode: str = ""
+    dashboard_cookie_secure: str = "auto"  # auto (Secure unless APP_ENV=dev) | true | false
+    dashboard_session_idle_minutes: int = 30
+    dashboard_session_max_hours: int = 8
+    dashboard_reauth_max_age_seconds: int = 300
+    dashboard_login_max_failures: int = 5
+    dashboard_login_lockout_minutes: int = 15
+    dashboard_password_min_length: int = 12
+    # scrypt cost (OWASP Password Storage Cheat Sheet equivalent option N=2^15, r=8, p=3; about 32 MiB per hash)
+    dashboard_password_scrypt_n: int = 32768
+    dashboard_password_scrypt_r: int = 8
+    dashboard_password_scrypt_p: int = 3
     quota_enabled: bool = True
     tenant_request_limit_per_minute: int = 60
     tenant_high_risk_limit_per_hour: int = 10
@@ -270,10 +286,52 @@ class Settings(BaseSettings):
         self.evaluation_judge_dashboard_editing = (self.evaluation_judge_dashboard_editing or "auto").strip().lower()
         if self.evaluation_judge_dashboard_editing not in {"auto", "off", "insecure_dev"}:
             raise ValueError("EVALUATION_JUDGE_DASHBOARD_EDITING must be 'auto', 'off' or 'insecure_dev'.")
+        self._validate_dashboard_access()
         for name in self.judge_key_env_allowlist:
             if not re.fullmatch(r"[A-Z_][A-Z0-9_]{0,127}", name):
                 raise ValueError("EVALUATION_JUDGE_KEY_ENV_ALLOWLIST entries must be environment variable names (A-Z, 0-9, _).")
         return self
+
+    def _validate_dashboard_access(self) -> None:
+        """v1.6.1 D9 / D47: normalize the Dashboard access settings; an unset mode is derived from the old flag."""
+        mode = (self.dashboard_auth_mode or "").strip().lower()
+        if not mode:
+            mode = "session" if self.dashboard_auth_enabled else "off"
+        if mode not in {"off", "session"}:
+            raise ValueError("DASHBOARD_AUTH_MODE must be 'off' or 'session'.")
+        self.dashboard_auth_mode = mode
+        secure = (self.dashboard_cookie_secure or "auto").strip().lower()
+        if secure not in {"auto", "true", "false"}:
+            raise ValueError("DASHBOARD_COOKIE_SECURE must be 'auto', 'true' or 'false'.")
+        self.dashboard_cookie_secure = secure
+        for name in (
+            "dashboard_session_idle_minutes",
+            "dashboard_session_max_hours",
+            "dashboard_reauth_max_age_seconds",
+            "dashboard_login_max_failures",
+            "dashboard_login_lockout_minutes",
+            "dashboard_password_scrypt_r",
+            "dashboard_password_scrypt_p",
+        ):
+            if int(getattr(self, name)) < 1:
+                raise ValueError(f"{name.upper()} must be >= 1.")
+        if self.dashboard_password_min_length < 12:
+            raise ValueError("DASHBOARD_PASSWORD_MIN_LENGTH must be >= 12.")
+        n = int(self.dashboard_password_scrypt_n)
+        if n < 2 or n & (n - 1):
+            raise ValueError("DASHBOARD_PASSWORD_SCRYPT_N must be a power of 2 greater than 1.")
+
+    @property
+    def dashboard_cookie_secure_effective(self) -> bool:
+        """D15: ``auto`` sets the Secure cookie attribute everywhere except APP_ENV=dev."""
+        if self.dashboard_cookie_secure == "auto":
+            return (self.app_env or "").strip().lower() != "dev"
+        return self.dashboard_cookie_secure == "true"
+
+    @property
+    def dashboard_legacy_credentials_set(self) -> bool:
+        """D14: DASHBOARD_USERNAME / DASHBOARD_PASSWORD changed from their defaults although they are no longer used."""
+        return (self.dashboard_username, self.dashboard_password) != ("admin", "admin")
 
     @property
     def judge_key_env_allowlist(self) -> frozenset[str]:

@@ -8,8 +8,10 @@ from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import get_settings
+from app.models.access import ChangeRequest, DashboardSession, DashboardUser  # noqa: F401
 from app.models.agent_run import AgentRun  # noqa: F401
 from app.models.approval_event import ApprovalEvent  # noqa: F401
+from app.models.audit_chain import AuditChainCheckpoint, AuditChainEntry  # noqa: F401
 from app.models.base import Base
 from app.models.benchmark import BenchmarkRun, BenchmarkSample, HoneypotLaunch, HoneypotProbe, TenantAttestationKey  # noqa: F401
 from app.models.checkpoint import ReplayAttempt, RunCheckpoint  # noqa: F401

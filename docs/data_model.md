@@ -105,6 +105,42 @@ Probes: `name`, `description` (operator-only), `task_type`, `prompt`, `goal`, `p
 ### `TenantAttestationKey` (`tenant_attestation_keys`, `attk_` IDs)
 `tenant_id`, `name`, `algorithm` (`ed25519` | `ecdsa-p256-sha256`), `public_key_pem`, `key_fingerprint` (sha256 of DER SubjectPublicKeyInfo), `allowed_subjects`, `status` (`active` | `revoked`), `created_by`, `revoked_at`.
 
+## Enterprise Access & Audit Integrity (`v1.6.1`, Alembic `202611120003`)
+
+All five tables are created by one revision. `v1.6.1` P1 adds the tables and the access services; sign-in uses the
+user and session tables from P2, change requests from P6 and the audit chain from P5.
+
+### `DashboardUser` (`dashboard_users`, `usr_` IDs)
+A personal Dashboard account: `username` (lower-case, unique), `display_name`, `password_hash`
+(`scrypt$<n>$<r>$<p>$<salt>$<hash>`, standard-library scrypt; the cost is stored with each hash), `role`
+(`admin` | `tenant_admin` | `reviewer` | `operator` | `auditor`), `tenant_id` (NULL = platform user; required for
+`tenant_admin`, not allowed for `admin`), `status` (`active` | `disabled`), `auth_source` (`local`; reserved for
+OIDC), `external_subject` (reserved for OIDC; unique together with `auth_source`), `failed_attempts`, `locked_until`,
+`must_change_password`, `password_changed_at`, `last_login_at`, `created_by`, `created_at`, `updated_at`.
+
+### `DashboardSession` (`dashboard_sessions`, `ses_` IDs)
+One sign-in: `session_hash` (SHA-256 of the `rh_session` cookie token; the token itself is never stored), `user_id`,
+`auth_method`, `csrf_secret` (per-session CSRF key, used from P4), `created_at`, `last_seen_at` (written at most every
+60 seconds), `expires_at` (absolute timeout), `reauth_at` (last password entry), `revoked_at`, `revoked_reason`
+(`logout`, `idle_timeout`, `absolute_timeout`, `password_changed`, `role_changed`, `user_disabled`, ...),
+`user_agent_hash`.
+
+### `ChangeRequest` (`change_requests`, `chg_` IDs)
+A dual-control request (P6): `action`, `target_ref`, `tenant_id`, `payload` (JSON, no secrets), `payload_digest`,
+`status` (`pending` | `approved` | `rejected` | `executed` | `failed` | `expired` | `cancelled`), `requested_by`,
+`requested_reason`, `requested_at`, `decided_by`, `decision_reason`, `decided_at`, `expires_at`, `executed_at`,
+`result` (JSON), `error_code`. Index `(action, target_ref, status)`.
+
+### `AuditChainEntry` (`audit_chain_entries`, `ace_` IDs)
+The hash ledger (P5): `seq` (primary key assigned by the writer, part of the hash), `entry_id`, `entry_type`,
+`ref_table`, `ref_id`, `tenant_id`, `run_id`, `payload_digest`, `prev_hash`, `entry_hash` (unique), `chain_version`,
+`created_at`. Hashes and identifiers only. Retention purges never delete this table.
+
+### `AuditChainCheckpoint` (`audit_chain_checkpoints`, `acp_` IDs)
+A statement of the chain head (P5): `through_seq`, `head_hash`, `entry_count`, `period_start`, `period_end`,
+`prev_checkpoint_hash`, `checkpoint_hash`, `algorithm` (`ed25519`), `key_id`, `signature` (base64), `status`
+(`signed` | `unsigned`), `created_by`, `created_at`.
+
 ## Audit Retention (`v1.6.0`, Alembic `202611120002`)
 
 ### `LegalHold` (`legal_holds`, `lh_` IDs)

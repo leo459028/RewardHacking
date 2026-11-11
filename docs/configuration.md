@@ -35,9 +35,17 @@ Application configuration is loaded from environment variables and local `.env` 
 | `LLM_JUDGE_ENABLED` | `false` | Enables external LLM judge; uses deterministic rubrics if false |
 | `AUTH_ENABLED` | `false` | Enables mandatory `X-API-Key` authentication |
 | `API_KEYS` | `demo-key:default:admin` | Bootstrap fallback API keys (`key:tenant:role`) |
-| `DASHBOARD_AUTH_ENABLED` | `false` | Enables HTTP Basic Authentication for web dashboard |
-| `DASHBOARD_USERNAME` | `admin` | Dashboard operator username |
-| `DASHBOARD_PASSWORD` | `admin` | Dashboard operator password (MUST be rotated for production) |
+| `DASHBOARD_AUTH_ENABLED` | `false` | `v1.6.1`: only used to derive `DASHBOARD_AUTH_MODE` when that is unset (`true` → `session`, `false` → `off`). HTTP Basic Auth was removed |
+| `DASHBOARD_AUTH_MODE` | *(derived)* | `v1.6.1`: `off` (no sign-in; a synthetic `local-admin`; local development only, the operations check fails in `APP_ENV=prod`) or `session` (personal accounts and server-side sessions). Create the first admin with `python -m app.jobs.users create --username <name> --role admin --password-env <VAR>` |
+| `DASHBOARD_COOKIE_SECURE` | `auto` | `auto` sets the `Secure` attribute on the `rh_session` cookie unless `APP_ENV=dev`; `true` / `false` force it |
+| `DASHBOARD_SESSION_IDLE_MINUTES` | `30` | A session ends after this much inactivity |
+| `DASHBOARD_SESSION_MAX_HOURS` | `8` | A session ends this long after sign-in, active or not |
+| `DASHBOARD_REAUTH_MAX_AGE_SECONDS` | `300` | High-risk actions need a password entry this recent (re-authentication, from P4) |
+| `DASHBOARD_LOGIN_MAX_FAILURES` | `5` | Consecutive wrong passwords that lock an account |
+| `DASHBOARD_LOGIN_LOCKOUT_MINUTES` | `15` | Lock duration; during a lock even the right password is refused |
+| `DASHBOARD_PASSWORD_MIN_LENGTH` | `12` | Minimum password length (cannot be set below 12). Passwords may not equal the username or appear on the built-in common-password list; no character-class rules |
+| `DASHBOARD_PASSWORD_SCRYPT_N` / `_R` / `_P` | `32768` / `8` / `3` | scrypt cost (an OWASP Password Storage Cheat Sheet equivalent option, about 32 MiB per hash). `N` must be a power of 2. Hashes with a lower cost are upgraded at the next successful sign-in |
+| `DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD` | `admin` / `admin` | **Deprecated in `v1.6.1` and ignored** (Basic Auth was removed); the operations check `dashboard_auth_mode` warns while they differ from the defaults |
 | `QUOTA_ENABLED` | `true` | Enables Redis rate limiting and high-risk quotas |
 | `TENANT_REQUEST_LIMIT_PER_MINUTE` | `60` | Default sliding-window request quota per tenant |
 | `TENANT_HIGH_RISK_LIMIT_PER_HOUR` | `10` | Default hourly ceiling for high-risk requests per tenant |
