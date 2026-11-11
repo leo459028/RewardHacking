@@ -25,9 +25,9 @@ from app.services.operations import (
 )
 from app.services.run_state import RunStateStore
 from app.ui.routes import dashboard_auth, templates
-from app.ui.security import actor_for, needs
+from app.ui.security import actor_for, csrf_protect, needs
 
-router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth)])
+router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth), Depends(csrf_protect)])
 
 
 @router.get("/dashboard/observability", response_class=HTMLResponse, dependencies=needs("dashboard.view", view="observability"))

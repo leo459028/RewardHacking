@@ -49,6 +49,7 @@
   </table>
   {% if judge_mode != "off" %}
   {% if can("reviews.retriage") %}<form method="post" action="/dashboard/reviews/{{ review.review_id }}/judge-assessments" style="margin-top:12px;">
+    {{ csrf_input() }}
     <button class="button secondary" type="submit" id="reassess-judge">Re-assess | 重新評估</button>
   </form>{% endif %}
   {% endif %}
@@ -64,6 +65,7 @@
 <section class="panel" id="review-decision">
   <h2>Review Decision <span class="heading-note">審查決定（不會重新執行 run）</span></h2>
   {% if can("reviews.decide") %}<form method="post" action="/dashboard/reviews/{{ review.review_id }}/decision">
+    {{ csrf_input() }}
     <div class="form-grid">
       <label>Label
         <select name="label">
@@ -113,6 +115,7 @@
     <p>Exported as <a href="/dashboard/benchmark?tenant_id={{ review.tenant_id }}&source=review_export&corpus=#corpus"><strong>{{ review.exported_sample_id }}</strong></a>.</p>
   {% else %}
   {% if can("benchmark.manage") %}<form method="post" action="/dashboard/reviews/{{ review.review_id }}/export-benchmark">
+    {{ csrf_input() }}
     <div class="form-grid">
       <label>Scope
         <select name="scope"><option value="tenant">tenant ({{ review.tenant_id }})</option><option value="global">global (admin)</option></select>

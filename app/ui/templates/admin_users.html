@@ -21,6 +21,7 @@
   <h2>Create user<span class="heading-note">建立使用者</span></h2>
   <p class="muted">Password: at least {{ min_length }} characters; share it out of band. <code>tenant_admin</code> needs a tenant; <code>admin</code> cannot have one. | 密碼至少 {{ min_length }} 個字元並以其他管道交付；tenant_admin 必須指定租戶，admin 不可指定。</p>
   <form method="post" action="/dashboard/admin/users" class="form-grid">
+    {{ csrf_input() }}
     <label>Username | 帳號<input name="username" required autocomplete="off"></label>
     <label>Display name | 顯示名稱<input name="display_name" autocomplete="off"></label>
     <label>Role | 角色
@@ -48,24 +49,29 @@
         <td>
           {% if user.user_id != principal.user_id %}
           <form method="post" action="/dashboard/admin/users/{{ user.user_id }}/role" class="inline-form">
+            {{ csrf_input() }}
             <select name="role">{% for role in roles %}<option value="{{ role }}" {{ 'selected' if role == user.role else '' }}>{{ role }}</option>{% endfor %}</select>
             <input name="tenant_id" value="{{ user.tenant_id or '' }}" placeholder="tenant">
             <button class="button secondary" type="submit">Set role | 改角色</button>
           </form>
           <form method="post" action="/dashboard/admin/users/{{ user.user_id }}/status" class="inline-form">
+            {{ csrf_input() }}
             <input type="hidden" name="status" value="{{ 'disabled' if user.status == 'active' else 'active' }}">
             <button class="button {{ 'danger' if user.status == 'active' else 'secondary' }}" type="submit">{{ 'Disable | 停用' if user.status == 'active' else 'Enable | 啟用' }}</button>
           </form>
           <form method="post" action="/dashboard/admin/users/{{ user.user_id }}/password" class="inline-form">
+            {{ csrf_input() }}
             <input name="new_password" type="password" autocomplete="new-password" minlength="{{ min_length }}" placeholder="new password" required>
             <button class="button secondary" type="submit">Reset password | 重設密碼</button>
           </form>
           {% if user.locked_until %}
           <form method="post" action="/dashboard/admin/users/{{ user.user_id }}/unlock" class="inline-form">
+            {{ csrf_input() }}
             <button class="button secondary" type="submit">Unlock | 解鎖</button>
           </form>
           {% endif %}
           <form method="post" action="/dashboard/admin/users/{{ user.user_id }}/sessions/revoke" class="inline-form">
+            {{ csrf_input() }}
             <button class="button secondary" type="submit">Sign out everywhere | 撤銷工作階段</button>
           </form>
           {% else %}

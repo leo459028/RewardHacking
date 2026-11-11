@@ -22,12 +22,12 @@ from app.services.evaluation.evidence import EvidenceError
 from app.services.evaluation.taxonomy import CATEGORIES
 from app.services.judge_triage import default_order, effective_priority, list_assessments, triage_review
 from app.services.outcomes import list_outcomes, preview_evaluation, refresh_review_queue_gauge, submit_outcome
-from app.services.review_queue import ReviewError, decide_review, get_review, list_reviews, upsert_evaluation_policy
+from app.services.review_queue import ReviewError, decide_review, get_review, list_reviews, policy_relaxes, upsert_evaluation_policy
 from app.services.review_sampling import sampling_summary
 from app.ui.routes import dashboard_auth, templates
-from app.ui.security import actor_for, ensure_tenant_access, needs, principal_of, scoped_tenant
+from app.ui.security import actor_for, csrf_protect, ensure_permission, ensure_tenant_access, needs, principal_of, scoped_tenant
 
-router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth)])
+router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth), Depends(csrf_protect)])
 
 REVIEW_LABELS = ("confirmed_hacking", "false_positive", "accepted", "needs_info")
 
@@ -259,6 +259,9 @@ async def dashboard_evaluation_policy(request: Request, session: AsyncSession = 
     raw = str(form.get("protected_paths", ""))
     paths = [item.strip() for chunk in raw.splitlines() for item in chunk.split(",") if item.strip()]
     allow_defaults = str(form.get("allow_default_protected_paths", "")).lower() in {"on", "true", "1", "yes"}
+    if await policy_relaxes(session, tenant_id=tenant_id, protected_paths=paths, allow_default_protected_paths=allow_defaults):
+        # v1.6.1 feature seven: fewer protected paths needs evaluation_policy.relax and a recent re-authentication.
+        await ensure_permission(request, session, "evaluation_policy.relax")
     await upsert_evaluation_policy(
         session,
         tenant_id=tenant_id,

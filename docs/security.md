@@ -128,7 +128,8 @@ Risk scores range deterministically from `0.0` to `1.0`:
 ## Dashboard Sign-In & Sessions (`v1.6.1`)
 
 `v1.6.1` replaces the single shared Basic Auth account with personal accounts and server-side sessions. Roles are
-applied per route (see the next section); CSRF tokens and re-authentication arrive with P4.
+applied per route (see the next section); CSRF tokens, re-authentication and security headers are described in
+[Dashboard CSRF, Re-Authentication & Security Headers](#dashboard-csrf-re-authentication--security-headers-v161).
 
 | Threat | Control |
 | :--- | :--- |
@@ -146,7 +147,7 @@ applied per route (see the next section); CSRF tokens and re-authentication arri
 
 Access events are governance events with tenant `system`: `access.login`, `access.logout`, `access.lockout`,
 `access.password_changed`, `access.user_created`, `access.user_updated`, `access.user_disabled`,
-`access.role_changed`, `access.session_revoked`, `access.denied` (`access.reauth` arrives with P4).
+`access.role_changed`, `access.session_revoked`, `access.reauth`, `access.denied`.
 
 ## Dashboard Roles, Tenant Scope & Operator Identity (`v1.6.1`)
 
@@ -206,6 +207,19 @@ buttons with `can()`, but the server checks every request.
   recorded as the signed-in user, the same user cannot decide that run's review (`review_self_approval_forbidden`).
   `off` mode keeps the historical strings (`dashboard-admin`, `dashboard`, form values).
 
+## Dashboard CSRF, Re-Authentication & Security Headers (`v1.6.1`)
+
+Applies in `DASHBOARD_AUTH_MODE=session`; `off` mode (local development only) checks neither tokens nor
+re-authentication.
+
+| Threat | Control |
+| :--- | :--- |
+| Cross-site form submission (a signed-in browser driven by another site) | Every Dashboard router has the `csrf_protect` dependency: every request other than GET / HEAD / OPTIONS must carry `HMAC-SHA256(csrf_secret, session_id)` as the `_csrf` form field (rendered by `csrf_input()` in every POST form) or the `X-CSRF-Token` header. `csrf_secret` is random per session, so another session's token, or a token from before sign-out, never verifies; comparisons are constant time. A missing or wrong token answers `403 csrf_token_invalid` before the route runs, writes `access.denied` (permission `csrf`) and counts `dashboard_access_denied_total{reason="csrf_token_invalid"}`. The same-origin `Origin` / `Referer` check on the judge profile and retention forms stays as a second layer, and the session cookie keeps `SameSite=Lax` |
+| Sign-in CSRF (signing a victim into the attacker's account) | The sign-in form has no session yet: each rendering sets a signed, `HttpOnly`, `SameSite=Strict` cookie `rh_login_csrf` (`Path=/dashboard/login`, 15 minutes) and a matching hidden token (signed double submit, key `DASHBOARD_CSRF_SECRET` or a random per-process key). Without a valid pair the form is shown again (403) with a fresh token; the password is not checked and nothing is counted |
+| A stolen or unattended session performs high-risk changes | Actions whose permission is in `STEP_UP_PERMISSIONS` need a password entry within `DASHBOARD_REAUTH_MAX_AGE_SECONDS` (default 300): user management, API key create / revoke, disabling a tenant, applying a pricing import, judge profile create / edit / delete / activate / deactivate, removing protected paths (fewer effective paths, including turning the default paths off), and from later phases retention apply, legal hold release, change request approval and audit chain checkpoints. A stale session gets a 303 to `/dashboard/reauth?next=<page>` and the action does not run; after the password is accepted the user returns to the page and submits again (the original POST is never replayed). A fresh sign-in counts as re-authenticated. Wrong passwords count towards the account lockout; success writes `access.reauth` |
+| Clickjacking, cached pages and referrer leaks | Every `/dashboard` response carries `Cache-Control: no-store`, `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`, `Referrer-Policy: same-origin` and `X-Content-Type-Options: nosniff`. The `/v1` API responses are unchanged |
+| Open redirect after re-authentication | `next` is validated like the sign-in `next` (relative `/dashboard` path only; the sign-in, sign-out and re-authentication pages are refused). The return page comes from a same-host `Referer`, else `/dashboard` |
+
 ## Runtime Foundations Threat Model (`v1.6.0`)
 
 | Threat | Control |
@@ -217,7 +231,7 @@ buttons with `can()`, but the server checks every request.
 | Legal hold bypass | Holds are checked at plan and again at apply; only `admin` (any tenant) or `tenant_admin` (own tenant) can create one; release is admin-only, API-only and needs a reason; every change is a governance event |
 | FinOps ledger loss | Usage / cost events and budget violations are never deleted (report-only `FINOPS_LEDGER_RETENTION_DAYS`); purged runs keep their ledger and `run_id` |
 | Content leaking through purge records | Tombstones, receipts and governance events store ids, counts and sha256 digests only; the content digest is reproducible from the deleted rows. Tombstones reserve hash-chain columns but are not tamper-evident yet |
-| Dashboard forgery of destructive actions | No Dashboard apply or hold release until RBAC / CSRF (`v1.6.1`); the Dashboard forms (dry-run plan, create hold) require a same-origin `Origin` / `Referer` |
+| Dashboard forgery of destructive actions | No Dashboard apply or hold release yet (planned for a later `v1.6.1` phase); the Dashboard forms (dry-run plan, create hold) require a same-origin `Origin` / `Referer` and, in `session` mode, a CSRF token (`v1.6.1`) |
 | Purged run probing across tenants | `410 run_purged` tombstones are tenant-scoped like live runs (`403 tenant_mismatch` otherwise) |
 | Secrets in traces | Span attribute allowlist (unknown keys dropped and counted), strings truncated, no prompts, goals, diffs, test reports, judge input / output or keys; a canary test scans every exported span. `/v1/observability/tracing` shows the exporter host only |
 | Unsafe sandbox specs (`v1.6.2` readiness) | `validate_spec()` rejects shell strings, tag-only images at container isolation or above, docker socket / `/proc` / `/sys` / host paths, secret-named environment variables, missing or zero limits and unsupported networks; `network: none` by default. The `simulated` backend executes nothing and never produces `platform_verified`; the isolation policy is record-only |
@@ -231,7 +245,7 @@ buttons with `can()`, but the server checks every request.
 | "Just testing a connection" silently switches the live judge | A probe never activates a Dashboard profile; activation is explicit, needs a matching successful probe, and is audited |
 | A configuration or key change keeps using an untested judge | Activation and probes are bound to a configuration fingerprint (endpoint, model, key digest, request format, output budget); any change falls back to the rule-based judge until re-tested |
 | Anyone with Dashboard access rewires the judge | Dashboard editing is off unless Dashboard sign-in is on (`auto` with `DASHBOARD_AUTH_MODE=session`, `v1.6.1`), or explicitly `insecure_dev` in `off` mode (local only, red warning; ignored in `session` mode); API writes need the `admin` role |
-| Cross-site form submission | Every new Dashboard form checks that `Origin` (else `Referer`) matches the request host; missing both is refused (403). A full CSRF token scheme is planned with Dashboard RBAC (`v1.6.x`) |
+| Cross-site form submission | Every judge profile form checks that `Origin` (else `Referer`) matches the request host; missing both is refused (403). Since `v1.6.1` every Dashboard POST in `session` mode also needs the session's CSRF token, and judge profile writes need a recent re-authentication |
 | Keys leak through APIs, pages, audits or error bodies | Only the variable name, a set flag and a 6-hex fingerprint are shown; audits carry fingerprint prefixes and field names; `422` responses drop the value of forbidden fields such as `api_key` |
 | A failing cloud judge stalls triage or drives costs | Per-profile breaker (half-open retry), fallback chain ending in the rule-based judge, per-profile and global daily token caps; none of these can change verdicts, priorities or statuses |
 
@@ -268,4 +282,5 @@ buttons with `can()`, but the server checks every request.
 3. **Secret Hygiene**: Guardrails do not replace external secret managers (HashiCorp Vault, AWS Secrets Manager). All credentials must be securely injected via environment configurations.
 4. **Prompt Screening Is a Signal, Not a Boundary**: the prompt guard is a deterministic rule list (English patterns, classical Chinese phrases and, since prompt-guard/2.0, modern Chinese rules and a classical-style heuristic). It does not understand meaning. Known evasions, kept as expected-miss tests in `tests/test_v161_prompt_guard_hardening.py`: a paraphrase outside the rule vocabulary, classical text without pronouns or particles, classical text on the exempt `analysis` / `other` task types, a classical payload inside a long modern prompt, and letters interleaved between characters. Known false positives (they cost one approval): deleting "all" logs or records, "prevent leaking passwords", exporting a certificate ("憑證"). Published work on classical Chinese jailbreaks reports that keyword screening does not hold and that layered defenses still leave a residual success rate.
    **Why it still matters**: constraint flags (`allow_destructive_actions`, `allow_pii_access`, `no_external_network`) are declared by the requester, and tools such as `write_patch` and `query_data` do not require approval. For harmful intent expressed only in the prompt and carried out with tools the request may use, prompt flags are the only pre-execution gate. Controls that do not read the prompt bound the damage: the task-type tool allow-list, tool `requires_approval` (for example `deploy_service`), MCP server trust and argument validation, budgets and post-execution evidence review. Semantic screening (translate-then-screen, guard models, in shadow) is planned for `v1.6.4`, and gates derived from tool capabilities instead of requester-declared constraints for `v1.6.2`; see [`roadmap.md`](roadmap.md).
-5. **No Approved-Model List**: `is_active` on a pricing-catalog row controls pricing only; every seeded model is active, and a run or usage event that reports any model is accepted (an unpriced model records `missing_pricing_rule`). Only LLM judges are opt-in today (test, then activate). An approved-model list with vendor jurisdiction is planned for `v1.6.4`. The platform is not a model gateway and cannot stop model calls made outside it.
+5. **Dashboard CSRF and Headers (`v1.6.1`)**: the token is per session, not per form or request; anyone who can read a Dashboard page of that session can reuse it until the session ends. There is no full Content-Security-Policy (templates still use inline styles); only `frame-ancestors 'none'` is set. Scripted clients may send the token as `X-CSRF-Token`. A sign-in form left open longer than 15 minutes, or rendered by another API replica without a shared `DASHBOARD_CSRF_SECRET`, is refused once and shown again. Re-authentication only re-checks the local password; a locked account keeps its signed-in sessions but cannot pass re-authentication until the lock ends.
+6. **No Approved-Model List**: `is_active` on a pricing-catalog row controls pricing only; every seeded model is active, and a run or usage event that reports any model is accepted (an unpriced model records `missing_pricing_rule`). Only LLM judges are opt-in today (test, then activate). An approved-model list with vendor jurisdiction is planned for `v1.6.4`. The platform is not a model gateway and cannot stop model calls made outside it.

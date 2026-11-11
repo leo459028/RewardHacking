@@ -92,6 +92,7 @@
         <td>{{ lease.expires_at or "-" }}</td>
         <td>
           {% if can("finops.manage") %}<form method="post" action="/dashboard/costs/leases/{{ lease.run_id }}/release">
+            {{ csrf_input() }}
             <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
             <input type="hidden" name="reason" value="Manual operator lease release from Costs portal">
             <button class="button secondary" type="submit">Release Lease</button>
@@ -166,6 +167,7 @@
 <section class="panel">
   <h2>Record Cost Adjustment <span class="heading-note">財務手動調帳與沖銷</span></h2>
   {% if can("finops.manage") %}<form method="post" action="/dashboard/costs/adjustments" class="form-grid">
+    {{ csrf_input() }}
     <label>Tenant ID
       <input name="tenant_id" value="{{ tenant_id }}">
     </label>
@@ -261,17 +263,20 @@
           <div class="inline-form">
             {% if item.resolution_status == "open" %}
             {% if can("finops.acknowledge") %}<form method="post" action="/dashboard/costs/violations/{{ item.violation_id }}/acknowledge">
+              {{ csrf_input() }}
               <input type="hidden" name="notes" value="Acknowledged from Costs Dashboard">
               <button class="button secondary" type="submit">Acknowledge</button>
             </form>{% endif %}
             {% endif %}
             {% if item.resolution_status in ["open", "acknowledged"] %}
             {% if can("finops.manage") %}<form method="post" action="/dashboard/costs/violations/{{ item.violation_id }}/resolve">
+              {{ csrf_input() }}
               <input type="hidden" name="resolution_status" value="resolved">
               <input type="hidden" name="notes" value="Resolved from Costs Dashboard">
               <button class="button" type="submit">Resolve</button>
             </form>{% endif %}
             {% if can("finops.manage") %}<form method="post" action="/dashboard/costs/violations/{{ item.violation_id }}/resolve">
+              {{ csrf_input() }}
               <input type="hidden" name="resolution_status" value="ignored">
               <input type="hidden" name="notes" value="Ignored from Costs Dashboard">
               <button class="button danger" type="submit">Ignore</button>

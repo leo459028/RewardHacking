@@ -330,6 +330,20 @@ def policy_to_dict(tenant_id: str, policy: TenantEvaluationPolicy | None) -> dic
     }
 
 
+async def policy_relaxes(
+    session: AsyncSession, *, tenant_id: str, protected_paths: list[str], allow_default_protected_paths: bool
+) -> bool:
+    """v1.6.1 feature seven: does this change remove any path from the tenant's effective protected set?
+
+    Removing a custom path or turning the default paths off is a relaxation (a step-up action on the Dashboard; dual
+    control from P6). Adding paths only tightens."""
+    policy = await get_evaluation_policy(session, tenant_id)
+    before = set(policy_to_dict(tenant_id, policy)["effective_protected_paths"])
+    cleaned = [normalize_path(item) for item in protected_paths if normalize_path(item)]
+    after = set(effective_protected_paths(tenant_paths=cleaned, allow_defaults=bool(allow_default_protected_paths), request_paths=None))
+    return bool(before - after)
+
+
 async def upsert_evaluation_policy(
     session: AsyncSession,
     *,

@@ -23,7 +23,16 @@ P3 (plan D19-D23) adds authorization on top:
   counted per process).
 - ``actor_for()`` (D23): ``user:<username>`` in ``session`` mode; ``off`` mode keeps the historical strings.
 
-CSRF and re-authentication arrive in P4.
+P4 (plan D24-D27, feature seven):
+
+- ``csrf_protect`` is a router-level dependency of every Dashboard router. In ``session`` mode every request other
+  than GET / HEAD / OPTIONS must carry the session's token (form field ``_csrf`` from the Jinja global
+  ``csrf_input()``, or the ``X-CSRF-Token`` header). A missing or wrong token raises ``DashboardForbidden``
+  (``csrf_token_invalid``) through ``deny()`` before the route body runs. The sign-in form uses the signed
+  ``rh_login_csrf`` cookie instead (``LoginCsrfInvalid``: the form is shown again with a fresh token, 403).
+- ``require_step_up()``: actions whose permission is in ``STEP_UP_PERMISSIONS`` need a (re-)authentication within
+  ``DASHBOARD_REAUTH_MAX_AGE_SECONDS``; otherwise ``StepUpRequired`` (303 to ``/dashboard/reauth?next=...``) and the
+  action does not run. ``off`` mode skips both (D10).
 """
 
 from __future__ import annotations
@@ -36,13 +45,14 @@ from urllib.parse import quote, urlsplit
 from fastapi import Depends, Request
 from fastapi.responses import Response
 from jinja2 import pass_context
+from markupsafe import Markup
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.infra.postgres import get_session
 from app.observability.metrics import DASHBOARD_ACCESS_DENIED_TOTAL
-from app.services.access import sessions, users
-from app.services.access.permissions import PERMISSIONS, has_permission, view_allowed
+from app.services.access import csrf, sessions, users
+from app.services.access.permissions import PERMISSIONS, has_permission, requires_step_up, view_allowed
 from app.services.access.principal import LOCAL_ADMIN, Principal, principal_for
 
 logger = logging.getLogger(__name__)
@@ -50,6 +60,8 @@ logger = logging.getLogger(__name__)
 LOGIN_PATH = "/dashboard/login"
 LOGOUT_PATH = "/dashboard/logout"
 ACCOUNT_PATH = "/dashboard/account"
+REAUTH_PATH = "/dashboard/reauth"
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 DEFAULT_NEXT = "/dashboard"
 # Reachable while the password must be changed (D13).
 PASSWORD_CHANGE_ALLOWED = frozenset({ACCOUNT_PATH, ACCOUNT_PATH + "/password", LOGOUT_PATH})
@@ -77,11 +89,15 @@ REASON_MISSING_PERMISSION = "missing_permission"
 REASON_TENANT_SCOPE = "tenant_scope"
 REASON_PLATFORM_VIEW = "platform_view"
 REASON_UNDECLARED = "permission_undeclared"
+REASON_CSRF = "csrf_token_invalid"
+REASON_REAUTH = "reauth_required"
+CSRF_PERMISSION = "csrf"  # the "permission" recorded on access.denied for a CSRF refusal
 ERROR_CODES = {
     REASON_MISSING_PERMISSION: "permission_denied",
     REASON_TENANT_SCOPE: "tenant_scope_denied",
     REASON_PLATFORM_VIEW: "platform_view_denied",
     REASON_UNDECLARED: "permission_undeclared",
+    REASON_CSRF: "csrf_token_invalid",
 }
 DENIAL_EVENT_WINDOW_SECONDS = 60.0
 _DENIAL_LOG_MAX = 4096
@@ -100,6 +116,23 @@ class DashboardForbidden(Exception):
     @property
     def code(self) -> str:
         return ERROR_CODES.get(self.reason, "permission_denied")
+
+
+class LoginCsrfInvalid(Exception):
+    """The sign-in form came without a valid ``rh_login_csrf`` token (missing, forged or expired)."""
+
+    def __init__(self, next_path: str = "") -> None:
+        super().__init__("Sign-in form CSRF token invalid.")
+        self.next_path = next_path
+
+
+class StepUpRequired(Exception):
+    """D26: the action needs a recent re-authentication; nothing was executed."""
+
+    def __init__(self, next_path: str, permission: str) -> None:
+        super().__init__(f"Re-authentication required for {permission}.")
+        self.next_path = next_path
+        self.permission = permission
 
 
 def reset_denial_log() -> None:
@@ -167,6 +200,7 @@ async def ensure_permission(request: Request, session: AsyncSession, permission:
     principal = principal_of(request)
     if not has_permission(principal.role, permission):
         await deny(request, session, principal, permission, REASON_MISSING_PERMISSION)
+    await require_step_up(request, permission)
     return principal
 
 
@@ -228,7 +262,7 @@ def safe_next(value: str | None) -> str:
         return DEFAULT_NEXT
     if not (parts.path == "/dashboard" or parts.path.startswith("/dashboard/")):
         return DEFAULT_NEXT
-    if parts.path in {LOGIN_PATH, LOGOUT_PATH} or "/../" in parts.path or parts.path.endswith("/.."):
+    if parts.path in {LOGIN_PATH, LOGOUT_PATH, REAUTH_PATH} or "/../" in parts.path or parts.path.endswith("/.."):
         return DEFAULT_NEXT
     return candidate
 
@@ -240,6 +274,27 @@ def request_path(request: Request) -> str:
 
 def login_redirect_url(next_path: str) -> str:
     return f"{LOGIN_PATH}?next={quote(safe_next(next_path), safe='')}"
+
+
+def reauth_redirect_url(next_path: str) -> str:
+    return f"{REAUTH_PATH}?next={quote(safe_next(next_path), safe='')}"
+
+
+def return_path(request: Request) -> str:
+    """Where to go back after re-authenticating: the page that sent the form (same-host ``Referer``, which the
+    ``Referrer-Policy: same-origin`` header keeps), else the Dashboard home. The POST itself is never replayed."""
+    if request.method in SAFE_METHODS:
+        return safe_next(request_path(request))
+    referer = request.headers.get("referer") or ""
+    if referer:
+        try:
+            parts = urlsplit(referer)
+        except ValueError:
+            return DEFAULT_NEXT
+        host = (request.headers.get("host") or request.url.netloc or "").lower()
+        if parts.netloc.lower() == host:
+            return safe_next(parts.path + (f"?{parts.query}" if parts.query else ""))
+    return DEFAULT_NEXT
 
 
 def set_session_cookie(response: Response, token: str, settings: Settings) -> None:
@@ -319,6 +374,7 @@ def require_permission(permission: str, *, view: str | None = None):
             await deny(request, session, principal, permission, REASON_MISSING_PERMISSION)
         if not view_allowed(principal.tenant_id, view):
             await deny(request, session, principal, permission, REASON_PLATFORM_VIEW)
+        await require_step_up(request, permission)
         return principal
 
     setattr(dependency, PERMISSION_ATTR, permission)
@@ -341,6 +397,99 @@ def public_route():
     return dependency
 
 
+# --- P4: CSRF and re-authentication ------------------------------------------------------------------------------
+
+
+def login_csrf_key(settings: Settings) -> str:
+    return settings.dashboard_csrf_secret.get_secret_value()
+
+
+async def supplied_csrf_token(request: Request) -> str:
+    """The token sent with this request: the ``_csrf`` form field, else the ``X-CSRF-Token`` header (for scripted
+    clients; a cross-site form cannot set a custom header).
+
+    Reading the form here is safe for the route (D24): Starlette caches the parsed form on the request, and FastAPI's
+    ``Form(...)`` / ``File(...)`` parameters and ``await request.form()`` in handlers get the same object
+    (``tests/test_v161_csrf_reauth.py`` checks url-encoded and multipart bodies)."""
+    try:
+        form = await request.form()
+    except Exception:  # malformed body: no form token
+        form = None
+    value = form.get(csrf.FIELD_NAME) if form is not None else None
+    if isinstance(value, str) and value:
+        return value
+    return request.headers.get(csrf.HEADER_NAME) or ""
+
+
+async def csrf_protect(request: Request, session: AsyncSession = Depends(get_session)) -> None:
+    """Router-level dependency (D24): verify the CSRF token of every non-GET Dashboard request in ``session`` mode."""
+    if request.method in SAFE_METHODS:
+        return
+    settings = get_settings()
+    if settings.dashboard_auth_mode != "session":
+        return
+    supplied = await supplied_csrf_token(request)
+    if request.url.path == LOGIN_PATH:
+        if not csrf.verify_login_token(request.cookies.get(csrf.LOGIN_COOKIE_NAME), supplied, login_csrf_key(settings)):
+            DASHBOARD_ACCESS_DENIED_TOTAL.labels(reason=REASON_CSRF).inc()
+            try:
+                next_value = str((await request.form()).get("next") or "")
+            except Exception:
+                next_value = ""
+            raise LoginCsrfInvalid(next_value)
+        return
+    row = getattr(request.state, "dashboard_session", None)
+    principal = getattr(request.state, "principal", None)
+    if row is None or not isinstance(principal, Principal):
+        # Routers whose principal is a parameter dependency (access.py) reach this before it is resolved.
+        lookup = await current_session(request, session, settings)
+        if lookup is None:
+            if request.url.path == LOGOUT_PATH:
+                return  # nothing to sign out of; the route only clears the cookie
+            DASHBOARD_ACCESS_DENIED_TOTAL.labels(reason="sign_in_required").inc()
+            raise DashboardSignInRequired(request_path(request))
+        row = lookup.session_row
+        principal = principal_for(lookup.user, row)
+    if not csrf.verify_session_token(row.csrf_secret, row.session_id, supplied):
+        await deny(request, session, principal, CSRF_PERMISSION, REASON_CSRF)
+
+
+async def require_step_up(request: Request, permission: str) -> None:
+    """D26: a step-up permission on a non-GET request needs ``reauth_at`` within ``DASHBOARD_REAUTH_MAX_AGE_SECONDS``.
+    Raises ``StepUpRequired`` before anything is written; ``off`` mode (synthetic principal) is exempt."""
+    if request.method in SAFE_METHODS or not requires_step_up(permission):
+        return
+    principal = principal_of(request)
+    if principal.synthetic:
+        return
+    if sessions.reauth_is_fresh(principal.reauth_at, get_settings()):
+        return
+    DASHBOARD_ACCESS_DENIED_TOTAL.labels(reason=REASON_REAUTH).inc()
+    raise StepUpRequired(return_path(request), permission)
+
+
+def csrf_token_for(request: Any) -> str:
+    state = getattr(request, "state", None)
+    if state is None:
+        return ""
+    login_token = getattr(state, "login_csrf_token", None)
+    if login_token:
+        return str(login_token)
+    row = getattr(state, "dashboard_session", None)
+    if row is None:
+        return ""
+    return csrf.session_token(getattr(row, "csrf_secret", None), getattr(row, "session_id", None))
+
+
+@pass_context
+def template_csrf_input(context: Any) -> Markup:
+    """Jinja global ``csrf_input()``: the hidden ``_csrf`` field for this request's session (empty in ``off`` mode)."""
+    token = csrf_token_for(context.get("request"))
+    if not token:
+        return Markup("")
+    return Markup('<input type="hidden" name="{}" value="{}">').format(csrf.FIELD_NAME, token)
+
+
 def template_principal(request: Any) -> Principal | None:
     """Jinja global: the principal of the request being rendered (``None`` on pages outside the guard)."""
     state = getattr(request, "state", None)
@@ -360,3 +509,4 @@ def install_template_globals(templates: Any) -> None:
     templates.env.globals["dashboard_user"] = template_principal
     templates.env.globals["dashboard_auth_mode"] = lambda: get_settings().dashboard_auth_mode
     templates.env.globals["can"] = template_can
+    templates.env.globals["csrf_input"] = template_csrf_input

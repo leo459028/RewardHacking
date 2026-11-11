@@ -138,7 +138,7 @@ def high_risk_payload():
 class SignedIn:
     """A Dashboard user signed in on the shared test client (v1.6.1 D48). ``password`` is generated at run time."""
 
-    def __init__(self, client, user, password: str, token: str, session_id: str) -> None:
+    def __init__(self, client, user, password: str, token: str, session_id: str, csrf_token: str = "") -> None:
         self.client = client
         self.user = user
         self.user_id = user.user_id
@@ -146,6 +146,7 @@ class SignedIn:
         self.password = password
         self.token = token
         self.session_id = session_id
+        self.csrf = csrf_token  # P4: HMAC(csrf_secret, session_id); the fixture's request hook sends it as a header
 
 
 @pytest.fixture
@@ -153,10 +154,16 @@ def signed_in(client, session_factory, monkeypatch):
     """Switch the app to ``DASHBOARD_AUTH_MODE=session`` (cheap scrypt) and return ``sign_in(role=..., tenant_id=...)``.
 
     Each call creates a user plus a live session directly in the test database and puts its ``rh_session`` cookie on
-    ``client`` (one cookie jar: the latest call wins). P4 adds the CSRF token to this wrapper.
+    ``client`` (one cookie jar: the latest call wins).
+
+    P4 (D24): a request hook adds the ``X-CSRF-Token`` header for whatever ``rh_session`` cookie the request carries
+    (also sessions made by a real sign-in, or a cookie a test swapped in), so existing POSTs pass ``csrf_protect``.
+    A ``_csrf`` form field takes precedence over the header (wrong-token tests send one). Tests of a missing token
+    turn the hook off with ``signed_in.auto_csrf["on"] = False``.
     """
     import secrets as _secrets
 
+    from app.services.access import csrf as access_csrf
     from app.services.access import sessions as access_sessions
     from app.services.access import users as access_users
 
@@ -166,6 +173,35 @@ def signed_in(client, session_factory, monkeypatch):
     monkeypatch.setenv("DASHBOARD_PASSWORD_SCRYPT_P", "1")
     get_settings.cache_clear()
     counter = {"n": 0}
+    auto_csrf = {"on": True}
+
+    def _csrf_for(cookie_token: str) -> str:
+        from sqlalchemy import select as _select
+
+        from app.models.access import DashboardSession
+
+        async def lookup():
+            async with session_factory() as session:
+                row = await session.scalar(
+                    _select(DashboardSession).where(DashboardSession.session_hash == access_sessions.token_hash(cookie_token))
+                )
+                return access_csrf.session_token(row.csrf_secret, row.session_id) if row is not None else ""
+
+        return asyncio.run(lookup())
+
+    def _add_csrf_header(request) -> None:
+        if not auto_csrf["on"] or request.method in {"GET", "HEAD", "OPTIONS"} or access_csrf.HEADER_NAME in request.headers:
+            return
+        cookie_header = request.headers.get("cookie", "")
+        for part in cookie_header.split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == access_sessions.COOKIE_NAME and value:
+                token = _csrf_for(value)
+                if token:
+                    request.headers[access_csrf.HEADER_NAME] = token
+                return
+
+    client.event_hooks["request"].append(_add_csrf_header)
 
     def sign_in(role: str = "admin", tenant_id: str | None = None, username: str | None = None, must_change_password: bool = False):
         counter["n"] += 1
@@ -181,11 +217,14 @@ def signed_in(client, session_factory, monkeypatch):
                 )
                 token, row = await access_sessions.create_session(session, settings, user, auth_method="local_password")
                 await session.commit()
-                return user, token, row.session_id
+                return user, token, row.session_id, access_csrf.session_token(row.csrf_secret, row.session_id)
 
-        user, token, session_id = asyncio.run(scenario())
+        user, token, session_id, csrf_token = asyncio.run(scenario())
         client.cookies.set(access_sessions.COOKIE_NAME, token)
-        return SignedIn(client, user, password, token, session_id)
+        return SignedIn(client, user, password, token, session_id, csrf_token)
 
+    sign_in.auto_csrf = auto_csrf
     yield sign_in
+    if _add_csrf_header in client.event_hooks["request"]:
+        client.event_hooks["request"].remove(_add_csrf_header)
     get_settings.cache_clear()

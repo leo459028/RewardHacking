@@ -7,6 +7,7 @@
   {% for provider in providers %}
     {% if provider.kind == "password" %}
     <form method="post" action="/dashboard/login" class="grid" data-provider="{{ provider.name }}">
+      {{ csrf_input() }}
       <input type="hidden" name="provider" value="{{ provider.name }}">
       <input type="hidden" name="next" value="{{ next_path }}">
       <label>Username | 帳號

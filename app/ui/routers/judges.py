@@ -36,9 +36,9 @@ from app.services.judge_profiles_admin import (
     update_profile,
 )
 from app.ui.routes import dashboard_auth, templates
-from app.ui.security import actor_for, needs
+from app.ui.security import actor_for, csrf_protect, needs
 
-router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth)])
+router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth), Depends(csrf_protect)])
 PAGE = "/dashboard/judge-profiles"
 DASHBOARD_ACTOR = "dashboard-admin"
 STATUS_TEXT = {

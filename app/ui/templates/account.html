@@ -31,6 +31,7 @@
   <h2>Change password<span class="heading-note">修改密碼</span></h2>
   <p class="muted">At least {{ min_length }} characters, not your username and not a common password. Changing it signs out your other sessions. | 至少 {{ min_length }} 個字元，不可與帳號相同或是常見密碼；修改後其他工作階段會登出。</p>
   <form method="post" action="/dashboard/account/password" class="form-grid">
+    {{ csrf_input() }}
     <input type="hidden" name="next" value="{{ next_path }}">
     <label>Current password | 目前密碼<input name="current_password" type="password" autocomplete="current-password" required></label>
     <label>New password | 新密碼<input name="new_password" type="password" autocomplete="new-password" minlength="{{ min_length }}" required></label>

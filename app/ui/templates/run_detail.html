@@ -32,6 +32,7 @@
   </div>
   {% endif %}
   {% if can("legal_hold.create", "retention") %}<form method="post" action="/dashboard/retention/holds" class="form-grid" id="run-hold-form">
+    {{ csrf_input() }}
     <input type="hidden" name="scope_type" value="run">
     <input type="hidden" name="scope_id" value="{{ run.run_id }}">
     <label>Reason
@@ -174,6 +175,7 @@
 <section class="panel" id="submit-outcome">
   <h2>Submit Outcome Evidence <span class="heading-note">提交產出證據（agent 自行回報＝self_reported）</span></h2>
   {% if can("outcomes.submit") %}<form method="post" action="/dashboard/runs/{{ run.run_id }}/outcome">
+    {{ csrf_input() }}
     <div class="form-grid">
       {% if dashboard_auth_mode() != "session" %}<label>Submitted By <input name="submitted_by" value="dashboard-agent"></label>{% else %}<span class="muted" data-testid="acting-as">Recorded as | 記錄為 <code>{{ dashboard_user(request).actor }}</code></span>{% endif %}
       <label>Provenance
@@ -266,9 +268,11 @@
   <p><strong>Resume API</strong> <code>POST /v1/runs/{{ run.run_id }}/resume</code> | <strong>Replay API</strong> <code>POST /v1/runs/{{ run.run_id }}/replay</code></p>
   <div class="form-grid" style="margin-bottom: 12px;">
     {% if can("runs.replay") %}<form method="post" action="/dashboard/runs/{{ run.run_id }}/replay" class="decision-form">
+      {{ csrf_input() }}
       <button class="button secondary" type="submit">Trigger Dry-Run Replay</button>
     </form>{% endif %}
     {% if can("runs.resume") %}<form method="post" action="/dashboard/runs/{{ run.run_id }}/resume" class="decision-form">
+      {{ csrf_input() }}
       <input name="resume_reason" value="Operator checkpoint resume" placeholder="Resume reason">
       <input type="hidden" name="resume_cursor" value="worker_queue">
       <button class="button" type="submit">Resume from Checkpoint</button>

@@ -19,9 +19,9 @@ from app.infra.postgres import get_session
 from app.services import retention
 from app.ui.routers.judges import same_origin
 from app.ui.routes import dashboard_auth, templates
-from app.ui.security import actor_for, needs, principal_of
+from app.ui.security import actor_for, csrf_protect, needs, principal_of
 
-router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth)])
+router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth), Depends(csrf_protect)])
 
 PAGE = "/dashboard/retention"
 DASHBOARD_ACTOR = "dashboard"

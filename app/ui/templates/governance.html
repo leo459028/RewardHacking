@@ -45,6 +45,7 @@
   <div class="panel">
     <h2>Create / Update Tenant Quota Policy <span class="heading-note">建立或更新租戶限流政策</span></h2>
     {% if can("tenants.manage", "platform") %}<form method="post" action="/dashboard/governance/tenants" class="form-grid">
+      {{ csrf_input() }}
       <label>Tenant ID
         <input name="tenant_id" value="{{ tenant_id or 'v156-gov-tenant' }}" required>
       </label>
@@ -71,6 +72,7 @@
   <div class="panel">
     <h2>Issue Tenant API Key <span class="heading-note">簽發租戶 API 金鑰</span></h2>
     {% if can("api_keys.manage", "platform") %}<form method="post" action="/dashboard/governance/api-keys" class="form-grid">
+      {{ csrf_input() }}
       <label>Tenant ID
         <input name="tenant_id" value="{{ tenant_id or summary.tenant_id }}" required>
       </label>
@@ -130,6 +132,7 @@
         <td>
           {% if api_key.status == "active" and not api_key.revoked %}
           {% if can("api_keys.manage", "platform") %}<form method="post" action="/dashboard/governance/tenants/{{ api_key.tenant_id }}/api-keys/{{ api_key.key_id }}/revoke">
+            {{ csrf_input() }}
             <button class="button danger" type="submit">Revoke Key</button>
           </form>{% endif %}
           {% else %}
@@ -201,6 +204,7 @@
   {% if governance_message %}<div class="success" role="status">{{ governance_message }}</div>{% endif %}
   <p class="muted">Changes to protected paths are flagged as test / grader tampering. Run metadata may only add paths, never remove them.</p>
   {% if can("evaluation_policy.write") %}<form method="post" action="/dashboard/governance/evaluation-policy">
+    {{ csrf_input() }}
     <div class="form-grid">
       <label>Tenant ID <input name="tenant_id" value="{{ selected_policy.tenant_id }}" required></label>
       {% if dashboard_auth_mode() != "session" %}<label>Updated By <input name="updated_by" value="dashboard-admin"></label>{% else %}<span class="muted" data-testid="acting-as">Recorded as | 記錄為 <code>{{ dashboard_user(request).actor }}</code></span>{% endif %}

@@ -33,9 +33,12 @@ from app.ui.security import (
     ACCOUNT_PATH,
     DashboardForbidden,
     DashboardSignInRequired,
+    LoginCsrfInvalid,
     PasswordChangeRequired,
+    StepUpRequired,
     login_redirect_url,
     principal_of,
+    reauth_redirect_url,
 )
 
 settings = get_settings()
@@ -62,6 +65,29 @@ app = FastAPI(
     description="Guardrail service for preventing reward hacking in agent systems.",
     lifespan=lifespan,
 )
+
+
+# v1.6.1 D27: response headers for every /dashboard response (the /v1 API is unchanged).
+DASHBOARD_SECURITY_HEADERS = {
+    "Cache-Control": "no-store",
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    "Referrer-Policy": "same-origin",
+    "X-Content-Type-Options": "nosniff",
+}
+
+
+def _is_dashboard_path(path: str) -> bool:
+    return path == "/dashboard" or path.startswith("/dashboard/")
+
+
+@app.middleware("http")
+async def dashboard_security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    if _is_dashboard_path(request.url.path):
+        for name, value in DASHBOARD_SECURITY_HEADERS.items():
+            response.headers[name] = value
+    return response
 
 
 @app.middleware("http")
@@ -174,6 +200,20 @@ async def password_change_required_handler(request: Request, exc: PasswordChange
         status_code=403,
         content={"error": {"code": "password_change_required", "message": "Change your password first."}},
     )
+
+
+@app.exception_handler(LoginCsrfInvalid)
+async def login_csrf_invalid_handler(request: Request, exc: LoginCsrfInvalid):
+    """v1.6.1 D24: the sign-in form came without a valid token; show it again (403) with a fresh one."""
+    from app.ui.routers.access import expired_login_form
+
+    return expired_login_form(request, exc.next_path)
+
+
+@app.exception_handler(StepUpRequired)
+async def step_up_required_handler(request: Request, exc: StepUpRequired):
+    """v1.6.1 D26: send the user to re-authenticate; the action did not run and is not replayed afterwards."""
+    return RedirectResponse(reauth_redirect_url(exc.next_path), status_code=303)
 
 
 @app.exception_handler(DashboardForbidden)

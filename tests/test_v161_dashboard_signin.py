@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -19,7 +20,7 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from app.models.access import DashboardSession, DashboardUser
 from app.models.governance_event import GovernanceEvent
-from app.services.access import sessions
+from app.services.access import csrf, sessions
 
 LOGIN = "/dashboard/login"
 USERS = "/dashboard/admin/users"
@@ -69,7 +70,11 @@ def _user(session_factory, username):
 
 
 def _login(client, username, password, next_path="/dashboard"):
-    return client.post(LOGIN, data={"username": username, "password": password, "next": next_path}, follow_redirects=False)
+    """P4: the sign-in form needs its signed ``rh_login_csrf`` cookie and matching ``_csrf`` field."""
+    cookie, form_token = csrf.new_login_token(get_settings().dashboard_csrf_secret.get_secret_value())
+    client.cookies.set(csrf.LOGIN_COOKIE_NAME, cookie)
+    data = {"username": username, "password": password, "next": next_path, "_csrf": form_token}
+    return client.post(LOGIN, data=data, follow_redirects=False)
 
 
 def _account(signed_in, role="admin", **kwargs):
@@ -203,11 +208,12 @@ def test_failures_look_identical_for_unknown_wrong_disabled_and_locked(client, s
         "wrong": _login(client, "victim", "wrong-" + victim.password),
         "disabled": _login(client, "gone", disabled.password),
     }
-    bodies = {key: (resp.status_code, resp.text.replace(f'value="{name}"', 'value="X"'))
+    # P4: every rendering carries a fresh sign-in CSRF token; mask it before comparing.
+    bodies = {key: (resp.status_code, re.sub(r'name="_csrf" value="[0-9a-f]+"', 'name="_csrf" value="T"', resp.text.replace(f'value="{name}"', 'value="X"')))
               for (key, resp), name in zip(responses.items(), ("ghost", "victim", "gone"))}
     assert len(set(bodies.values())) == 1
     status, body = bodies["unknown"]
-    assert status == 200 and GENERIC_ERROR in body and "set-cookie" not in responses["unknown"].headers
+    assert status == 200 and GENERIC_ERROR in body and sessions.COOKIE_NAME not in responses["unknown"].headers.get("set-cookie", "")
 
 
 def test_lockout_after_five_failures_refuses_the_right_password(client, signed_in, session_factory):
@@ -215,7 +221,7 @@ def test_lockout_after_five_failures_refuses_the_right_password(client, signed_i
     for attempt in range(5):
         assert GENERIC_ERROR in _login(client, who.username, f"bad-{attempt}-{who.password}").text
     locked = _login(client, who.username, who.password)
-    assert locked.status_code == 200 and GENERIC_ERROR in locked.text and "set-cookie" not in locked.headers
+    assert locked.status_code == 200 and GENERIC_ERROR in locked.text and sessions.COOKIE_NAME not in locked.headers.get("set-cookie", "")
     user = _user(session_factory, who.username)
     assert user.locked_until is not None
     lockouts = [event for event in _events(session_factory) if event.event_type == "access.lockout"]

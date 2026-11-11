@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     dashboard_session_idle_minutes: int = 30
     dashboard_session_max_hours: int = 8
     dashboard_reauth_max_age_seconds: int = 300
+    # v1.6.1 P4 (D24): signs the short-lived sign-in form cookie. Empty = a random per-process key (set it when
+    # several API replicas serve the Dashboard). Signed-in forms use the per-session csrf_secret instead.
+    dashboard_csrf_secret: SecretStr = SecretStr("")
     dashboard_login_max_failures: int = 5
     dashboard_login_lockout_minutes: int = 15
     dashboard_password_min_length: int = 12

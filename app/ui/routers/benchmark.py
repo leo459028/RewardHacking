@@ -41,9 +41,9 @@ from app.services.orchestrator import AgentOrchestrator
 from app.services.review_queue import get_evaluation_policy, policy_to_dict, upsert_evaluation_policy
 from app.services.run_state import RunStateStore
 from app.ui.routes import dashboard_auth, templates
-from app.ui.security import actor_for, ensure_tenant_access, needs, principal_of
+from app.ui.security import actor_for, csrf_protect, ensure_tenant_access, needs, principal_of
 
-router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth)])
+router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth), Depends(csrf_protect)])
 CURVE_WIDTH = 320
 CURVE_HEIGHT = 160
 DASHBOARD_ADMIN = AuthContext(enabled=False)

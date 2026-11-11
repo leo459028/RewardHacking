@@ -9,7 +9,13 @@
 Only ``DASHBOARD_AUTH_MODE=session`` has accounts. In ``off`` mode the sign-in pages redirect to the Dashboard and the
 user-management actions are refused (``403 dashboard_auth_off``), so nobody can create accounts without signing in.
 P3: the sign-in pages are ``public_route()``; the account pages need ``account.self`` and user management
-``users.manage`` (admin, platform view). P4 adds CSRF and re-authentication.
+``users.manage`` (admin, platform view).
+P4 (D24, D26): every POST here passes ``csrf_protect`` (router dependency); the sign-in form gets a fresh signed
+``rh_login_csrf`` cookie each time it is rendered. ``/dashboard/reauth`` re-checks the password
+(``provider.reauthenticate()``; failures count towards the lockout), writes ``access.reauth`` and sends the user back
+to the page they came from, where they submit the action again (the original POST is never replayed). User
+management actions need a re-authentication within ``DASHBOARD_REAUTH_MAX_AGE_SECONDS`` (``users.manage`` is a
+step-up permission).
 """
 
 from __future__ import annotations
@@ -23,26 +29,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.infra.postgres import get_session
-from app.observability.metrics import DASHBOARD_LOGINS_TOTAL
-from app.services.access import permissions, providers, sessions, users
+from app.observability.metrics import DASHBOARD_ACCESS_DENIED_TOTAL, DASHBOARD_LOGINS_TOTAL
+from app.services.access import csrf, permissions, providers, sessions, users
 from app.services.access.errors import AccessError
 from app.services.access.principal import Principal
 from app.ui.routes import templates
 from app.ui.security import (
     ACCOUNT_PATH,
     LOGIN_PATH,
+    REAUTH_PATH,
     clear_session_cookie,
+    csrf_protect,
     current_session,
+    login_csrf_key,
     public_route,
     require_permission,
     safe_next,
     set_session_cookie,
 )
 
-router = APIRouter(tags=["dashboard"])
+router = APIRouter(tags=["dashboard"], dependencies=[Depends(csrf_protect)])
 
 USERS_PAGE = "/dashboard/admin/users"
 GENERIC_LOGIN_ERROR = "Invalid username or password. | 帳號或密碼錯誤。"
+EXPIRED_LOGIN_FORM = "The sign-in form expired. Please sign in again. | 登入表單已過期，請重新登入。"
+GENERIC_REAUTH_ERROR = "Password not accepted. | 密碼錯誤或帳號已鎖定。"
 
 
 def _session_mode() -> bool:
@@ -61,8 +72,11 @@ def _auth_off() -> HTMLResponse:
 
 
 def _login_page(request: Request, *, next_path: str, error: str = "", username: str = "", status_code: int = 200) -> HTMLResponse:
+    """Every rendering issues a fresh sign-in CSRF pair: the signed cookie and the matching hidden form token."""
     settings = get_settings()
-    return templates.TemplateResponse(
+    cookie_value, form_token = csrf.new_login_token(login_csrf_key(settings))
+    request.state.login_csrf_token = form_token
+    response = templates.TemplateResponse(
         request,
         "login.html",
         {
@@ -74,6 +88,21 @@ def _login_page(request: Request, *, next_path: str, error: str = "", username: 
         },
         status_code=status_code,
     )
+    response.set_cookie(
+        csrf.LOGIN_COOKIE_NAME,
+        cookie_value,
+        max_age=csrf.LOGIN_TOKEN_TTL_SECONDS,
+        path=csrf.LOGIN_COOKIE_PATH,
+        secure=settings.dashboard_cookie_secure_effective,
+        httponly=True,
+        samesite="strict",
+    )
+    return response
+
+
+def expired_login_form(request: Request, next_path: str) -> HTMLResponse:
+    """``LoginCsrfInvalid`` (``app.main``): show the form again with a fresh token; nothing was checked or counted."""
+    return _login_page(request, next_path=safe_next(next_path), error=EXPIRED_LOGIN_FORM, status_code=403)
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +156,9 @@ async def login_submit(
     DASHBOARD_LOGINS_TOTAL.labels(result="success").inc()
     destination = _redirect(ACCOUNT_PATH, must_change="1", next=next_path) if user.must_change_password else RedirectResponse(next_path, status_code=303)
     set_session_cookie(destination, token, settings)
+    destination.delete_cookie(
+        csrf.LOGIN_COOKIE_NAME, path=csrf.LOGIN_COOKIE_PATH, secure=settings.dashboard_cookie_secure_effective, httponly=True, samesite="strict"
+    )
     return destination
 
 
@@ -147,6 +179,59 @@ async def logout(request: Request, session: AsyncSession = Depends(get_session))
         await session.commit()
     clear_session_cookie(response, settings)
     return response
+
+
+# ---------------------------------------------------------------------------
+# re-authentication (D26)
+# ---------------------------------------------------------------------------
+
+
+def _reauth_page(request: Request, principal: Principal, *, next_path: str, error: str = "") -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "reauth.html",
+        {"active": "account", "principal": principal, "next_path": next_path, "error": error},
+    )
+
+
+@router.get(REAUTH_PATH, response_class=HTMLResponse)
+async def reauth_page(request: Request, principal: Principal = Depends(require_permission("account.self", view="account"))):
+    next_path = safe_next(request.query_params.get("next"))
+    if principal.synthetic:
+        return RedirectResponse(next_path, status_code=303)
+    return _reauth_page(request, principal, next_path=next_path)
+
+
+@router.post(REAUTH_PATH, response_class=HTMLResponse)
+async def reauth_submit(
+    request: Request,
+    password: str = Form(""),
+    next: str = Form(""),
+    principal: Principal = Depends(require_permission("account.self", view="account")),
+    session: AsyncSession = Depends(get_session),
+):
+    settings = get_settings()
+    next_path = safe_next(next)
+    if principal.synthetic:
+        return RedirectResponse(next_path, status_code=303)
+    user = await users.get_user(session, principal.user_id)
+    row = request.state.dashboard_session
+    provider = providers.get_provider(settings, providers.LocalPasswordProvider.name)
+    result = await provider.reauthenticate(session, settings, user, {"password": password})
+    if not result.ok:
+        await session.commit()  # the failed attempt (and a possible lockout event) counts like a sign-in failure
+        DASHBOARD_ACCESS_DENIED_TOTAL.labels(reason="reauth_failed").inc()
+        return _reauth_page(request, principal, next_path=next_path, error=GENERIC_REAUTH_ERROR)
+    await sessions.mark_reauthenticated(session, row)
+    users.access_event(
+        session,
+        "access.reauth",
+        actor=principal.actor,
+        reason=f"{principal.username} re-authenticated.",
+        details={"target_user_id": principal.user_id, "session_id": row.session_id, "auth_method": row.auth_method, "next": next_path},
+    )
+    await session.commit()
+    return RedirectResponse(next_path, status_code=303)
 
 
 # ---------------------------------------------------------------------------

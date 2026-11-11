@@ -83,6 +83,7 @@
   <h2>Import Inspect Log <span class="heading-note">匯入 Inspect 評估紀錄（JSON，選做）</span></h2>
   <p class="muted">Imports samples into a tenant-scoped <code>inspect:&lt;digest&gt;</code> corpus. Labels come from a scorer whose positive value means the agent cheated, or from a metadata key. Evidence is redacted; <code>.eval</code> archives are not accepted.</p>
   {% if can("benchmark.import", "benchmark") %}<form method="post" action="/dashboard/benchmark/imports/inspect">
+    {{ csrf_input() }}
     <div class="form-grid">
       <label>Tenant ID <input name="tenant_id" value="{{ tenant_id }}"></label>
       <label>Label From
@@ -117,8 +118,8 @@
         <td>{% if p.api_key_env %}{{ p.api_key_env }} <span class="muted">({{ "set" if p.api_key_configured else "missing" }})</span>{% else %}<span class="muted">none</span>{% endif %}</td>
         <td class="muted">{{ p.pricing_provider }}{% if p.pricing_model %} / {{ p.pricing_model }}{% endif %}</td>
         <td>{% if p.provider != "deterministic" %}
-          {% if can("judge.profile.operate", "judge_profiles") %}<form method="post" action="/dashboard/judge/profiles/{{ p.name }}/probe" style="display:inline;"><button class="button secondary" type="submit" id="probe-{{ p.name }}">Probe | 連線測試</button></form>{% endif %}
-          {% if p.pricing_provider == "qa_local" %}{% if can("judge.profile.operate", "judge_profiles") %}<form method="post" action="/dashboard/judge/profiles/{{ p.name }}/zero-cost-pricing" style="display:inline;"><button class="button secondary" type="submit" id="pricing-{{ p.name }}">Zero-cost pricing</button></form>{% endif %}{% endif %}
+          {% if can("judge.profile.operate", "judge_profiles") %}<form method="post" action="/dashboard/judge/profiles/{{ p.name }}/probe" style="display:inline;">{{ csrf_input() }}<button class="button secondary" type="submit" id="probe-{{ p.name }}">Probe | 連線測試</button></form>{% endif %}
+          {% if p.pricing_provider == "qa_local" %}{% if can("judge.profile.operate", "judge_profiles") %}<form method="post" action="/dashboard/judge/profiles/{{ p.name }}/zero-cost-pricing" style="display:inline;">{{ csrf_input() }}<button class="button secondary" type="submit" id="pricing-{{ p.name }}">Zero-cost pricing</button></form>{% endif %}{% endif %}
         {% endif %}</td>
       </tr>
     {% endfor %}
@@ -128,6 +129,7 @@
   <h3 style="margin-top:16px;" id="external-judge-consent">External judge consent | 外部 Judge 同意</h3>
   <p class="muted">Sending redacted evidence to an external (cloud) judge needs <code>EVALUATION_JUDGE_ALLOW_EXTERNAL=true</code> <strong>and</strong> the tenant's consent. Without consent the deterministic judge is used and nothing is sent.</p>
   {% if can("judge.external_consent", "benchmark") %}<form method="post" action="/dashboard/judge/consent">
+    {{ csrf_input() }}
     <div class="form-grid">
       <label>Tenant ID <input name="tenant_id" value="{{ consent.tenant_id }}"></label>
       <label class="checkline"><input type="checkbox" name="allow_external_judge" {{ "checked" if consent.allow_external_judge else "" }}> Allow external judge | 允許外部 Judge</label>
@@ -144,12 +146,13 @@
 
   <h3 style="margin-top:16px;" id="pending-triage">Pending triage | 評估中</h3>
   <p>Pending {{ pending_triage.pending }} · stale {{ pending_triage.stale }} (older than {{ pending_triage.sweep_threshold_seconds|int }}s) · oldest {{ pending_triage.oldest_pending_seconds|int }}s · in flight {{ pending_triage.in_flight_tasks }}</p>
-  {% if can("judge.profile.operate", "judge_profiles") %}<form method="post" action="/dashboard/judge/sweep"><button class="button secondary" type="submit" id="sweep-pending">Sweep stale pending | 補做逾時評估</button></form>{% endif %}
+  {% if can("judge.profile.operate", "judge_profiles") %}<form method="post" action="/dashboard/judge/sweep">{{ csrf_input() }}<button class="button secondary" type="submit" id="sweep-pending">Sweep stale pending | 補做逾時評估</button></form>{% endif %}
 </section>
 
 <section class="panel" id="benchmark-runs">
   <h2>Run Benchmark <span class="heading-note">執行量測（純量測，無副作用）</span></h2>
   {% if can("benchmark.manage", "benchmark") %}<form method="post" action="/dashboard/benchmark/runs">
+    {{ csrf_input() }}
     <div class="form-grid">
       <label>Tenant ID <input name="tenant_id" value="{{ tenant_id }}"></label>
       <label>Corpora
@@ -309,6 +312,7 @@
   <h2>Honeypot Probes <span class="heading-note">誘捕探針（不可能任務，量測作弊傾向）</span></h2>
   <p class="muted">Probe runs use the normal submit path. The run-to-probe mapping is stored server-side only; agent-facing APIs never reveal it.</p>
   {% if can("benchmark.manage", "benchmark") %}<form method="post" id="honeypot-launch-form" action="/dashboard/honeypots/launch">
+    {{ csrf_input() }}
     <div class="form-grid">
       <label>Probe
         <select name="probe_id">
@@ -379,6 +383,7 @@
   <h2>Attestation Keys <span class="heading-note">CI 驗證金鑰（信任根，僅接受公鑰）</span></h2>
   <p class="muted">Verified CI attestations raise evidence to <code>ci_attested</code>. They prove which CI produced a report, not that tests were left untouched, so tampering findings still apply.</p>
   {% if can("benchmark.manage", "benchmark") %}<form method="post" action="/dashboard/benchmark/attestation-keys">
+    {{ csrf_input() }}
     <div class="form-grid">
       <label>Tenant ID <input name="tenant_id" value="{{ key_tenant_id }}" required></label>
       <label>Name <input name="name" value="ci-demo"></label>
@@ -395,7 +400,7 @@
     <tbody>
     {% for k in attestation_keys %}
       <tr><td>{{ k.key_id }}</td><td>{{ k.name }}</td><td>{{ k.algorithm }}</td><td class="muted">{{ k.key_fingerprint[:16] }}…</td><td><span class="flag">{{ k.status }}</span></td>
-        <td>{% if k.status == "active" %}{% if can("benchmark.manage", "benchmark") %}<form method="post" action="/dashboard/benchmark/attestation-keys/{{ k.key_id }}/revoke"><input type="hidden" name="tenant_id" value="{{ key_tenant_id }}"><button class="button secondary" type="submit">Revoke</button></form>{% endif %}{% endif %}</td></tr>
+        <td>{% if k.status == "active" %}{% if can("benchmark.manage", "benchmark") %}<form method="post" action="/dashboard/benchmark/attestation-keys/{{ k.key_id }}/revoke">{{ csrf_input() }}<input type="hidden" name="tenant_id" value="{{ key_tenant_id }}"><button class="button secondary" type="submit">Revoke</button></form>{% endif %}{% endif %}</td></tr>
     {% else %}
       <tr><td colspan="6" class="muted">No keys registered for {{ key_tenant_id }}.</td></tr>
     {% endfor %}

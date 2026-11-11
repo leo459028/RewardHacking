@@ -18,6 +18,7 @@
 <section class="panel">
   <h2>Create Budget Policy <span class="heading-note">新增預算治理政策</span></h2>
   {% if can("finops.manage") %}<form method="post" action="/dashboard/admin/finops/budgets" class="form-grid">
+    {{ csrf_input() }}
     <label>Policy Name
       <input name="name" placeholder="Tenant Monthly Hard Gate" required>
     </label>
@@ -110,6 +111,7 @@
         <td>
           {% if budget.is_active %}
           {% if can("finops.manage") %}<form method="post" action="/dashboard/admin/finops/budgets/{{ budget.budget_id }}/disable">
+            {{ csrf_input() }}
             <button class="button danger" type="submit">Disable</button>
           </form>{% endif %}
           {% else %}

@@ -27,6 +27,7 @@
 <section class="panel" id="retention-plan">
   <h2>Dry-run Report <span class="heading-note">清理計畫（只讀，不會刪除）</span></h2>
   {% if can("retention.plan", "retention") %}<form method="post" action="/dashboard/retention/plans">
+    {{ csrf_input() }}
     <button class="button" type="submit" id="create-plan">Generate dry-run report | 產生 dry-run 報告</button>
   </form>{% endif %}
   {% if plan %}
@@ -107,6 +108,7 @@
   </table>
   <h3>Create Legal Hold <span class="heading-note">建立 legal hold</span></h3>
   {% if can("legal_hold.create", "retention") %}<form method="post" action="/dashboard/retention/holds" class="form-grid" id="hold-form">
+    {{ csrf_input() }}
     <label>Scope
       <select name="scope_type">
         <option value="tenant">tenant</option>

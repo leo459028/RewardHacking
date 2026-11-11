@@ -17,6 +17,7 @@
 <section class="panel">
   <h2>Seed File</h2>
   {% if can("pricing.manage", "pricing") %}<form method="post" action="/dashboard/admin/finops/pricing/import" class="form-grid">
+    {{ csrf_input() }}
     <label>File Path
       <input name="file_path" value="{{ file_path }}" placeholder="app/seeds/model_pricing_seed.yaml">
     </label>

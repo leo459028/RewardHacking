@@ -228,7 +228,7 @@
         <strong>{{ principal_.username }}</strong>
         {{ principal_.role }}{% if principal_.tenant_id %} · {{ principal_.tenant_id }}{% endif %}
         <div><a href="/dashboard/account">Account | 我的帳號</a></div>
-        <form method="post" action="/dashboard/logout"><button class="button secondary" type="submit">Sign out | 登出</button></form>
+        <form method="post" action="/dashboard/logout">{{ csrf_input() }}<button class="button secondary" type="submit">Sign out | 登出</button></form>
       </div>
       {% endif %}
     </aside>

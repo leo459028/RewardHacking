@@ -124,6 +124,7 @@ from app.services.access.permissions import PLATFORM_VIEW
 from app.services.access.principal import Principal
 from app.ui.security import (
     actor_for,
+    csrf_protect,
     dashboard_principal,
     ensure_permission,
     ensure_tenant_access,
@@ -141,7 +142,7 @@ async def dashboard_auth(principal: Principal = Depends(dashboard_principal)) ->
     return principal
 
 
-router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth)])
+router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth), Depends(csrf_protect)])
 templates = Jinja2Templates(directory="app/ui/templates")
 
 

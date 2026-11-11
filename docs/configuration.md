@@ -40,7 +40,8 @@ Application configuration is loaded from environment variables and local `.env` 
 | `DASHBOARD_COOKIE_SECURE` | `auto` | `auto` sets the `Secure` attribute on the `rh_session` cookie unless `APP_ENV=dev`; `true` / `false` force it |
 | `DASHBOARD_SESSION_IDLE_MINUTES` | `30` | A session ends after this much inactivity |
 | `DASHBOARD_SESSION_MAX_HOURS` | `8` | A session ends this long after sign-in, active or not |
-| `DASHBOARD_REAUTH_MAX_AGE_SECONDS` | `300` | High-risk actions need a password entry this recent (re-authentication, from P4) |
+| `DASHBOARD_REAUTH_MAX_AGE_SECONDS` | `300` | High-risk Dashboard actions (`STEP_UP_PERMISSIONS`) need a sign-in or password re-entry this recent; otherwise they redirect to `/dashboard/reauth` and do not run |
+| `DASHBOARD_CSRF_SECRET` | *(empty)* | `v1.6.1`: signs the short-lived sign-in form cookie `rh_login_csrf`. Empty uses a random per-process key; set the same value on every API replica that serves the Dashboard. Signed-in forms use a per-session secret instead |
 | `DASHBOARD_LOGIN_MAX_FAILURES` | `5` | Consecutive wrong passwords that lock an account |
 | `DASHBOARD_LOGIN_LOCKOUT_MINUTES` | `15` | Lock duration; during a lock even the right password is refused |
 | `DASHBOARD_PASSWORD_MIN_LENGTH` | `12` | Minimum password length (cannot be set below 12). Passwords may not equal the username or appear on the built-in common-password list; no character-class rules |
