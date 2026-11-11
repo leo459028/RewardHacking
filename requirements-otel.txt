@@ -1,0 +1,4 @@
+# v1.6.0 D5: optional OpenTelemetry export (pip install .[otel]). Versions pinned to releases at least two weeks old.
+opentelemetry-api==1.45.1
+opentelemetry-sdk==1.45.1
+opentelemetry-exporter-otlp-proto-http==1.45.1

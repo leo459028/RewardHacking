@@ -254,3 +254,9 @@ EVALUATION_TRIAGE_PRECISION_AT_K = Gauge(
     "Latest benchmark precision@K by ranking (rule_only / judge_only / combined)",
     ["ranking", "k"],
 )
+
+# v1.6.0 D6: span attributes dropped by the allowlist (never exported)
+TRACING_DROPPED_ATTRIBUTES_TOTAL = Counter(
+    "tracing_dropped_attributes_total",
+    "Span attributes dropped because their key is not on the allowlist.",
+)

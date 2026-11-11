@@ -1,6 +1,6 @@
 # REST API Specification
 
-> **API Version**: `v1.5.7`
+> **API Version**: `v1.6.0`
 > **Base Path**: `/v1`  
 > **Interactive Documentation**: `http://localhost:8000/docs` (Swagger UI) or `http://localhost:8000/redoc` (ReDoc)
 
@@ -11,7 +11,8 @@ All REST API endpoints are exposed under the `/v1` route prefix. The service ret
 ## Authentication & Headers
 
 - **`X-API-Key`**: API key header when `AUTH_ENABLED=true`. Maps the request to an authorized tenant and RBAC role (`viewer`, `operator`, `admin`, `finops_admin`).
-- **`X-Trace-Id`**: Distributed trace identifier. If provided in the request header, it is bound to the execution plan and audit events; otherwise, the server generates a unique trace ID and returns it in the response header.
+- **`X-Trace-Id`**: Distributed trace identifier. If provided in the request header, it is echoed unchanged and bound to the execution plan and audit events; otherwise the server returns `trace_<32 hex>`, the W3C trace id with a prefix.
+- **`traceparent` / `tracestate`** (`v1.6.0`): W3C Trace Context. A valid incoming `traceparent` is continued; every response carries `traceparent`. See [`observability.md`](observability.md).
 
 ---
 
@@ -63,6 +64,15 @@ All REST API endpoints are exposed under the `/v1` route prefix. The service ret
 | `GET` | `/v1/runs/{run_id}/checkpoints` | Lists submit/resume checkpoints associated with the run | `viewer`, `operator`, `admin` |
 | `POST` | `/v1/runs/{run_id}/resume` | Creates a resume checkpoint and re-publishes the run to Kafka queue | `operator`, `admin` |
 | `POST` | `/v1/runs/{run_id}/replay` | Triggers a dry-run replay attempt without external side-effects | `operator`, `admin` |
+
+Since `v1.6.0`, `GET /v1/runs/{run_id}` and its sub-resources (`trace`, `replay-bundle`, `execution-plan`, `checkpoints`, `worker-attempts`, `tool-executions`, `incidents`, `outcome(s)`, `resume`, `replay`, DLQ `requeue` / `resolve`) answer **`410`** for a run removed by a retention purge:
+
+```json
+{"error": {"code": "run_purged", "message": "This run was removed by the audit retention policy."},
+ "tombstone": {"tombstone_id": "tomb_...", "run_id": "...", "tenant_id": "...", "purge_id": "purge_...", "purged_at": "...", "run_created_at": "...", "final_status": "completed", "record_counts": {"agent_runs": 1}, "content_digest": "<sha256>", "policy_version": "v1.6.0"}}
+```
+
+The tombstone is tenant-scoped like the run (another tenant's key gets `403 tenant_mismatch`). An id that never existed still returns `404`. The FinOps ledger endpoints of a purged run keep working.
 
 ---
 
@@ -146,10 +156,32 @@ All REST API endpoints are exposed under the `/v1` route prefix. The service ret
 | `GET` | `/v1/operations/readiness` | Evaluates release readiness criteria | `viewer`, `operator`, `admin` |
 | `POST` | `/v1/operations/evidence` | Submits operational evidence (backup drill, secret rotation, safety regression) | `admin` |
 | `POST` | `/v1/operations/release-gates` | Creates an auditable release gate snapshot | `admin` |
+| `GET` | `/v1/observability/summary` | Worker, incident, approval, evaluator, SLO and FinOps summary | `viewer`, `operator`, `admin` |
+| `GET` | `/v1/observability/tracing` | `v1.6.0`: W3C propagation and OTel export status (exporter host only), dropped attribute count | `viewer`, `operator`, `admin` |
+| `GET` | `/v1/sandbox/status` | `v1.6.0`: configured sandbox backend, capabilities, record-only isolation policy and conformance smoke results (`status` `pass` / `fail`, never `500`) | `viewer`, `operator`, `admin` |
 | `GET` | `/v1/incidents` | Lists safety incidents and policy denials | `viewer`, `operator`, `admin` |
 | `GET` | `/v1/worker/dlq` | Lists worker attempts routed to dead letter queue | `viewer`, `operator`, `admin` |
 | `POST` | `/v1/worker/dlq/{run_id}/requeue` | Requeues a DLQ run (`status="queued"`) and republishes `agent.requested` | `operator`, `admin` |
 | `POST` | `/v1/worker/dlq/{run_id}/resolve` | Marks DLQ worker attempts as `dlq_resolved` to clear readiness gate | `operator`, `admin` |
+
+### Audit Retention & Legal Holds (`v1.6.0`)
+
+The service enforces every rule; refused operations return `{"error": {"code": ..., "message": ...}}`. Default `AUDIT_RETENTION_PURGE_MODE=plan`: plans only, never deletes.
+
+| Method | Path | Description | Access Role |
+| --- | --- | --- | --- |
+| `GET` | `/v1/retention/policy` | Effective policy: purge mode, retention days, batch size, plan TTL, ledger days, exclusion reasons | `viewer`, `operator`, `admin` |
+| `POST` | `/v1/retention/plans` | Read-only dry-run plan: candidates, exclusion reasons (count and examples), estimated deletions per table, `plan_digest`, `expires_at` | `admin` |
+| `GET` | `/v1/retention/plans/{purge_id}` | One plan or receipt | `operator`, `admin` |
+| `POST` | `/v1/retention/plans/{purge_id}/apply` | Body `{"plan_digest": "...", "confirm": true}`; purges each candidate in its own transaction after a re-check; returns the receipt (`applied_counts`, `skipped_at_apply`, `failures`, `receipt_digest`) | `admin` |
+| `GET` | `/v1/retention/purges` | Plans and receipts, newest first (`status`, `limit`) | `operator`, `admin` |
+| `GET` | `/v1/retention/tombstones` | Hash-only tombstones (`tenant_id`, `purge_id`, `limit`; tenant-scoped) | `viewer`, `operator`, `admin` |
+| `GET` | `/v1/retention/finops-ledger-report` | Ledger rows past `FINOPS_LEDGER_RETENTION_DAYS` (report only, never deleted) | `viewer`, `operator`, `admin`, `finops_admin` |
+| `POST` | `/v1/legal-holds` | Body `scope_type` (`tenant` / `run`), `scope_id`, `reason` | `admin`; `tenant_admin` for its own tenant |
+| `GET` | `/v1/legal-holds` | Holds (`tenant_id`, `status`, `limit`; tenant-scoped) | `viewer`, `operator`, `admin` |
+| `POST` | `/v1/legal-holds/{hold_id}/release` | Body `release_reason` (required) | `admin` |
+
+Exclusion reason codes (fixed): `legal_hold`, `run_not_terminal`, `dlq_unresolved`, `review_open`, `unexported_label`, `benchmark_reference`, `high_severity_incident`, `checkpoint_reference`, `replay_reference`, `honeypot_measurement`. `skipped_at_apply` may also contain `recent_activity` and `run_missing`.
 
 ### Safe MCP Gateway (`v1.5.7`)
 
@@ -317,5 +349,14 @@ Served by `app/api/routers/evaluations.py` (and the judge option on `POST /v1/be
 | `409` | `honeypot_probe_disabled` | Launch of a disabled probe |
 | `422` | `attestation_key_invalid` | Invalid PEM, wrong algorithm, or a private key was submitted |
 | `409` | `attestation_key_duplicate` | The public key is already registered and active for the tenant |
+| `410` | `run_purged` | The run was removed by a retention purge; the body carries `tombstone` (`v1.6.0`) |
+| `409` | `retention_disabled` / `retention_apply_disabled` | `AUDIT_RETENTION_PURGE_MODE` is `off`, or not `apply` for an apply |
+| `409` | `retention_plan_digest_mismatch` / `retention_plan_expired` / `retention_plan_already_applied` | Stale, expired or already applied plan |
+| `409` | `retention_purge_in_progress` | Another apply holds the Postgres advisory lock |
+| `422` | `retention_confirm_required` | Apply without `confirm: true` |
+| `404` | `retention_plan_not_found` / `legal_hold_not_found` / `run_not_found` | Unknown plan, hold or run (hold scope) |
+| `403` | `legal_hold_forbidden` | Role may not create (or release) this hold |
+| `422` | `legal_hold_scope_invalid` / `legal_hold_reason_required` / `legal_hold_release_reason_required` | Invalid hold scope, missing reason or release reason |
+| `409` | `legal_hold_not_active` | Release of an already released hold |
 | `413` / `415` / `422` | `inspect_import_too_large` / `inspect_import_unsupported_format` / `inspect_import_invalid_json` | Inspect import limits (`.eval` archives are rejected) |
 | `500` | `internal_error` | Internal server or unhandled exception |

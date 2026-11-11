@@ -230,6 +230,14 @@ class InMemoryRunStateStore:
             **(details or {}),
         }
 
+    async def delete_run_keys(self, run_id: str) -> int:
+        """v1.6.0 retention: drop a purged run's state and worker idempotency keys (never leases)."""
+        removed = 1 if self.run_states.pop(run_id, None) is not None else 0
+        prefix = f"run:{run_id}:"
+        stale = {key for key in self.idempotency_keys if key.startswith(prefix)}
+        self.idempotency_keys -= stale
+        return removed + len(stale)
+
     async def mark_idempotency_key(self, key: str, *, ttl_seconds: int = 86400) -> bool:
         if key in self.idempotency_keys:
             return False
@@ -498,6 +506,13 @@ class RedisRunStateStore:
             {"status": status, "updated_at": _now_iso(), **(details or {})},
             ttl_seconds=ttl_seconds,
         )
+
+    async def delete_run_keys(self, run_id: str) -> int:
+        """v1.6.0 retention: drop a purged run's state, approval and worker idempotency keys (never leases)."""
+        keys = [f"run:{run_id}:state", f"run:{run_id}:approval"]
+        async for key in self.redis.scan_iter(match=f"idempotency:run:{run_id}:*"):
+            keys.append(key)
+        return int(await self.redis.delete(*keys))
 
     async def mark_idempotency_key(self, key: str, *, ttl_seconds: int = 86400) -> bool:
         created = await self.redis.set(f"idempotency:{key}", "1", ex=ttl_seconds, nx=True)

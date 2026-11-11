@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.services.mcp_gateway import SENSITIVE_KEY_NAMES, SENSITIVE_KEY_SUFFIXES, SENSITIVE_VALUE_PATTERNS
+from app.services.sensitive_data import SENSITIVE_KEY_NAMES, SENSITIVE_KEY_SUFFIXES, SENSITIVE_VALUE_PATTERNS
 
 DEFAULT_PROTECTED_PATHS: tuple[str, ...] = (
     "tests/**",

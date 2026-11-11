@@ -68,6 +68,11 @@ We use [Ruff](https://github.com/astral-sh/ruff) for fast Python linting and cod
   ```bash
   ruff check app tests scripts
   ```
+- Check the architecture contracts (`v1.6.0`):
+  ```bash
+  lint-imports
+  ```
+- Helper scripts (`v1.6.0`): `python scripts/phase_check.py <tests>` runs ruff, `lint-imports`, `git diff --check` and the given tests; `python scripts/bump_version.py X.Y.Z` (or `--check`) updates or verifies the release version anchors; `python scripts/release_gate.py --out <file>` runs the full release gate (secret scan, lint, full tests, Docker migration, browser E2E) and writes a Markdown summary.
 - Ensure comprehensive type annotations and clear function docstrings.
 - Never hardcode secrets, API keys, or credentials. Run the built-in secret scanner:
   ```bash

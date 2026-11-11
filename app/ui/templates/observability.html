@@ -23,6 +23,22 @@
   {% endif %}
 </section>
 
+<section class="panel" id="tracing">
+  <h2>Tracing <span class="heading-note">W3C trace context 與 OpenTelemetry 匯出</span></h2>
+  <table>
+    <tbody>
+      <tr><th>W3C propagation</th><td>{{ "on" if tracing.w3c_propagation else "off" }} (traceparent on HTTP responses and Kafka headers)</td></tr>
+      <tr><th>OTEL_ENABLED</th><td>{{ tracing.otel_enabled_setting }}</td></tr>
+      <tr><th>Exporting</th><td><span class="status {{ 'completed' if tracing.exporting else 'queued' }}">{{ "yes" if tracing.exporting else "no" }}</span></td></tr>
+      <tr><th>Exporter host</th><td>{{ tracing.exporter_host or "-" }}</td></tr>
+      <tr><th>Sampler</th><td>{{ tracing.sampler }}</td></tr>
+      <tr><th>Service name</th><td>{{ tracing.service_name or "-" }}</td></tr>
+      <tr><th>Trace UI template</th><td>{{ tracing.trace_ui_url_template or "-" }}</td></tr>
+      <tr><th>Dropped attributes</th><td>{{ tracing.dropped_attributes }} <span class="muted">(refused by the span attribute allowlist in this process)</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
 <section class="panel">
   <h2>SLO <span class="heading-note">服務水準目標</span></h2>
   <table>

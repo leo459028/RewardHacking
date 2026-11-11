@@ -1,6 +1,6 @@
 # Configuration & Environment Variables
 
-> **Configuration Version**: `v1.5.7`
+> **Configuration Version**: `v1.6.0`
 > **Source Model**: `app/core/config.py` (`Settings`) via `pydantic-settings`  
 > **Template**: `.env.example`
 
@@ -41,7 +41,20 @@ Application configuration is loaded from environment variables and local `.env` 
 | `QUOTA_ENABLED` | `true` | Enables Redis rate limiting and high-risk quotas |
 | `TENANT_REQUEST_LIMIT_PER_MINUTE` | `60` | Default sliding-window request quota per tenant |
 | `TENANT_HIGH_RISK_LIMIT_PER_HOUR` | `10` | Default hourly ceiling for high-risk requests per tenant |
-| `AUDIT_RETENTION_DAYS` | `90` | Operational audit retention lifespan |
+| `AUDIT_RETENTION_DAYS` | `90` | Runs whose latest activity is older than this many days may be purged (global, not per tenant) |
+| `AUDIT_RETENTION_PURGE_MODE` | `plan` | `v1.6.0`: `off` (plan and apply refused), `plan` (dry-run plans only; apply returns `409 retention_apply_disabled`), `apply` (purges allowed). Unknown values fail closed to `off` |
+| `AUDIT_RETENTION_PURGE_BATCH_SIZE` | `500` | Maximum candidate runs per plan |
+| `AUDIT_RETENTION_PLAN_TTL_MINUTES` | `60` | A plan must be applied within this many minutes |
+| `FINOPS_LEDGER_RETENTION_DAYS` | `2555` | Age reported by `GET /v1/retention/finops-ledger-report`; the ledger is never deleted |
+| `SANDBOX_BACKEND` | `simulated` | `v1.6.0`: sandbox backend; `simulated` is the only option (nothing is executed). Unknown values fail closed |
+| `SANDBOX_HIGH_RISK_THRESHOLD` | *(unset)* | Risk score at or above which `SANDBOX_MIN_ISOLATION_HIGH_RISK` is required; unset or empty uses `DEFAULT_RISK_THRESHOLD` |
+| `SANDBOX_MIN_ISOLATION_DEFAULT` | `container` | Required isolation for other runs (`process`, `container`, `gvisor`, `microvm`); record-only in `v1.6.0` |
+| `SANDBOX_MIN_ISOLATION_HIGH_RISK` | `gvisor` | Required isolation for high-risk runs; record-only in `v1.6.0` |
+| `SANDBOX_MAX_TIMEOUT_SECONDS` | `300` | Upper bound for a spec's `timeout_seconds`; must be greater than 0 |
+| `SANDBOX_MAX_OUTPUT_BYTES` | `1048576` | Upper bound for a spec's `max_output_bytes`; must be greater than 0 |
+| `OTEL_ENABLED` | `false` | `v1.6.0`: export spans through OpenTelemetry (needs the `otel` extra). W3C propagation works either way |
+| `OTEL_TRACE_UI_URL_TEMPLATE` | *(empty)* | Run Detail trace link, for example `http://localhost:16686/trace/{trace_id}` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_TRACES_SAMPLER` | *(OTel defaults)* | Standard OpenTelemetry variables (OTLP/HTTP only) |
 | `OPERATIONS_EVIDENCE_MAX_AGE_DAYS` | `30` | Maximum validity age for backup drill evidence |
 | `SECRET_ROTATION_MAX_AGE_DAYS` | `90` | Maximum validity age for credential rotation logs |
 | `RELEASE_GATE_MAX_QUEUED_AGE_MINUTES` | `15` | Threshold for detecting stale queued tasks during release gate |

@@ -5,7 +5,7 @@ from functools import lru_cache
 import re
 from typing import Any
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -66,6 +66,22 @@ class Settings(BaseSettings):
     mcp_tool_arguments_max_depth: int = 8
     mcp_tool_arguments_max_bytes: int = 65536
     audit_retention_days: int = 90
+    # v1.6.0 D11 / D14 / D16: retention purge (plan -> apply). off | plan | apply; unknown values behave as off.
+    audit_retention_purge_mode: str = "plan"
+    audit_retention_purge_batch_size: int = 500
+    audit_retention_plan_ttl_minutes: int = 60
+    finops_ledger_retention_days: int = 2555  # report only; the FinOps ledger is never deleted
+    # v1.6.0 D21 / D23: sandbox spec. "simulated" (nothing is executed) is the only backend in this release;
+    # the isolation requirement is recorded in the tool transcript and enforced from v1.6.1.
+    sandbox_backend: str = "simulated"
+    sandbox_high_risk_threshold: float | None = None  # None -> DEFAULT_RISK_THRESHOLD
+    sandbox_min_isolation_default: str = "container"
+    sandbox_min_isolation_high_risk: str = "gvisor"
+    sandbox_max_timeout_seconds: int = 300
+    sandbox_max_output_bytes: int = 1048576
+    # v1.6.0 D5: optional OpenTelemetry export (endpoint / service name / sampler use the standard OTEL_* variables)
+    otel_enabled: bool = False
+    otel_trace_ui_url_template: str = ""
     operations_evidence_max_age_days: int = 30
     secret_rotation_max_age_days: int = 90
     release_gate_max_queued_age_minutes: int = 15
@@ -133,6 +149,12 @@ class Settings(BaseSettings):
     evaluation_judge_breaker_failure_threshold: int = 3
     evaluation_judge_breaker_ttl_seconds: int = 300
     evaluation_judge_dashboard_editing: str = "auto"
+
+    @field_validator("sandbox_high_risk_threshold", mode="before")
+    @classmethod
+    def _empty_sandbox_threshold_is_unset(cls, value: Any) -> Any:
+        # v1.6.0: ``SANDBOX_HIGH_RISK_THRESHOLD=`` (empty) falls back to DEFAULT_RISK_THRESHOLD, as documented.
+        return None if isinstance(value, str) and not value.strip() else value
 
     @model_validator(mode="after")
     def _validate_finops_currency_settings(self) -> Settings:

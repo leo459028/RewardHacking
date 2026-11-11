@@ -1,6 +1,5 @@
 from contextlib import asynccontextmanager
 from time import perf_counter
-import uuid
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
@@ -9,15 +8,24 @@ from fastapi.responses import JSONResponse
 
 from app.api.routers.benchmark import router as benchmark_router
 from app.api.routers.evaluations import router as evaluations_router
+from app.api.routers.finops import router as finops_router
+from app.api.routers.operations import router as operations_router
+from app.api.routers.retention import router as retention_router
+from app.api.routers.sandbox import router as sandbox_router
+from app.api.common import RunPurgedError
 from app.api.routes import router
+from app.core import trace_context, tracing
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.infra.postgres import close_engine, init_engine
 from app.services import judge_activation
+from app.services.retention import RetentionError
 from app.services.evaluation.judges.profiles import load_profiles
 from app.observability.metrics import HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_TOTAL
 from app.ui.routers.benchmark import router as benchmark_ui_router
 from app.ui.routers.judges import router as judges_ui_router
+from app.ui.routers.operations import router as operations_ui_router
+from app.ui.routers.retention import router as retention_ui_router
 from app.ui.routers.reviews import router as reviews_ui_router
 from app.ui.routes import router as ui_router
 
@@ -30,16 +38,18 @@ async def lifespan(app: FastAPI):
     # v1.5.11: invalid judge profiles (secrets inline, unknown fields, bad values) fail fast at startup.
     load_profiles(get_settings())
     init_engine(settings)
+    tracing.configure(get_settings(), service_name="rewardhacking-api")
     # v1.5.12 (D2, D7): load probe / activation state; auto-probe the environment-selected profile in the background.
     if judge_activation.RUN_ON_STARTUP:
         await judge_activation.startup(get_settings())
     yield
     await close_engine()
+    tracing.shutdown()
 
 
 app = FastAPI(
     title=settings.app_name,
-    version="1.5.12",
+    version="1.6.0",
     description="Guardrail service for preventing reward hacking in agent systems.",
     lifespan=lifespan,
 )
@@ -47,11 +57,28 @@ app = FastAPI(
 
 @app.middleware("http")
 async def trace_id_middleware(request: Request, call_next):
-    trace_id = request.headers.get("X-Trace-Id") or f"trace_{uuid.uuid4().hex}"
+    # v1.6.0 D2: W3C ``traceparent`` wins; a client ``X-Trace-Id`` is still echoed unchanged (v0.8 behaviour).
+    context = trace_context.context_from_http(
+        request.headers.get(trace_context.TRACEPARENT_HEADER),
+        request.headers.get(trace_context.TRACESTATE_HEADER),
+        request.headers.get("X-Trace-Id"),
+    )
+    trace_id = context.public_id
     request.state.trace_id = trace_id
+    request.state.trace_context = context
     start = perf_counter()
-    response = await call_next(request)
+    with tracing.start_span(f"{request.method} {request.url.path}", kind=tracing.SPAN_KIND_SERVER, context=context, new_span=False) as span:
+        response = await call_next(request)
+        span.set_attributes(
+            {
+                "http.request.method": request.method,
+                "url.path": request.url.path,
+                "http.response.status_code": response.status_code,
+                "rh.legacy_trace_id": context.display_id or None,
+            }
+        )
     response.headers["X-Trace-Id"] = trace_id
+    response.headers[trace_context.TRACEPARENT_HEADER] = context.traceparent
     duration = perf_counter() - start
     labels = {
         "method": request.method,
@@ -59,7 +86,8 @@ async def trace_id_middleware(request: Request, call_next):
         "status": str(response.status_code),
     }
     HTTP_REQUESTS_TOTAL.labels(**labels).inc()
-    HTTP_REQUEST_DURATION_SECONDS.labels(**labels).observe(duration)
+    # v1.6.0 D8: exemplar (trace id) only when exporting; visible in the OpenMetrics format of /v1/metrics.
+    HTTP_REQUEST_DURATION_SECONDS.labels(**labels).observe(duration, exemplar=tracing.exemplar(context))
     return response
 
 
@@ -108,6 +136,27 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     )
 
 
+@app.exception_handler(RetentionError)
+async def retention_exception_handler(request: Request, exc: RetentionError):
+    """v1.6.0: refused retention / legal hold operations keep the shared ``{"error": {"code"}}`` shape."""
+    error = {"code": exc.code, "message": exc.message}
+    if exc.details:
+        error["details"] = jsonable_encoder(exc.details)
+    return JSONResponse(status_code=exc.status_code, content={"error": error})
+
+
+@app.exception_handler(RunPurgedError)
+async def run_purged_exception_handler(request: Request, exc: RunPurgedError):
+    """v1.6.0 D17: a purged run answers 410 with its hash-only tombstone summary."""
+    return JSONResponse(
+        status_code=410,
+        content={
+            "error": {"code": "run_purged", "message": "This run was removed by the audit retention policy."},
+            "tombstone": jsonable_encoder(exc.tombstone),
+        },
+    )
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
@@ -122,9 +171,15 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 
 app.include_router(router)
+app.include_router(finops_router)
 app.include_router(evaluations_router)
 app.include_router(benchmark_router)
+app.include_router(operations_router)
+app.include_router(retention_router)
+app.include_router(sandbox_router)
 app.include_router(ui_router)
 app.include_router(reviews_ui_router)
 app.include_router(benchmark_ui_router)
 app.include_router(judges_ui_router)
+app.include_router(operations_ui_router)
+app.include_router(retention_ui_router)

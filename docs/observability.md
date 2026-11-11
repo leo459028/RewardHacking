@@ -1,6 +1,6 @@
 # Observability, Metrics & SLOs
 
-> **Observability Baseline**: `v1.5.7`
+> **Observability Baseline**: `v1.6.0` (W3C Trace Context, optional OpenTelemetry export)
 > **Metrics Engine**: Prometheus Client  
 > **Endpoint**: `GET /v1/metrics`
 
@@ -57,17 +57,56 @@ RewardHacking provides deep observability across API gateways, background worker
 
 ---
 
-## Distributed Tracing (`X-Trace-Id`)
+## Distributed Tracing (W3C Trace Context, `v1.6.0`)
 
-RewardHacking enforces end-to-end trace correlation:
-1. Every ingress request extracts or generates an `X-Trace-Id`.
-2. The trace ID is bound to:
-   - FastAPI request context state.
-   - Response header `X-Trace-Id`.
-   - `execution_plans.trace_id` and `execution_plan_steps.trace_id`.
-   - `run_checkpoints.trace_id` and `replay_attempts.trace_id`.
-   - Kafka message metadata.
-3. Operators can retrieve the full chronological timeline using `GET /v1/runs/{run_id}/trace` or export the complete bundle via `GET /v1/runs/{run_id}/replay-bundle`.
+### Trace ids and propagation
+1. **HTTP ingress**: a valid `traceparent` header ([W3C Trace Context Level 1](https://www.w3.org/TR/trace-context/)) is continued; otherwise a new trace starts. `tracestate` is passed through unchanged (at most 512 bytes). All-zero ids and version `ff` are invalid.
+2. **`X-Trace-Id` stays backward compatible**: a client-supplied `X-Trace-Id` is echoed unchanged (v0.8 behaviour) and recorded as the span attribute `rh.legacy_trace_id`; without one, `X-Trace-Id` is `trace_<32 hex>`, the W3C trace id with a prefix, so existing `trace_id` columns map directly to the exported trace. Every response also carries `traceparent`.
+3. **Kafka**: producers add `traceparent` (and `tracestate`) message headers; the consumer continues the producer span as its parent (same synchronous run flow). Without headers it recovers the trace id from `BaseEvent.trace_id` (`trace_<32 hex>`), else starts a new trace.
+4. **Background judge triage** starts its own root span and **links** back to the triggering span (asynchronous work is not a child, so the request timeline is not stretched).
+5. The trace id is stored on `execution_plans`, `execution_plan_steps`, `run_checkpoints`, `replay_attempts` and in the run request metadata. `GET /v1/runs/{run_id}/trace` and `GET /v1/runs/{run_id}/replay-bundle` return the audit timeline; Run Detail shows the trace id and, when `OTEL_TRACE_UI_URL_TEMPLATE` is set (for example `http://localhost:16686/trace/{trace_id}`), an *Open in Jaeger* link.
+
+Propagation works without any optional dependency (`app/core/trace_context.py`).
+
+### OpenTelemetry export (optional)
+- Install the extra (`pip install .[otel]` or `requirements-otel.txt`; OpenTelemetry Python `1.45.1`; the Docker image installs it with `INSTALL_OTEL=1`) and set `OTEL_ENABLED=true`. Without the extra, or with `OTEL_ENABLED=false`, every tracing call is a no-op.
+- Exporter: OTLP/HTTP only. Endpoint, service name and sampler come from the standard variables `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`), `OTEL_SERVICE_NAME` and `OTEL_TRACES_SAMPLER`.
+- Exported span ids are exactly the ids of the propagated trace context, so `traceparent` headers, database `trace_id` values and the exported trace always agree.
+- `app/core/tracing.py` is the only module that imports OpenTelemetry.
+
+### Spans
+HTTP server (middleware), `kafka publish` (PRODUCER) / `kafka process` (CONSUMER), `worker process_run`, `policy.decide`, `executor.execute` with one `tool {name}` child per tool and `sandbox.run` below it, `evaluation.evaluate`, `judge triage` with a GenAI child, and `retention.plan` / `retention.apply`. Database queries are not instrumented.
+
+### Attribute allowlist
+`set_attributes()` keeps only allow-listed keys: `rh.run_id`, `rh.tenant_id`, `rh.review_id`, `rh.task_type`, `rh.status`, `rh.verdict`, `rh.priority`, `rh.tool_name`, `rh.mcp_server_id`, `rh.legacy_trace_id`, `rh.attempt`, `rh.tool_count`, `rh.judge.*` (profile, status, fallback source), `rh.sandbox.*`, `rh.retention.*`, standard `http.*` / `url.path`, `messaging.*` and the GenAI subset below. Other keys are dropped and counted (`tracing_dropped_attributes_total`; shown on `/dashboard/observability` and `GET /v1/observability/tracing`). Strings are truncated to 256 characters. **Prompts, goals, diffs, test reports, judge input / output and keys are never attached**; a canary test asserts that a secret string sent in a prompt, diff and judge response appears in no span name, attribute or event.
+
+### GenAI semantic conventions (judge calls)
+Verified on 2026-11-11 against the **OpenTelemetry GenAI semantic conventions, Client Inference span** (status *Development*), now maintained in [`open-telemetry/semantic-conventions-genai`](https://github.com/open-telemetry/semantic-conventions-genai) (`docs/gen-ai/client-inference.md`, referencing Semantic Conventions `v1.45.0`; the former opentelemetry.io page only points there):
+
+| Item | Specification | RewardHacking |
+| :--- | :--- | :--- |
+| Span name | `{gen_ai.operation.name} {gen_ai.request.model}` | `chat {model}` |
+| Span kind | `CLIENT` | `CLIENT` |
+| `gen_ai.operation.name` | Required (`chat`) | `chat` |
+| `gen_ai.provider.name` | Required | profile provider (`openai_compatible` or `anthropic`) |
+| `gen_ai.request.model` / `gen_ai.response.model` | Conditionally required / recommended | set when known |
+| `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens` | Recommended | set from the provider usage block |
+| `gen_ai.response.finish_reasons` | Recommended | not set (adapters do not return it yet) |
+| `error.type` | Conditionally required on error | set by `Span.set_error()` |
+
+Known deviation: for an OpenAI-compatible endpoint the real provider (LM Studio, Ollama, a cloud API) is unknown, so `gen_ai.provider.name` is `openai_compatible` rather than a well-known value. The conventions are still in development; attribute names may need to follow upstream changes.
+
+### Exemplars
+When export is enabled, the HTTP request duration and worker histograms attach a `trace_id` exemplar. Exemplars appear only in the OpenMetrics format (`Accept: application/openmetrics-text` on `GET /v1/metrics`); the default text format is unchanged.
+
+### Jaeger (local)
+```bash
+docker compose --profile observability up -d
+```
+Set `OTEL_ENABLED=true` (and optionally `OTEL_TRACE_UI_URL_TEMPLATE=http://localhost:16686/trace/{trace_id}`) in `.env`, then `docker compose up -d --build api worker`. The `jaeger` service (`jaegertracing/jaeger:2.22.0`) receives OTLP/HTTP on `4318`; open `http://localhost:16686`. The api and worker appear as two services in the same trace.
+
+### Status endpoint
+`GET /v1/observability/tracing` returns `w3c_propagation`, `otel_enabled_setting`, `exporting`, `exporter_host` (host only, never the full endpoint or credentials), `sampler`, `service_name`, `trace_ui_url_template` and `dropped_attributes`.
 
 ---
 

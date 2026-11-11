@@ -1,7 +1,7 @@
 # Threat Modeling & Security Design
 
-> **Security Document Version**: `v1.5.7`  
-> **Previous Versions**: `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.1.0`
+> **Security Document Version**: `v1.6.0`
+> **Previous Versions**: `v1.5.12`, `v1.5.7`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.1.0`
 
 The security mission of **RewardHacking** is to mitigate the critical risks of autonomous AI agent **Reward Hacking (Specification Gaming)**, prompt injection, and unauthorized tool misuse. It establishes layered defense-in-depth perimeters ensuring high-risk behaviors are intercepted, reviewed, audited, and mathematically accountable.
 
@@ -119,6 +119,22 @@ Risk scores range deterministically from `0.0` to `1.0`:
 | Benchmark runs cause side effects | Runs call the pure evaluation engine only: no evaluation results, reviews, incidents, Kafka events or lease changes |
 | Malicious Inspect logs | JSON only (`.eval` zip archives rejected), size and sample-count limits, redaction, admin-only, dry run by default |
 
+## Runtime Foundations Threat Model (`v1.6.0`)
+
+| Threat | Control |
+| :--- | :--- |
+| Accidental mass deletion | Default `AUDIT_RETENTION_PURGE_MODE=plan`; deletion needs `apply` mode, a stored plan, the same `plan_digest`, `confirm: true` and an unexpired TTL. Unknown modes fail closed to `off`. The application never schedules purges itself |
+| Time-of-check / time-of-use (state changes between plan and apply) | Each run is re-checked inside its own transaction (Postgres `SELECT ... FOR UPDATE` on the run row); runs that gained an exclusion are skipped, not deleted |
+| Concurrent applies | Postgres advisory lock (`pg_try_advisory_lock`, fixed key); a second apply gets `409 retention_purge_in_progress` |
+| Losing evidence needed later | Fixed exclusion reasons: legal holds, open reviews, decided labels not yet exported to the benchmark, active benchmark references, honeypot measurements, high-severity incidents, unresolved DLQ, non-terminal runs, referenced checkpoints / replays |
+| Legal hold bypass | Holds are checked at plan and again at apply; only `admin` (any tenant) or `tenant_admin` (own tenant) can create one; release is admin-only, API-only and needs a reason; every change is a governance event |
+| FinOps ledger loss | Usage / cost events and budget violations are never deleted (report-only `FINOPS_LEDGER_RETENTION_DAYS`); purged runs keep their ledger and `run_id` |
+| Content leaking through purge records | Tombstones, receipts and governance events store ids, counts and sha256 digests only; the content digest is reproducible from the deleted rows. Tombstones reserve hash-chain columns but are not tamper-evident yet |
+| Dashboard forgery of destructive actions | No Dashboard apply or hold release until RBAC / CSRF (`v1.6.1`); the Dashboard forms (dry-run plan, create hold) require a same-origin `Origin` / `Referer` |
+| Purged run probing across tenants | `410 run_purged` tombstones are tenant-scoped like live runs (`403 tenant_mismatch` otherwise) |
+| Secrets in traces | Span attribute allowlist (unknown keys dropped and counted), strings truncated, no prompts, goals, diffs, test reports, judge input / output or keys; a canary test scans every exported span. `/v1/observability/tracing` shows the exporter host only |
+| Unsafe sandbox specs (`v1.6.1` readiness) | `validate_spec()` rejects shell strings, tag-only images at container isolation or above, docker socket / `/proc` / `/sys` / host paths, secret-named environment variables, missing or zero limits and unsupported networks; `network: none` by default. The `simulated` backend executes nothing and never produces `platform_verified`; the isolation policy is record-only |
+
 ## Judge Activation & Dashboard Profiles Threat Model (`v1.5.12`)
 
 | Threat | Control |
@@ -160,6 +176,6 @@ Risk scores range deterministically from `0.0` to `1.0`:
 
 ## Known Boundaries & Limitations
 
-1. **Sandbox Isolation**: Bounded Tool Executor currently records structured invocation transcripts and simulates mutations; production deployments executing arbitrary shell commands must attach external container or microVM isolation (e.g. gVisor, Firecracker).
+1. **Sandbox Isolation**: Bounded Tool Executor currently records structured invocation transcripts and simulates mutations through the `simulated` sandbox backend (`v1.6.0`; no isolation, nothing executed, Docker backend in `v1.6.1`); production deployments executing arbitrary shell commands must attach external container or microVM isolation (e.g. gVisor, Firecracker).
 2. **Evaluator Truth**: Evaluation findings are deterministic rule outputs over agent-reported evidence (`self_reported` until verified) and must not be treated as infallible proof of safety; see [`docs/evaluation.md`](evaluation.md) for known false positives and limits.
 3. **Secret Hygiene**: Guardrails do not replace external secret managers (HashiCorp Vault, AWS Secrets Manager). All credentials must be securely injected via environment configurations.

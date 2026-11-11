@@ -19,6 +19,7 @@ from app.models.evaluation_review import EvaluationReview, RunOutcome, TenantEva
 from app.models.finops import BudgetPolicy, BudgetViolation, CostEvent, PricingCatalog, UsageEvent  # noqa: F401
 from app.models.judge import JudgeAssessment, JudgeProfileConfig, JudgeProfileState, ReviewSamplingDecision  # noqa: F401
 from app.models.incident import Incident  # noqa: F401
+from app.models.retention import LegalHold, RetentionPurge, RetentionTombstone  # noqa: F401
 from app.models.operations import OperationsEvidence, ReleaseGateItem, ReleaseGateRun  # noqa: F401
 from app.models.tenant import Tenant, TenantApiKey  # noqa: F401
 from app.models.tool_execution import ToolExecution  # noqa: F401

@@ -855,7 +855,7 @@ def test_v158_version_anchors_and_ci_gate():
     from app.services.finops import FINOPS_CALCULATION_VERSION
 
     # Exact anchors are pinned by the current release test (test_v159); here only the series is checked.
-    assert fastapi_app.version.startswith("1.5.")
-    assert FINOPS_CALCULATION_VERSION.startswith("v1.5.")
-    assert 'version = "1.5.' in Path("pyproject.toml").read_text(encoding="utf-8")
+    assert fastapi_app.version.startswith("1.")
+    assert FINOPS_CALCULATION_VERSION.startswith("v1.")
+    assert 'version = "1.' in Path("pyproject.toml").read_text(encoding="utf-8")
     assert "-W error::DeprecationWarning" in Path(".github/workflows/ci.yml").read_text(encoding="utf-8")

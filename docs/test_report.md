@@ -1,5 +1,38 @@
 # Test Execution & Verification Report
 
+## 2026-11-11 - v1.6.0 Runtime Foundations Verification
+
+- **Version**: `v1.6.0` (branch `v1.6.0`, Alembic head `202611120002`, OpenAPI `1.6.0`, `evaluator_version` unchanged at `v1.5.9`)
+- **Scope of Changes**:
+  1. **Tracing**: W3C Trace Context (`app/core/trace_context.py`) on HTTP and Kafka, backward-compatible `X-Trace-Id`, optional OpenTelemetry export (`app/core/tracing.py`, OTel Python `1.45.1`, OTLP/HTTP), attribute allowlist with dropped-attribute counter, GenAI judge spans, background span links, OpenMetrics exemplars, Jaeger compose profile (`jaegertracing/jaeger:2.22.0`), `GET /v1/observability/tracing`, Tracing panel and Run Detail trace link.
+  2. **Retention & legal holds** (`app/services/retention.py`, migration `202611120002`): plan → apply with digest / confirm / TTL, ten fixed exclusion reasons, per-run re-check, hash-only tombstones and receipts, legal holds, report-only FinOps ledger, CLI `python -m app.jobs.retention`, `/v1/retention/*`, `/v1/legal-holds*`, `410 run_purged` on run sub-resources, `/dashboard/retention` (18th primary view; no apply / release), Run Detail purge notice (200).
+  3. **Sandbox spec** (`app/services/sandbox/`): `ExecutionSpec` / `validate_spec`, `simulated` backend, record-only isolation policy, conformance suite, `sandbox_execution` in tool transcripts, `GET /v1/sandbox/status`, `sandbox_backend_health` check.
+  4. **Modularization**: `app/services/finops.py` (4157 lines) → package `app/services/finops/` (13 submodules + facade, 4677 lines including module headers; largest `ledger.py` 603); `app/api/routes.py` 2624 → 1650 lines (FinOps, operations, retention, sandbox routers); `app/ui/routes.py` 1904 → 1829 lines (operations / observability and retention UI routers); `import-linter` 4 contracts.
+  5. **Operations**: `retention_policy` replaces `audit_retention_config`; new `sandbox_backend_health`. Release-gate anchor 4 moved to `app/ui/routers/operations.py`.
+- **UI / Dashboard Verification Endpoints**: `/dashboard/retention`, `/dashboard/runs/39b67cc8-da2c-41c1-b51d-800ceeb5caff`, `/dashboard/observability#tracing`, `/dashboard/operations`.
+
+### Stage 2 Release Gate (`python scripts/release_gate.py`, final code at `779d513` + P7 working tree)
+- `scripts/bump_version.py --check` → 10 anchors at `1.6.0`; `python scripts/security_check.py` → OK; `ruff check app tests scripts` → `All checks passed!`; `lint-imports` → **4 kept, 0 broken**; `git diff --check` → clean.
+- `pytest -q -W error::DeprecationWarning` → **678 passed** (292.70 s) and **678 passed** (280.24 s), two consecutive gate runs on the final code. v1.6.0 files: modularization, tracing, otel_export, retention, sandbox, runtime_api (20), dashboard (12), agent_tooling, migration_ids.
+- First gate run: `alembic_upgrade` failed with `duplicate key value violates unique constraint "pg_type_typname_nsp_index"` while creating `alembic_version`. Cause: the Postgres container started with a **new, empty anonymous volume** (the stack was down at session start; both anonymous volumes were created at 2026-11-11 03:42 UTC by this run, so earlier local data was no longer attached), and the api container's own startup `alembic upgrade head` ran concurrently with the gate's step. The second run passed every step.
+- `docker compose up -d --build` → `api`, `worker` running; `kafka`, `postgres`, `redis` healthy. `alembic upgrade head` / `alembic current` → `202611120002 (head)`.
+- `python scripts/browser_manual_test.py` (gate, headed) → exit 0; repeated headless for the IDs below → exit 0: Scenarios 1–11 passed, **18/18** navigation tabs HTTP 200, **0** console errors / warnings, **0** page errors, **0** failed HTTP requests (≥ 400), **0** `0E-8`.
+- **Scenario 11 live IDs**: dry-run report `purge_24d753e250b346c1b7e0116db368b94e` (0 candidates on the fresh database; mode `plan`, no apply form), legal hold `lh_d9cd445e9d1b439ebef0e3f5695049df` (tenant `e2e-hold-0aafa632`), Run Detail of `39b67cc8-da2c-41c1-b51d-800ceeb5caff` with trace id and `sandbox_execution` (`simulated / simulated / … / n/a`). `GET /v1/sandbox/status` → `pass`, `executes_tools: false`. No plan was applied on the live database (0 tombstones afterwards).
+
+### Retention apply on real Postgres (throwaway database)
+- A separate database `rh_retention_qa` was created inside the compose Postgres, migrated to `202611120002`, used by a script inside the api container (`POSTGRES_DSN` pointing at it; the script refuses any other database) and dropped afterwards. The live `app` database was not touched.
+- Seed: three runs 200 days old (`run_qa_1`, `run_qa_2`, `run_qa_held`), each with a tool execution, a usage event and a cost event. Plan → 3 candidates (digest `213e7d3c7ba83b59…`); a run-scoped legal hold on `run_qa_held` was created **after** the plan.
+- **Advisory lock**: with `pg_try_advisory_lock` held on another connection, apply → `409 retention_purge_in_progress`, nothing deleted. **Concurrent applies** of the same plan (`asyncio.gather`, two sessions): one `409 retention_purge_in_progress`, one `applied` (2 runs, receipt `a33e29b37ce15cc1…`).
+- **`SELECT ... FOR UPDATE`**: captured on `agent_runs` during apply (SQLAlchemy cursor hook), together with `pg_try_advisory_lock` / `pg_advisory_unlock`.
+- **Re-check at apply**: `run_qa_held` → `skipped_at_apply` with `legal_hold`, still present; tombstones for `run_qa_1`, `run_qa_2`; tool executions 3 → 1; FinOps ledger rows 6 → 6.
+
+### GenAI semantic conventions check
+- Verified 2026-11-11 against the OpenTelemetry GenAI *Client Inference* span (Development), now in `open-telemetry/semantic-conventions-genai` (`docs/gen-ai/client-inference.md`, referencing Semantic Conventions `v1.45.0`). Span name `chat {model}`, kind `CLIENT` and attribute names `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens` match; `gen_ai.response.finish_reasons` is not set; `gen_ai.provider.name=openai_compatible` is a documented deviation (`docs/observability.md`).
+
+### Not verified for real
+- **Jaeger**: OTel export is covered by in-memory exporter tests only; the `observability` compose profile was not started (image not present locally) and no trace was viewed in the Jaeger UI.
+- **Sandbox**: only the `simulated` backend exists; nothing is executed and no isolation is provided (Docker backend in `v1.6.1`).
+
 ## 2026-11-09 - v1.5.12 Judge Activation & Provider Adapters Verification
 
 - **Version**: `v1.5.12` (branch `v1.5.12`, Alembic head `202611120001`, OpenAPI `1.5.12`, `evaluator_version` unchanged at `v1.5.9:aaa10ffa`)

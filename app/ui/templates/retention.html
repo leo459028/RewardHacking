@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}Retention | 資料保留{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Retention</h1>
+    <div class="title-note">資料保留與 Legal Hold</div>
+    <div class="muted">Plan → apply purges, hash-only tombstones, legal holds and the FinOps ledger report (v1.6.0).</div>
+  </div>
+</div>
+
+{% if message %}<div class="success" role="status">{{ message }}</div>{% endif %}
+{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+
+<section class="grid stats" id="retention-policy">
+  <div class="stat"><div class="stat-label">Retention Days</div><div class="stat-value">{{ policy.retention_days }}</div></div>
+  <div class="stat"><div class="stat-label">Purge Mode</div><div class="stat-value"><span class="status {{ 'failed' if policy.deletes_enabled else 'completed' }}">{{ policy.purge_mode }}</span></div></div>
+  <div class="stat"><div class="stat-label">Batch Size</div><div class="stat-value">{{ policy.batch_size }}</div></div>
+  <div class="stat"><div class="stat-label">Plan TTL</div><div class="stat-value">{{ policy.plan_ttl_minutes }} min</div></div>
+  <div class="stat"><div class="stat-label">FinOps Ledger Days</div><div class="stat-value">{{ policy.finops_ledger_retention_days }}</div></div>
+  <div class="stat"><div class="stat-label">Policy</div><div class="stat-value">{{ policy.policy_version }}</div></div>
+</section>
+{% if not policy.deletes_enabled %}
+<div class="success" role="status" id="no-delete-banner">This environment does not delete data (AUDIT_RETENTION_PURGE_MODE={{ policy.purge_mode }}). | 本環境不會刪除資料。</div>
+{% endif %}
+
+<section class="panel" id="retention-plan">
+  <h2>Dry-run Report <span class="heading-note">清理計畫（只讀，不會刪除）</span></h2>
+  <form method="post" action="/dashboard/retention/plans">
+    <button class="button" type="submit" id="create-plan">Generate dry-run report | 產生 dry-run 報告</button>
+  </form>
+  {% if plan %}
+  <table>
+    <tbody>
+      <tr><th>Purge ID</th><td id="plan-purge-id">{{ plan.purge_id }}</td></tr>
+      <tr><th>Status</th><td><span class="status {{ plan.status }}">{{ plan.status }}</span></td></tr>
+      <tr><th>Cutoff</th><td>{{ plan.cutoff_at }}</td></tr>
+      <tr><th>Expires</th><td>{{ plan.expires_at }}</td></tr>
+      <tr><th>Candidates</th><td id="plan-candidates">{{ plan.candidate_run_ids|length }}</td></tr>
+      <tr><th>Scan</th><td>scanned {{ plan.scan_summary.get("scanned_runs", 0) }}, excluded {{ plan.scan_summary.get("excluded_runs", 0) }}, recent activity {{ plan.scan_summary.get("recent_activity_runs", 0) }}{% if plan.scan_summary.get("truncated") %}, truncated{% endif %}</td></tr>
+      <tr><th>Plan Digest</th><td><code id="plan-digest">{{ plan.plan_digest }}</code></td></tr>
+    </tbody>
+  </table>
+  <h3>Exclusion Reasons <span class="heading-note">排除理由</span></h3>
+  <table>
+    <thead><tr><th>Reason</th><th>Runs</th><th>Examples</th></tr></thead>
+    <tbody>
+    {% for reason, data in plan.excluded_summary.items() %}
+      <tr>
+        <td>{{ reason }}</td>
+        <td>{{ data.get("count", 0) }}</td>
+        <td>
+          <details><summary>show</summary>
+          {% for run_id in data.get("examples", []) %}<a href="/dashboard/runs/{{ run_id }}">{{ run_id }}</a> {% endfor %}
+          </details>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="3" class="muted">No excluded runs.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <h3>Estimated Deletions <span class="heading-note">每張表預計刪除筆數</span></h3>
+  <table>
+    <thead><tr><th>Table</th><th>Rows</th></tr></thead>
+    <tbody>
+    {% for table, count in plan.estimated_counts.items() %}
+      <tr><td>{{ table }}</td><td>{{ count }}</td></tr>
+    {% else %}
+      <tr><td colspan="2" class="muted">Nothing to delete.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <h3>Apply <span class="heading-note">執行清理只能透過 API（需要 admin）</span></h3>
+  <p class="muted" id="apply-api-only">Applying a plan is API-only in this release (Dashboard RBAC / CSRF arrive in v1.6.1) and needs <code>AUDIT_RETENTION_PURGE_MODE=apply</code>.</p>
+  <pre>curl -X POST -H "X-API-Key: $ADMIN_KEY" -H "Content-Type: application/json" \
+  -d '{"plan_digest": "{{ plan.plan_digest }}", "confirm": true}' \
+  http://localhost:8000/v1/retention/plans/{{ plan.purge_id }}/apply</pre>
+  {% else %}
+  <p class="muted">No dry-run report yet.</p>
+  {% endif %}
+</section>
+
+<section class="panel" id="legal-holds">
+  <h2>Legal Holds <span class="heading-note">法律保全（生效中的 hold 會阻止清理）</span></h2>
+  <p>
+    <a class="button {{ '' if hold_tab == 'active' else 'secondary' }}" href="/dashboard/retention?holds=active">Active</a>
+    <a class="button {{ '' if hold_tab == 'released' else 'secondary' }}" href="/dashboard/retention?holds=released">Released</a>
+  </p>
+  <table>
+    <thead><tr><th>Hold</th><th>Scope</th><th>Tenant</th><th>Reason</th><th>Status</th><th>Created</th><th>Release</th></tr></thead>
+    <tbody>
+    {% for hold in holds %}
+      <tr>
+        <td>{{ hold.hold_id }}</td>
+        <td>{{ hold.scope_type }}: {% if hold.scope_type == "run" %}<a href="/dashboard/runs/{{ hold.scope_id }}">{{ hold.scope_id }}</a>{% else %}{{ hold.scope_id }}{% endif %}</td>
+        <td>{{ hold.tenant_id }}</td>
+        <td>{{ hold.reason }}</td>
+        <td><span class="status {{ 'awaiting_approval' if hold.status == 'active' else 'completed' }}">{{ hold.status }}</span></td>
+        <td>{{ hold.created_at }} · {{ hold.created_by }}</td>
+        <td class="muted">{% if hold.status == "active" %}Use the API (admin required) | 請用 API 解除（需要 admin）{% else %}{{ hold.released_at }} · {{ hold.release_reason }}{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="muted">No {{ hold_tab }} legal holds.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <h3>Create Legal Hold <span class="heading-note">建立 legal hold</span></h3>
+  <form method="post" action="/dashboard/retention/holds" class="form-grid" id="hold-form">
+    <label>Scope
+      <select name="scope_type">
+        <option value="tenant">tenant</option>
+        <option value="run">run</option>
+      </select>
+    </label>
+    <label>Scope ID
+      <input name="scope_id" required maxlength="128">
+    </label>
+    <label>Reason
+      <input name="reason" required maxlength="2000">
+    </label>
+    <label>&nbsp;
+      <button class="button" type="submit">Create Hold</button>
+    </label>
+  </form>
+</section>
+
+<section class="panel" id="purge-receipts">
+  <h2>Purge Plans &amp; Receipts <span class="heading-note">清理計畫與收據</span></h2>
+  <table>
+    <thead><tr><th>Purge</th><th>Status</th><th>Created</th><th>Candidates</th><th>Applied</th><th>Skipped</th><th>Failures</th><th>Receipt Digest</th></tr></thead>
+    <tbody>
+    {% for item in purges %}
+      <tr>
+        <td><a href="/dashboard/retention?purge_id={{ item.purge_id }}">{{ item.purge_id }}</a></td>
+        <td><span class="status {{ item.status }}">{{ item.status }}</span></td>
+        <td>{{ item.created_at }} · {{ item.created_by }}</td>
+        <td>{{ item.candidate_run_ids|length }}</td>
+        <td>{{ item.applied_counts.get("runs", 0) }}</td>
+        <td>{{ item.skipped_at_apply|length }}</td>
+        <td>{{ item.failures|length }}</td>
+        <td><code>{{ (item.receipt_digest or "")[:16] }}</code></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="muted">No purge plans.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel" id="tombstones">
+  <h2>Tombstones <span class="heading-note">已清理 run 的雜湊紀錄（不含內容）</span></h2>
+  <table>
+    <thead><tr><th>Run</th><th>Tenant</th><th>Final Status</th><th>Purged</th><th>Records</th><th>Content Digest</th></tr></thead>
+    <tbody>
+    {% for item in tombstones %}
+      <tr>
+        <td><a href="/dashboard/runs/{{ item.run_id }}">{{ item.run_id }}</a></td>
+        <td>{{ item.tenant_id }}</td>
+        <td>{{ item.final_status }}</td>
+        <td>{{ item.purged_at }}</td>
+        <td>{{ item.record_counts.values()|sum }}</td>
+        <td><code>{{ item.content_digest[:16] }}</code></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">No purged runs.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel" id="ledger-report">
+  <h2>FinOps Ledger Report <span class="heading-note">只報告，永不自動刪除</span></h2>
+  <p class="muted">Report only, never deleted automatically. Ledger retention {{ ledger.retention_days }} days (cutoff {{ ledger.cutoff }}).</p>
+  <table>
+    <thead><tr><th>Table</th><th>Past Retention</th><th>Oldest</th></tr></thead>
+    <tbody>
+    {% for table, data in ledger.tables.items() %}
+      <tr><td>{{ table }}</td><td>{{ data.expired_count }}</td><td>{{ data.oldest_expired_at or "-" }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

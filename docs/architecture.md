@@ -9,7 +9,8 @@ This document details the system topology, component responsibilities, and reque
 
 ## Architectural Evolution
 
-- **`v1.5.9` (Current)**: Labeled Benchmark & Detector Measurement. Measurement layer over the evaluation engine (benchmark corpus and runs, shadow `special_casing`, honeypot probes, cheat rates) and CI attestation verification.
+- **`v1.6.0` (Current)**: Runtime Foundations. W3C Trace Context and optional OpenTelemetry export (`app/core/trace_context.py`, `app/core/tracing.py`), audit retention and legal holds (`app/services/retention.py`, CLI `app/jobs/retention.py`), the sandbox layer (`app/services/sandbox/`: execution spec, `simulated` backend, isolation policy, conformance suite), the FinOps package and per-domain routers, with `import-linter` contracts in `pyproject.toml`.
+- **`v1.5.9` (Historical)**: Labeled Benchmark & Detector Measurement. Measurement layer over the evaluation engine (benchmark corpus and runs, shadow `special_casing`, honeypot probes, cheat rates) and CI attestation verification.
 - **`v1.5.8` (Historical)**: Evidence-based evaluation engine, outcome ingestion and post-execution review queue.
 - **`v1.5.3` – `v1.5.7` (Historical)**: Active FinOps governance, settled ledger, burn-rate forecasting and token broker, Safe MCP Gateway.
 - **`v1.5.2` (Historical)**: Open-Source Baseline. Unified documentation in English, standardized community templates, automated secret checks, and operations gate synchronization.
@@ -104,10 +105,11 @@ flowchart LR
 - Background worker consumes queued runs, reconstructs the execution context, re-verifies policies, and executes bounded tools.
 - Implements exponential backoff retries and Dead Letter Queue (DLQ) routing for exhausted attempts.
 
-### 6. Bounded Tool Executor & Circuit Breakers (`app/services/tool_executor.py`)
+### 6. Bounded Tool Executor, Sandbox Layer & Circuit Breakers (`app/services/executor.py`, `app/services/sandbox/`)
 - Enforces strict constraints on tool invocation count (`max_tool_calls`), timeout limits, and permitted tool lists.
 - Tracks tool failure frequencies in Redis; trips circuit breakers if consecutive failures exceed thresholds.
 - Simulates tool execution safely during dry-run and test modes without invoking external side-effects.
+- `v1.6.0`: builds an `ExecutionSpec` for every allowed tool and calls the configured `SandboxBackend` (`simulated` only; nothing executed); the transcript records `sandbox_execution` with backend, isolation level, required isolation (record-only policy) and `spec_digest`. The sandbox package may not import the API, Dashboard or worker layers (import-linter contract).
 
 ### 7. Evidence-Based Evaluation Engine (`app/services/evaluation/`, `v1.5.8`)
 - `evidence.py` bounds, parses (unified diff, JUnit XML) and redacts agent outcome evidence; `claims.py` extracts verification claims from the final message.
@@ -129,10 +131,13 @@ COMMIT ─► judge triage (deterministic or openai_compatible, fallback) ─►
 review queue order=triage: (min(rule, triage), rule, -triage_score) ─► rule P0 first
 ```
 
-### 8. Agent FinOps Core & Cost Accounting (`app/services/finops.py`)
+### 8. Agent FinOps Core & Cost Accounting (`app/services/finops/`, package since `v1.6.0`)
 - Maintains an official model pricing catalog with tiered token pricing, tool fees, and worker runtime rates.
 - Ingests deterministic `usage_events` and calculates immutable `cost_events` per run, workflow, and tenant.
 - Evaluates run-level budget policies and generates budget violation alerts.
+
+### 8a. Module Contracts (`v1.6.0`)
+`lint-imports` enforces four contracts: post-execution review modules (`review_queue`, `outcomes`, `evaluation`, `judge_triage`, `review_sampling`) never import Kafka publishing, workers or token leases; `app.services` never imports `app.api` / `app.ui`; the sandbox package is independent of API, Dashboard and workers; FinOps submodules are layered without cycles.
 
 ### 9. Operational Dashboard (`app/ui/`)
 - Server-rendered HTML dashboard providing operational visibility:

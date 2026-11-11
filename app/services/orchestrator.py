@@ -11,6 +11,7 @@ from app.schemas.events import ExecutionEvent, EvaluationEvent, IncidentEvent, P
 from app.schemas.policy import PolicyDecision
 from app.observability.metrics import PROMPT_GUARD_FLAGS_TOTAL
 from app.services.executor import BoundedToolExecutor, ToolExecutionResult
+from app.core import tracing
 from app.services.evaluator import Evaluator
 from app.services.policy_engine import PolicyEngine
 from app.services.prompt_sanitizer import PromptAnalysis, analyze_prompt
@@ -189,12 +190,18 @@ class AgentOrchestrator:
                 ),
             )
 
-        if allowed_tool_map is not None:
-            execution: ToolExecutionResult = self.executor.execute(cleaned_request, allowed_tool_map=allowed_tool_map)
-        else:
-            execution = self.executor.execute(cleaned_request)
-        evaluation = self.evaluator.evaluate(cleaned_request, execution.output, policy.flags)
-        evaluation.run_id = run_id
+        with tracing.start_span("executor.execute", attributes={"rh.run_id": run_id, "rh.task_type": cleaned_request.task_type}) as span:
+            if allowed_tool_map is not None:
+                execution: ToolExecutionResult = self.executor.execute(
+                    cleaned_request, allowed_tool_map=allowed_tool_map, risk_score=policy.risk_score, run_id=run_id
+                )
+            else:
+                execution = self.executor.execute(cleaned_request, risk_score=policy.risk_score, run_id=run_id)
+            span.set_attributes({"rh.tool_count": len(execution.tool_transcript)})
+        with tracing.start_span("evaluation.evaluate", attributes={"rh.run_id": run_id}) as span:
+            evaluation = self.evaluator.evaluate(cleaned_request, execution.output, policy.flags)
+            evaluation.run_id = run_id
+            span.set_attributes({"rh.verdict": evaluation.verdict})
 
         # v1.5.8: post-execution review is NOT pre-execution approval (never re-dispatched).
         status = "completed" if evaluation.verdict == "pass" else "review_required"

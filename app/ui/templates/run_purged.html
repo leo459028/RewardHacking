@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Run Purged | 已清理的執行{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Run {{ tombstone.run_id[:8] }}</h1>
+    <div class="title-note">此 run 已依保留政策清理</div>
+    <div class="muted">{{ tombstone.run_id }}</div>
+  </div>
+  <a class="button secondary" href="/dashboard/runs">Back to Runs</a>
+</div>
+
+<div class="success" role="status" id="run-purged-notice">
+  This run was purged on {{ tombstone.purged_at }} under the audit retention policy ({{ tombstone.policy_version }}). Only a hash-only tombstone remains. |
+  此 run 已於 {{ tombstone.purged_at }} 依保留政策清理，只保留不含內容的 tombstone。
+</div>
+
+<section class="panel" id="tombstone-summary">
+  <h2>Tombstone <span class="heading-note">清理紀錄摘要</span></h2>
+  <table>
+    <tbody>
+      <tr><th>Tombstone</th><td>{{ tombstone.tombstone_id }}</td></tr>
+      <tr><th>Tenant</th><td>{{ tombstone.tenant_id }}</td></tr>
+      <tr><th>Purge</th><td><a href="/dashboard/retention?purge_id={{ tombstone.purge_id }}">{{ tombstone.purge_id }}</a></td></tr>
+      <tr><th>Run Created</th><td>{{ tombstone.run_created_at }}</td></tr>
+      <tr><th>Final Status</th><td>{{ tombstone.final_status }}</td></tr>
+      <tr><th>Content Digest</th><td><code>{{ tombstone.content_digest }}</code></td></tr>
+    </tbody>
+  </table>
+  <h3>Deleted Records <span class="heading-note">各表刪除筆數</span></h3>
+  <table>
+    <thead><tr><th>Table</th><th>Rows</th></tr></thead>
+    <tbody>
+    {% for table, count in tombstone.record_counts.items() %}
+      <tr><td>{{ table }}</td><td>{{ count }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">The FinOps ledger (usage / cost events, budget violations) of this run is kept: <a href="/v1/cost/runs/{{ tombstone.run_id }}">/v1/cost/runs/{{ tombstone.run_id }}</a>.</p>
+</section>
+{% endblock %}

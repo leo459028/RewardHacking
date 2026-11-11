@@ -73,6 +73,8 @@ services:
       POSTGRES_DSN: postgresql+asyncpg://app:app@postgres:5432/app
       REDIS_URL: redis://redis:6379/0
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # v1.6.0: used only when OTEL_ENABLED=true (start Jaeger with --profile observability)
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
     # v1.5.11: judge profiles are read from ./config without a rebuild; host.docker.internal reaches
     # local LLM servers (LM Studio / Ollama) on the Docker host on Linux as well as Docker Desktop.
     volumes:
@@ -99,6 +101,8 @@ services:
       POSTGRES_DSN: postgresql+asyncpg://app:app@postgres:5432/app
       REDIS_URL: redis://redis:6379/0
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # v1.6.0: used only when OTEL_ENABLED=true (start Jaeger with --profile observability)
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
     # v1.5.11: judge profiles are read from ./config without a rebuild; host.docker.internal reaches
     # local LLM servers (LM Studio / Ollama) on the Docker host on Linux as well as Docker Desktop.
     volumes:
@@ -106,3 +110,12 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: ["sh", "-c", "python -m app.workers.consumer"]
+
+  # v1.6.0 D8: optional trace backend. `docker compose --profile observability up -d`, set OTEL_ENABLED=true in .env,
+  # rebuild api / worker, then open http://localhost:16686. Pinned to a release at least two weeks old.
+  jaeger:
+    image: jaegertracing/jaeger:2.22.0
+    profiles: ["observability"]
+    ports:
+      - "16686:16686"
+      - "4318:4318"

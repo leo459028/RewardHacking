@@ -36,6 +36,12 @@ Redis serves as the high-throughput, low-latency ephemeral datastore in **Reward
 
 ---
 
+### Keys Removed by a Retention Purge (`v1.6.0`)
+
+Applying a retention plan deletes, best effort, the purged run's `run:{run_id}:state`, `run:{run_id}:approval` and `idempotency:run:{run_id}:*` keys. Token lease keys are never touched (lease state belongs to the FinOps broker). These keys expire within 24 hours anyway, so runs older than the retention period normally have none.
+
+---
+
 ## Circuit Breaker Semantics
 
 The circuit breaker halts unsupervised invocations of a malfunctioning or abused tool:
