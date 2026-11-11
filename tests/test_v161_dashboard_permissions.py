@@ -57,7 +57,8 @@ def _guarded_routes() -> list[tuple[str, str, str]]:
 
 
 ROUTES = _guarded_routes()
-POST_ROUTES = [row for row in ROUTES if row[0] == "POST" and row[2] not in {security.PUBLIC, "account.self"}]
+# D21: the auditor keeps sign-out, its own account and read-only POSTs (P5: audit chain verification).
+POST_ROUTES = [row for row in ROUTES if row[0] == "POST" and row[2] != security.PUBLIC and row[2] not in permissions.READ_PERMISSIONS]
 
 
 def _concrete(path: str) -> str:

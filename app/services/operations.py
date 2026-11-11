@@ -18,7 +18,7 @@ from app.models.incident import Incident
 from app.models.operations import OperationsEvidence, ReleaseGateItem, ReleaseGateRun
 from app.models.tenant import TenantApiKey
 from app.models.worker_attempt import WorkerAttempt
-from app.services import retention
+from app.services import audit_chain, retention
 from app.services.finops import ensure_default_pricing
 from app.services.sandbox import health as sandbox_health
 
@@ -437,6 +437,55 @@ async def _dashboard_auth_mode_check(session: AsyncSession, *, settings: Setting
     )
 
 
+AUDIT_CHAIN_TAIL_ENTRIES = 1000
+AUDIT_CHAIN_CHECKPOINT_MAX_AGE_HOURS = 48
+
+
+async def _audit_chain_integrity_check(session: AsyncSession, *, settings: Settings) -> OperationsCheck:
+    """v1.6.1 D33 / Q7: the chain must be on, recent entries must verify, and checkpoints must be signed and recent.
+
+    Outside ``APP_ENV=prod`` a missing signing key, a disabled chain or a stale checkpoint is an advisory warning (it
+    does not change the overall gate); in production it fails. A tail that does not verify fails everywhere."""
+    prod = (settings.app_env or "").strip().lower() == "prod"
+    current = await audit_chain.head(session)
+    head_seq = current.seq if current is not None else 0
+    tail = await audit_chain.verify(
+        session, settings, from_seq=max(1, head_seq - AUDIT_CHAIN_TAIL_ENTRIES + 1), max_entries=AUDIT_CHAIN_TAIL_ENTRIES
+    ) if head_seq else {"status": audit_chain.OK, "issues": {}, "checked_entries": 0}
+    status_info = await audit_chain.status(session, settings)
+    latest = await audit_chain.latest_checkpoint(session)
+    problems: list[str] = []
+    if not settings.audit_chain_enabled:
+        problems.append("chain_disabled")
+    if not status_info["signing"]["configured"]:
+        problems.append(status_info["signing"]["error"] or "no_signing_key")
+    if head_seq and latest is None:
+        problems.append("no_checkpoint")
+    elif latest is not None:
+        created = latest.created_at if latest.created_at.tzinfo else latest.created_at.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) - created > timedelta(hours=AUDIT_CHAIN_CHECKPOINT_MAX_AGE_HOURS):
+            problems.append("checkpoint_stale")
+        if latest.status != "signed":
+            problems.append("checkpoint_unsigned")
+    if tail["status"] != audit_chain.OK:
+        status, advisory = "fail", False
+        detail = f"The last {tail['checked_entries']} audit chain entries do not verify: {tail['issues']}. Run python -m app.jobs.audit_chain --verify."
+    elif problems:
+        status, advisory = ("fail", False) if prod else ("warn", True)
+        detail = f"Audit chain head seq {head_seq}; needs attention: {', '.join(problems)}."
+    else:
+        status, advisory = "pass", False
+        detail = f"Audit chain head seq {head_seq}; the last {tail['checked_entries']} entries verify; latest checkpoint is signed."
+    return OperationsCheck(
+        check_key="audit_chain_integrity",
+        status=status,
+        title="Audit chain integrity",
+        detail=detail,
+        metadata={"head_seq": head_seq, "problems": problems, "tail_issues": tail["issues"], "advisory": advisory,
+                  "signing_key_id": status_info["signing"]["key_id"], "app_env": settings.app_env},
+    )
+
+
 def _sandbox_backend_health_check(settings: Settings) -> OperationsCheck:
     """v1.6.0 D24: the configured backend must load and pass the conformance smoke cases."""
     report = sandbox_health.status_report(settings)
@@ -589,6 +638,7 @@ async def compute_operations_readiness(
         await _retention_policy_check(session, settings=settings),
         _sandbox_backend_health_check(settings),
         await _dashboard_auth_mode_check(session, settings=settings),
+        await _audit_chain_integrity_check(session, settings=settings),
         OperationsCheck(
             check_key="stale_queued_runs",
             status="fail" if stale_queued else "pass",

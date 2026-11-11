@@ -23,6 +23,7 @@ from app.models.governance_event import GovernanceEvent
 from app.models.incident import Incident
 from app.observability.metrics import INCIDENTS_TOTAL
 from app.schemas.evaluation import ReviewDecisionRequest
+from app.services import audit_chain
 from app.services.cheat_rates import agent_identity
 from app.services.evaluation.evidence import DEFAULT_PROTECTED_PATHS, effective_protected_paths, normalize_path
 from app.services.evaluation.taxonomy import SEVERITY_RANK, higher_priority
@@ -231,6 +232,7 @@ async def decide_review(
     review.reason = decision.reason
     review.decided_at = now
     review.status = "needs_info" if decision.label == "needs_info" else "closed"
+    audit_chain.track(session, audit_chain.REVIEW_DECISION, review)  # v1.6.1 D30: chained in this transaction
 
     run = await session.scalar(select(AgentRun).where(AgentRun.run_id == review.run_id))
     if run is not None:

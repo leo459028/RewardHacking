@@ -2,6 +2,9 @@
 
 A dependency-light leaf module, so evaluation and judge code can write audit events without importing
 ``audit_log`` (which reaches the FinOps lease code). ``audit_log.persist_governance_event`` re-exports it.
+
+v1.6.1 P5: importing this module imports ``app.services.audit_chain``, whose session hooks append an audit chain
+entry for every new ``GovernanceEvent`` in the same transaction, just before commit (plan D31).
 """
 
 from __future__ import annotations
@@ -11,6 +14,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.governance_event import GovernanceEvent
+from app.services import audit_chain  # noqa: F401  (registers the same-transaction chain hooks)
 
 
 def add_governance_event(
@@ -39,6 +43,7 @@ def add_governance_event(
         used=used,
         remaining=remaining,
         details=details or {},
+        created_at=audit_chain.utcnow(),
     )
     session.add(event)
     return event

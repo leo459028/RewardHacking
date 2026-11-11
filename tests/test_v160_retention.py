@@ -455,7 +455,8 @@ def test_v160_tombstone_digest_is_recomputable_and_hash_chain_columns_reserved(s
             tombstone = await retention.tombstone_for(session, "run_a")
         assert tombstone.content_digest == retention.content_digest(entries)
         assert len(entries) == sum(tombstone.record_counts.values())
-        assert tombstone.chain_version == "" and tombstone.prev_hash is None and tombstone.entry_hash is None
+        # v1.6.1 P5 (feature eight): the audit chain fills the reserved columns in the purge transaction
+        assert tombstone.chain_version == "rh-chain/1" and len(tombstone.prev_hash) == 64 and len(tombstone.entry_hash) == 64
         assert tombstone.tombstone_id.startswith("tomb_") and tombstone.policy_snapshot["retention_days"] == 90
         assert result.receipt_digest == retention.receipt_digest([("run_a", tombstone.content_digest)])
 

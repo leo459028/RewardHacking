@@ -55,6 +55,11 @@ Application configuration is loaded from environment variables and local `.env` 
 | `AUDIT_RETENTION_PURGE_BATCH_SIZE` | `500` | Maximum candidate runs per plan |
 | `AUDIT_RETENTION_PLAN_TTL_MINUTES` | `60` | A plan must be applied within this many minutes |
 | `FINOPS_LEDGER_RETENTION_DAYS` | `2555` | Age reported by `GET /v1/retention/finops-ledger-report`; the ledger is never deleted |
+| `AUDIT_CHAIN_ENABLED` | `true` | `v1.6.1`: append every governance event, review / approval decision, tombstone and checkpoint to the tamper-evident `audit_chain_entries` ledger in the same transaction. When `false` nothing is chained and verification later reports those rows as `unchained_record` |
+| `AUDIT_CHAIN_SIGNING_KEY_FILE` | *(empty)* | Ed25519 private key (unencrypted PEM file) used to sign checkpoints. Keep it apart from the database; empty = checkpoints are `unsigned` (operations check warns, fails in `APP_ENV=prod`) |
+| `AUDIT_CHAIN_SIGNING_KEY` | *(empty)* | The same key as a PEM string (secret); used only when `AUDIT_CHAIN_SIGNING_KEY_FILE` is empty |
+| `AUDIT_CHAIN_PUBLIC_KEYS_FILE` | *(empty)* | PEM file with the public keys accepted when verifying (keep old keys after a rotation); the current signing key is always accepted |
+| `AUDIT_CHAIN_VERIFY_MAX_ENTRIES` | `5000` | Entries checked per online verification call (API / Dashboard); the CLI has no limit |
 | `SANDBOX_BACKEND` | `simulated` | `v1.6.0`: sandbox backend; `simulated` is the only option (nothing is executed). Unknown values fail closed |
 | `SANDBOX_HIGH_RISK_THRESHOLD` | *(unset)* | Risk score at or above which `SANDBOX_MIN_ISOLATION_HIGH_RISK` is required; unset or empty uses `DEFAULT_RISK_THRESHOLD` |
 | `SANDBOX_MIN_ISOLATION_DEFAULT` | `container` | Required isolation for other runs (`process`, `container`, `gvisor`, `microvm`); record-only in `v1.6.0` |

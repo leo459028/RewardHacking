@@ -90,6 +90,12 @@ class Settings(BaseSettings):
     audit_retention_purge_batch_size: int = 500
     audit_retention_plan_ttl_minutes: int = 60
     finops_ledger_retention_days: int = 2555  # report only; the FinOps ledger is never deleted
+    # v1.6.1 D28-D35, D47: tamper-evident audit chain (a separate hash ledger, never purged) and signed checkpoints.
+    audit_chain_enabled: bool = True
+    audit_chain_signing_key_file: str = ""  # Ed25519 private key, PEM file (recommended)
+    audit_chain_signing_key: SecretStr = SecretStr("")  # or the PEM itself
+    audit_chain_public_keys_file: str = ""  # PEM public keys accepted when verifying (keep old keys after rotation)
+    audit_chain_verify_max_entries: int = 5000  # online (API / Dashboard) verification limit per call
     # v1.6.0 D21 / D23: sandbox spec. "simulated" (nothing is executed) is the only backend in this release;
     # the isolation requirement is recorded in the tool transcript and enforced from v1.6.1.
     sandbox_backend: str = "simulated"

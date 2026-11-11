@@ -274,3 +274,16 @@ DASHBOARD_ACCESS_DENIED_TOTAL = Counter(
     "Dashboard requests refused by the access layer, by reason",
     ["reason"],
 )
+
+
+# v1.6.1 audit chain (plan D28-D35)
+AUDIT_CHAIN_ENTRIES_TOTAL = Counter(
+    "audit_chain_entries_total",
+    "Audit chain entries appended, by entry type",
+    ["entry_type"],
+)
+AUDIT_CHAIN_VERIFY_FAILURES_TOTAL = Counter(
+    "audit_chain_verify_failures_total",
+    "Audit chain verification findings that fail the check, by kind",
+    ["kind"],
+)

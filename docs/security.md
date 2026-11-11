@@ -220,6 +220,70 @@ re-authentication.
 | Clickjacking, cached pages and referrer leaks | Every `/dashboard` response carries `Cache-Control: no-store`, `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`, `Referrer-Policy: same-origin` and `X-Content-Type-Options: nosniff`. The `/v1` API responses are unchanged |
 | Open redirect after re-authentication | `next` is validated like the sign-in `next` (relative `/dashboard` path only; the sign-in, sign-out and re-authentication pages are refused). The return page comes from a same-host `Referer`, else `/dashboard` |
 
+## Tamper-Evident Audit Chain (`v1.6.1`)
+
+`audit_chain_entries` is a separate hash ledger. Every governance event (including access events, legal holds,
+judge activation and protected-path changes), every review decision, every approval decision or expiry, every
+retention tombstone and every checkpoint gets one entry. Entries hold hashes and identifiers only, never content, and
+retention purges never delete the ledger (a purge deletes run-scoped source rows, so the chain cannot live on them).
+
+**Writing.** Entries are appended inside the source transaction, just before commit, by SQLAlchemy session hooks in
+`app/services/audit_chain.py`: new `GovernanceEvent`, `RetentionTombstone` and already-decided `ApprovalEvent` rows
+are collected on flush whatever code added them, and review decisions, pending approvals that are decided or expire
+and checkpoints are registered with `audit_chain.track()`. On Postgres the writer holds `pg_advisory_xact_lock` from
+the append until commit, so concurrent writers cannot fork the chain (one global chain). If the append fails, the
+source transaction fails: there is never an event without its entry. With `AUDIT_CHAIN_ENABLED=false` nothing is
+chained, and verification later reports those rows as `unchained_record`.
+
+**Hash definition `rh-chain/1`.** `payload_digest = sha256(canonical_json(payload))` and
+`entry_hash = sha256(canonical_json({chain_version, seq, entry_type, ref_table, ref_id, tenant_id, run_id,
+payload_digest, prev_hash, created_at}))`, where canonical JSON has sorted keys, compact separators, UTF-8 text and UTC
+ISO-8601 timestamps (`app/core/digests.py`). The first entry's `prev_hash` is 64 zeros. Changing any payload field list
+requires a new `chain_version`.
+
+| Entry type | `ref_table` / `ref_id` | Payload fields |
+| :--- | :--- | :--- |
+| `genesis` | — / `ge:<max id>;tb:<max id>;ap:<max id>` | `chain_version`, `governance_events`, `retention_tombstones`, `evaluation_reviews_decided`, `approval_decisions` (count and maximum id of the rows that existed before the chain), `enabled_at` |
+| `governance_event` | `governance_events` / id | `id`, `tenant_id`, `user_id`, `run_id`, `event_type`, `decision`, `reason`, `limit_value`, `used`, `remaining`, `details`, `created_at` |
+| `review_decision` | `evaluation_reviews` / `review_id` | `review_id`, `run_id`, `tenant_id`, `label`, `label_categories`, `reviewer`, `reviewer_key_id`, `reason_digest` (sha256 of the reason), `decided_at` |
+| `approval_decision` | `approval_events` / id | `id`, `run_id`, `status`, `reviewer`, `reason_digest`, `created_at` |
+| `tombstone` | `retention_tombstones` / `tombstone_id` | `tombstone_id`, `run_id`, `tenant_id`, `purge_id`, `content_digest`, `record_counts`; the tombstone row gets `chain_version`, `prev_hash` and `entry_hash` written back in the purge transaction |
+| `checkpoint` | `audit_chain_checkpoints` / `checkpoint_id` | `checkpoint_id`, `chain_version`, `through_seq`, `head_hash`, `entry_count`, `period_start`, `period_end`, `prev_checkpoint_hash`, `algorithm`, `key_id` |
+
+**Checkpoints.** `python -m app.jobs.audit_chain --checkpoint` (daily, external scheduler) or **Create checkpoint**
+on `/dashboard/audit-chain` (`admin`, re-authentication) signs the head with Ed25519 (`AUDIT_CHAIN_SIGNING_KEY_FILE`,
+or `AUDIT_CHAIN_SIGNING_KEY`). The signature covers the checkpoint fields above; `key_id` is the first 16 hex digits
+of the SHA-256 of the raw public key; each checkpoint links to the previous one (`prev_checkpoint_hash`) and is itself
+chained. Without a key the checkpoint is written as `unsigned` and the `audit_chain_integrity` operations check warns
+(fails in `APP_ENV=prod`). Re-running with no new entries writes nothing. Old checkpoints stay verifiable after a key
+rotation when the old public key is listed in `AUDIT_CHAIN_PUBLIC_KEYS_FILE`.
+
+**Verification** (`python -m app.jobs.audit_chain --verify`, or bounded online on the API / Dashboard) reports:
+
+| Kind | Meaning |
+| :--- | :--- |
+| `ok` | Everything checked matches |
+| `chain_break` | A `seq` gap, a `prev_hash` that is not the previous `entry_hash`, or a broken checkpoint link |
+| `hash_mismatch` | A recomputed `entry_hash`, payload digest, tombstone chain field or checkpoint head / hash differs |
+| `missing_source` | The source row is gone and no tombstone of the same run explains it |
+| `unchained_record` | A governance event, tombstone, decided approval or review decision newer than the genesis entry has no entry |
+| `checkpoint_signature_invalid` | A signed checkpoint does not verify with any trusted public key |
+| `legacy_unchained` | Informational: rows older than the genesis entry (not a failure) |
+
+A purged run's governance events, approvals and reviews are explained by its tombstone (`explained_by_tombstone`).
+For a review decided more than once, only the latest entry is compared with the row (`superseded`). With
+`--public-keys FILE` only the keys in that file are trusted, which is the verifier's own copy kept outside the
+database. The online check covers at most `AUDIT_CHAIN_VERIFY_MAX_ENTRIES` entries per call and runs the reverse check
+(`unchained_record`) only when one call covers the whole chain.
+
+**What the chain guarantees (D36).** The chain makes later modification, deletion or insertion *detectable*,
+provided the verifier holds a checkpoint (or the public key and a signature) that is not stored in the same
+database. Someone holding both database write access and the signing private key can rewrite the whole chain.
+Therefore keep the private key apart from the database (a mounted file readable only by the API and the job, never
+in the database or the image), and export checkpoints regularly (`--export-checkpoint`) to storage the database
+administrators cannot change. There is no external anchoring or trusted timestamping in this release. The chain only
+records: it never changes a verdict, releases a run or alters source rows.
+
 ## Runtime Foundations Threat Model (`v1.6.0`)
 
 | Threat | Control |
@@ -230,7 +294,7 @@ re-authentication.
 | Losing evidence needed later | Fixed exclusion reasons: legal holds, open reviews, decided labels not yet exported to the benchmark, active benchmark references, honeypot measurements, high-severity incidents, unresolved DLQ, non-terminal runs, referenced checkpoints / replays |
 | Legal hold bypass | Holds are checked at plan and again at apply; only `admin` (any tenant) or `tenant_admin` (own tenant) can create one; release is admin-only, API-only and needs a reason; every change is a governance event |
 | FinOps ledger loss | Usage / cost events and budget violations are never deleted (report-only `FINOPS_LEDGER_RETENTION_DAYS`); purged runs keep their ledger and `run_id` |
-| Content leaking through purge records | Tombstones, receipts and governance events store ids, counts and sha256 digests only; the content digest is reproducible from the deleted rows. Tombstones reserve hash-chain columns but are not tamper-evident yet |
+| Content leaking through purge records | Tombstones, receipts and governance events store ids, counts and sha256 digests only; the content digest is reproducible from the deleted rows. Since `v1.6.1` each tombstone is an audit chain entry and carries `chain_version` / `prev_hash` / `entry_hash` |
 | Dashboard forgery of destructive actions | No Dashboard apply or hold release yet (planned for a later `v1.6.1` phase); the Dashboard forms (dry-run plan, create hold) require a same-origin `Origin` / `Referer` and, in `session` mode, a CSRF token (`v1.6.1`) |
 | Purged run probing across tenants | `410 run_purged` tombstones are tenant-scoped like live runs (`403 tenant_mismatch` otherwise) |
 | Secrets in traces | Span attribute allowlist (unknown keys dropped and counted), strings truncated, no prompts, goals, diffs, test reports, judge input / output or keys; a canary test scans every exported span. `/v1/observability/tracing` shows the exporter host only |
@@ -283,4 +347,5 @@ re-authentication.
 4. **Prompt Screening Is a Signal, Not a Boundary**: the prompt guard is a deterministic rule list (English patterns, classical Chinese phrases and, since prompt-guard/2.0, modern Chinese rules and a classical-style heuristic). It does not understand meaning. Known evasions, kept as expected-miss tests in `tests/test_v161_prompt_guard_hardening.py`: a paraphrase outside the rule vocabulary, classical text without pronouns or particles, classical text on the exempt `analysis` / `other` task types, a classical payload inside a long modern prompt, and letters interleaved between characters. Known false positives (they cost one approval): deleting "all" logs or records, "prevent leaking passwords", exporting a certificate ("憑證"). Published work on classical Chinese jailbreaks reports that keyword screening does not hold and that layered defenses still leave a residual success rate.
    **Why it still matters**: constraint flags (`allow_destructive_actions`, `allow_pii_access`, `no_external_network`) are declared by the requester, and tools such as `write_patch` and `query_data` do not require approval. For harmful intent expressed only in the prompt and carried out with tools the request may use, prompt flags are the only pre-execution gate. Controls that do not read the prompt bound the damage: the task-type tool allow-list, tool `requires_approval` (for example `deploy_service`), MCP server trust and argument validation, budgets and post-execution evidence review. Semantic screening (translate-then-screen, guard models, in shadow) is planned for `v1.6.4`, and gates derived from tool capabilities instead of requester-declared constraints for `v1.6.2`; see [`roadmap.md`](roadmap.md).
 5. **Dashboard CSRF and Headers (`v1.6.1`)**: the token is per session, not per form or request; anyone who can read a Dashboard page of that session can reuse it until the session ends. There is no full Content-Security-Policy (templates still use inline styles); only `frame-ancestors 'none'` is set. Scripted clients may send the token as `X-CSRF-Token`. A sign-in form left open longer than 15 minutes, or rendered by another API replica without a shared `DASHBOARD_CSRF_SECRET`, is refused once and shown again. Re-authentication only re-checks the local password; a locked account keeps its signed-in sessions but cannot pass re-authentication until the lock ends.
-6. **No Approved-Model List**: `is_active` on a pricing-catalog row controls pricing only; every seeded model is active, and a run or usage event that reports any model is accepted (an unpriced model records `missing_pricing_rule`). Only LLM judges are opt-in today (test, then activate). An approved-model list with vendor jurisdiction is planned for `v1.6.4`. The platform is not a model gateway and cannot stop model calls made outside it.
+6. **Audit Chain (`v1.6.1`)**: tamper-evident, not tamper-proof; whoever holds database write access and the signing key can rewrite it, and there is no external anchoring or trusted timestamp. Rows written before the genesis entry, and while `AUDIT_CHAIN_ENABLED=false`, are not chained. The FinOps ledger, user and session tables are not chained themselves (user changes are governance events, which are). Online verification is bounded; a full check is the CLI and gets slower as the chain grows (no incremental cache). One global lock serializes chain writes at commit time.
+7. **No Approved-Model List**: `is_active` on a pricing-catalog row controls pricing only; every seeded model is active, and a run or usage event that reports any model is accepted (an unpriced model records `missing_pricing_rule`). Only LLM judges are opt-in today (test, then activate). An approved-model list with vendor jurisdiction is planned for `v1.6.4`. The platform is not a model gateway and cannot stop model calls made outside it.

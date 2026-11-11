@@ -134,7 +134,9 @@ A dual-control request (P6): `action`, `target_ref`, `tenant_id`, `payload` (JSO
 ### `AuditChainEntry` (`audit_chain_entries`, `ace_` IDs)
 The hash ledger (P5): `seq` (primary key assigned by the writer, part of the hash), `entry_id`, `entry_type`,
 `ref_table`, `ref_id`, `tenant_id`, `run_id`, `payload_digest`, `prev_hash`, `entry_hash` (unique), `chain_version`,
-`created_at`. Hashes and identifiers only. Retention purges never delete this table.
+`created_at`. Hashes and identifiers only. Retention purges never delete this table. Written by `app/services/audit_chain.py` in
+the source transaction (P5); entry types, payload fields and the hash definition are in
+[`security.md`](security.md#tamper-evident-audit-chain-v161).
 
 ### `AuditChainCheckpoint` (`audit_chain_checkpoints`, `acp_` IDs)
 A statement of the chain head (P5): `through_seq`, `head_hash`, `entry_count`, `period_start`, `period_end`,
@@ -150,7 +152,7 @@ A statement of the chain head (P5): `through_seq`, `head_hash`, `entry_count`, `
 A plan and, after apply, its receipt: `status` (`planned` | `applied` | `partial` | `expired`), `plan_digest` (sha256 of cutoff, settings snapshot and sorted candidate ids), `cutoff_at`, `expires_at`, `settings_snapshot`, `candidate_run_ids`, `excluded_summary` (reason → count and up to five example run ids), `estimated_counts`, `scan_summary`, `created_by`, `applied_by`, `applied_at`, `applied_counts`, `skipped_at_apply` (run id and reasons), `failures` (run id and error type), `receipt_digest` (sha256 of the tombstone digests). No run content is stored.
 
 ### `RetentionTombstone` (`retention_tombstones`, `tomb_` IDs)
-One per purged run (`run_id` unique): `tenant_id`, `purge_id`, `purged_at`, `run_created_at`, `final_status`, `record_counts` (rows deleted per table), `content_digest` (sha256 of the sorted `(table, primary key, sha256(canonical row))` list: hashes only), `policy_snapshot`. **Reserved, unused in `v1.6.0`**: `chain_version` (empty string), `prev_hash` and `entry_hash` (NULL) for a later tamper-evident hash chain; no tamper-evidence guarantee yet.
+One per purged run (`run_id` unique): `tenant_id`, `purge_id`, `purged_at`, `run_created_at`, `final_status`, `record_counts` (rows deleted per table), `content_digest` (sha256 of the sorted `(table, primary key, sha256(canonical row))` list: hashes only), `policy_snapshot`. `chain_version`, `prev_hash` and `entry_hash`: empty / NULL in `v1.6.0`; since `v1.6.1` written in the purge transaction from the tombstone's audit chain entry (`rh-chain/1`). Tombstones written before the chain existed keep the empty values.
 
 A purge deletes the run's `agent_runs`, `approval_events`, `worker_attempts`, `tool_executions`, `evaluation_results`, `run_outcomes`, `evaluation_reviews`, low / medium `incidents`, `execution_plans`, `execution_plan_steps`, eligible `run_checkpoints` / `replay_attempts`, run-scoped `governance_events`, non-benchmark `judge_assessments`, `review_sampling_decisions` and its Redis state keys. It never deletes the FinOps ledger (`usage_events`, `cost_events`, `budget_violations`), `benchmark_*`, `honeypot_*`, `judge_profile_*`, governance events without a `run_id`, operations tables, tenants or keys.
 

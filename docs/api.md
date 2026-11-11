@@ -183,6 +183,20 @@ The service enforces every rule; refused operations return `{"error": {"code": .
 
 Exclusion reason codes (fixed): `legal_hold`, `run_not_terminal`, `dlq_unresolved`, `review_open`, `unexported_label`, `benchmark_reference`, `high_severity_incident`, `checkpoint_reference`, `replay_reference`, `honeypot_measurement`. `skipped_at_apply` may also contain `recent_activity` and `run_missing`.
 
+### Audit Chain (`v1.6.1`)
+
+Read-only; responses carry hashes and identifiers only (`signal_usage: "monitor_only"`). Checkpoints are written by
+`python -m app.jobs.audit_chain --checkpoint` or the Dashboard, not by the API.
+
+| Method | Path | Description | Access Role |
+| --- | --- | --- | --- |
+| `GET` | `/v1/audit-chain/status` | Head `seq` and hash, entry counts by type, genesis (legacy maximum ids), latest checkpoint, signing key id, online limit | `admin`, `auditor` |
+| `GET` | `/v1/audit-chain/entries` | Entries (`from_seq` ascending, else newest first; `entry_type`, `run_id`, `limit` ≤ 500) | `admin`, `auditor` |
+| `GET` | `/v1/audit-chain/checkpoints` | Checkpoints, newest first (`limit` ≤ 500) | `admin`, `auditor` |
+| `POST` | `/v1/audit-chain/verify` | Optional body `{"from_seq": N, "to_seq": M}`; verifies at most `AUDIT_CHAIN_VERIFY_MAX_ENTRIES` entries (`truncated`, `next_from_seq` to continue); writes nothing. Returns `status` (`ok` / `failed`), `issues` by kind, `details` (first 50), `info` (`legacy_unchained`, `explained_by_tombstone`, `superseded`, `unsigned_checkpoints`) and `reverse_check` (`done` only when one call covers the whole chain) | `admin`, `auditor` |
+
+The `410 run_purged` tombstone summary now includes `chain_version`, `prev_hash` and `entry_hash`.
+
 ### Safe MCP Gateway (`v1.5.7`)
 
 | Method | Path | Description | Access Role |

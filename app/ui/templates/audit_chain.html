@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Audit Chain | 稽核鏈{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Audit Chain</h1>
+    <div class="title-note">防竄改稽核鏈</div>
+    <div class="muted">Hash-linked ledger of governance events, review and approval decisions, tombstones and checkpoints (v1.6.1). Hashes and identifiers only; it never changes a verdict. | 只記雜湊與識別碼，不改變任何判定。</div>
+  </div>
+</div>
+
+{% if message %}<div class="success" role="status" data-testid="audit-chain-message">{{ message }}</div>{% endif %}
+{% if error %}<div class="error" role="alert" data-testid="audit-chain-error">{{ error }}</div>{% endif %}
+{% if not status.enabled %}<div class="error" role="alert">The audit chain is disabled (AUDIT_CHAIN_ENABLED=false): new events are not chained. | 稽核鏈已停用。</div>{% endif %}
+
+<section class="grid stats" id="audit-chain-status">
+  <div class="stat"><div class="stat-label">Entries | 筆數</div><div class="stat-value" data-testid="audit-chain-count">{{ status.entry_count }}</div></div>
+  <div class="stat"><div class="stat-label">Head seq</div><div class="stat-value" data-testid="audit-chain-head-seq">{{ status.head_seq }}</div></div>
+  <div class="stat"><div class="stat-label">Chain version</div><div class="stat-value">{{ status.chain_version }}</div></div>
+  <div class="stat"><div class="stat-label">Signing key | 簽章金鑰</div><div class="stat-value">{% if status.signing.configured %}<code>{{ status.signing.key_id }}</code>{% else %}<span class="status failed">{{ status.signing.error or "not configured" }}</span>{% endif %}</div></div>
+</section>
+
+<section class="panel" id="audit-chain-head">
+  <h2>Head &amp; Genesis <span class="heading-note">鏈頭與起點</span></h2>
+  <table>
+    <tbody>
+      <tr><th>Head hash</th><td><code data-testid="audit-chain-head-hash">{{ status.head_hash or "-" }}</code></td></tr>
+      <tr><th>Head created</th><td>{{ status.head_created_at or "-" }}</td></tr>
+      <tr><th>Genesis</th><td>{% if status.genesis %}{{ status.genesis.created_at }} · legacy max ids {{ status.genesis.legacy_max_ids | json_pretty }}{% else %}-{% endif %}</td></tr>
+      <tr><th>By type</th><td>{% for kind, count in status.entries_by_type.items() %}<span class="flag">{{ kind }} {{ count }}</span>{% else %}-{% endfor %}</td></tr>
+    </tbody>
+  </table>
+  <p class="muted">Changes become detectable only for a verifier holding a checkpoint or the public key outside this database. Whoever holds both database write access and the signing key can rewrite the chain. | 驗證者手上要有存在資料庫以外的 checkpoint 或公鑰，竄改才查得出來。</p>
+</section>
+
+<section class="panel" id="audit-chain-verify">
+  <h2>Verify <span class="heading-note">線上驗證（唯讀）</span></h2>
+  <p class="muted">Checks at most {{ status.verify_max_entries }} entries per run; the full check is <code>python -m app.jobs.audit_chain --verify</code>. | 每次最多 {{ status.verify_max_entries }} 筆，完整驗證請用 CLI。</p>
+  {% if can("audit_chain.verify", "audit_chain") %}<form method="post" action="/dashboard/audit-chain/verify" class="form-grid">
+    {{ csrf_input() }}
+    <label>From seq | 起始序號<input name="from_seq" inputmode="numeric" placeholder="1" value="{{ verify_result.next_from_seq if verify_result and verify_result.next_from_seq else '' }}"></label>
+    <div class="checkline"><button class="button" type="submit" id="audit-chain-verify-button">Verify | 驗證</button></div>
+  </form>{% endif %}
+  {% if verify_result %}
+  <table data-testid="audit-chain-verify-result">
+    <tbody>
+      <tr><th>Status</th><td><span class="status {{ 'completed' if verify_result.status == 'ok' else 'failed' }}" data-testid="audit-chain-verify-status">{{ verify_result.status }}</span></td></tr>
+      <tr><th>Checked entries</th><td data-testid="audit-chain-verify-checked">{{ verify_result.checked_entries }} (seq {{ verify_result.from_seq }}–{{ verify_result.to_seq }} of {{ verify_result.head_seq }})</td></tr>
+      <tr><th>Reverse check</th><td>{{ verify_result.reverse_check }}{% if verify_result.truncated %} · truncated, continue from {{ verify_result.next_from_seq }}{% endif %}</td></tr>
+      <tr><th>Checkpoints</th><td>{{ verify_result.checkpoints_checked }}</td></tr>
+      <tr><th>Issues</th><td>{% for kind, count in verify_result.issues.items() %}<span class="flag">{{ kind }} {{ count }}</span>{% else %}none{% endfor %}</td></tr>
+      <tr><th>Info</th><td>{% for kind, count in verify_result.info.items() %}<span class="flag">{{ kind }} {{ count }}</span>{% endfor %}</td></tr>
+    </tbody>
+  </table>
+  {% if verify_result.details %}<pre>{{ verify_result.details | json_pretty }}</pre>{% endif %}
+  {% endif %}
+</section>
+
+<section class="panel" id="audit-chain-checkpoints">
+  <h2>Checkpoints <span class="heading-note">簽章檢查點</span></h2>
+  {% if can("audit_chain.checkpoint", "audit_chain") and status.enabled %}<form method="post" action="/dashboard/audit-chain/checkpoints">
+    {{ csrf_input() }}
+    <button class="button secondary" type="submit" id="audit-chain-checkpoint-button">Create checkpoint | 建立檢查點</button>
+  </form>{% endif %}
+  <table>
+    <thead><tr><th>Checkpoint</th><th>Through seq</th><th>Head hash</th><th>Status</th><th>Key</th><th>Period end</th><th>By</th></tr></thead>
+    <tbody>
+    {% for cp in checkpoints %}
+      <tr><td><code>{{ cp.checkpoint_id }}</code></td><td>{{ cp.through_seq }}</td><td><code>{{ cp.head_hash[:16] }}…</code></td>
+        <td><span class="status {{ 'completed' if cp.status == 'signed' else 'pending' }}">{{ cp.status }}</span></td><td><code>{{ cp.key_id or "-" }}</code></td>
+        <td>{{ cp.period_end }}</td><td>{{ cp.created_by }}</td></tr>
+    {% else %}
+      <tr><td colspan="7" class="muted">No checkpoints yet. Schedule <code>python -m app.jobs.audit_chain --checkpoint</code> daily. | 尚無檢查點。</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel" id="audit-chain-entries">
+  <h2>Recent entries <span class="heading-note">最近的紀錄</span></h2>
+  <table>
+    <thead><tr><th>Seq</th><th>Type</th><th>Ref</th><th>Tenant</th><th>Run</th><th>Entry hash</th><th>Created</th></tr></thead>
+    <tbody>
+    {% for item in entries %}
+      <tr><td>{{ item.seq }}</td><td>{{ item.entry_type }}</td><td><code>{{ item.ref_table }}{% if item.ref_id %}:{{ item.ref_id }}{% endif %}</code></td>
+        <td>{{ item.tenant_id or "-" }}</td><td>{% if item.run_id %}<a href="/dashboard/runs/{{ item.run_id }}">{{ item.run_id }}</a>{% else %}-{% endif %}</td>
+        <td><code>{{ item.entry_hash[:16] }}…</code></td><td>{{ item.created_at }}</td></tr>
+    {% else %}
+      <tr><td colspan="7" class="muted">No entries yet. | 尚無紀錄。</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

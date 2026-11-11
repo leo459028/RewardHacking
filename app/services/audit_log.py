@@ -24,6 +24,7 @@ from app.models.worker_attempt import WorkerAttempt
 from app.observability.metrics import INCIDENTS_TOTAL
 from app.schemas.agent import AgentRequest
 from app.schemas.audit import ApprovalDecisionRequest
+from app.services import audit_chain
 from app.services.control_plane import get_execution_plan_for_run, sync_execution_plan_on_approval
 from app.services.governance_audit import persist_governance_event as persist_governance_event
 from app.services.orchestrator import OrchestrationResult
@@ -726,15 +727,15 @@ async def apply_approval_decision(
         }
     )
     summary["approval"] = approval
-    session.add(
-        ApprovalEvent(
-            run_id=run.run_id,
-            status=decision.decision,
-            reviewer=decision.reviewer,
-            reason=decision.reason,
-            expired=bool(approval.get("expired", False)),
-        )
+    approval_event = ApprovalEvent(
+        run_id=run.run_id,
+        status=decision.decision,
+        reviewer=decision.reviewer,
+        reason=decision.reason,
+        expired=bool(approval.get("expired", False)),
     )
+    session.add(approval_event)
+    audit_chain.track(session, audit_chain.APPROVAL_DECISION, approval_event)  # v1.6.1 D30 / Q8
 
     events = list(summary.get("event_timeline", []))
     events.append(
@@ -842,6 +843,7 @@ async def expire_stale_approvals(session: AsyncSession) -> list[str]:
         event.status = "expired"
         if not event.reviewer:
             event.reviewer = "system_ttl_sweeper"
+        audit_chain.track(session, audit_chain.APPROVAL_DECISION, event)  # v1.6.1: the TTL expiry is a decision too
         run = await get_run(session, event.run_id)
         if run is not None and run.status == "awaiting_approval":
             reason = "Approval TTL expired without reviewer decision."

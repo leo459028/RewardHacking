@@ -664,6 +664,10 @@ def tombstone_summary(tombstone: RetentionTombstone) -> dict[str, Any]:
         "record_counts": dict(tombstone.record_counts or {}),
         "content_digest": tombstone.content_digest,
         "policy_version": (tombstone.policy_snapshot or {}).get("policy_version", ""),
+        # v1.6.1 P5 (feature eight): written back by the audit chain in the purge transaction
+        "chain_version": tombstone.chain_version or "",
+        "prev_hash": tombstone.prev_hash,
+        "entry_hash": tombstone.entry_hash,
     }
 
 

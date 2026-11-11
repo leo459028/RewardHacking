@@ -23,6 +23,7 @@ from sqlalchemy import func, select
 from app.core.config import get_settings
 from app.main import DASHBOARD_SECURITY_HEADERS, app
 from app.models.access import DashboardSession, DashboardUser
+from app.models.audit_chain import AuditChainEntry
 from app.models.base import Base
 from app.models.evaluation_review import TenantEvaluationPolicy
 from app.models.governance_event import GovernanceEvent
@@ -84,7 +85,13 @@ def _snapshot(session_factory) -> dict[str, int]:
 
     async def run(session):
         counts: dict[str, int] = {}
+        denied = {str(event_id) for event_id in (await session.scalars(select(GovernanceEvent.id).where(GovernanceEvent.event_type == "access.denied"))).all()}
         for table in Base.metadata.sorted_tables:
+            if table.name == AuditChainEntry.__tablename__:
+                # v1.6.1 P5: the refusal's own access.denied event (and the first-ever genesis entry) are chained
+                rows = (await session.execute(select(AuditChainEntry.entry_type, AuditChainEntry.ref_id))).all()
+                counts[table.name] = sum(1 for kind, ref in rows if kind != "genesis" and not (kind == "governance_event" and ref in denied))
+                continue
             stmt = select(func.count()).select_from(table)
             if table.name == GovernanceEvent.__tablename__:
                 stmt = stmt.where(table.c.event_type != "access.denied")
@@ -466,7 +473,7 @@ def test_configured_csrf_secret_signs_the_login_cookie(client, signed_in, monkey
 
 def test_step_up_inventory_matches_the_permission_table():
     declared = {row[2] for row in STEP_UP_ROUTES}
-    assert declared == {"users.manage", "judge.profile.write", "api_keys.manage"}
+    assert declared == {"users.manage", "judge.profile.write", "api_keys.manage", "audit_chain.checkpoint"}  # P5 added the last
     # handler-level step-up checks (ensure_permission): tenants.disable, pricing.import_apply, evaluation_policy.relax
     assert {"tenants.disable", "pricing.import_apply", "evaluation_policy.relax"} <= permissions.STEP_UP_PERMISSIONS
 
