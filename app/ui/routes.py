@@ -46,7 +46,6 @@ from app.services.audit_log import (
     list_tenants,
     list_tool_executions,
     list_worker_attempts,
-    observability_summary,
     persist_governance_event,
     persist_orchestration_result,
     requeue_dlq_run,
@@ -68,14 +67,6 @@ from app.services.quota import (
     check_request_quota,
     check_tool_quotas,
     check_user_request_quota,
-)
-from app.services.operations import (
-    compute_operations_readiness,
-    list_operations_evidence,
-    list_release_gate_items,
-    list_release_gates,
-    persist_operations_evidence,
-    persist_release_gate,
 )
 from app.services.control_plane import (
     ControlPlanePlanner,
@@ -259,9 +250,18 @@ async def dashboard_run_detail(
     run_id: str,
     session: AsyncSession = Depends(get_session),
 ):
+    from app.core import tracing
+    from app.services import retention
+
     run = await get_run(session, run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail="Run not found.")
+        # v1.6.0 D17: a purged run renders its tombstone with 200 (the API answers 410 run_purged).
+        tombstone = await retention.tombstone_for(session, run_id)
+        if tombstone is None:
+            raise HTTPException(status_code=404, detail="Run not found.")
+        return templates.TemplateResponse(
+            request, "run_purged.html", {"tombstone": retention.tombstone_summary(tombstone), "active": "runs"}
+        )
     incidents = await incidents_for_run(session, run_id)
     attempts = await list_worker_attempts(session, run_id=run_id)
     tool_executions = await list_tool_executions(session, run_id=run_id)
@@ -277,6 +277,8 @@ async def dashboard_run_detail(
     run_reviews = await list_reviews(session, run_id=run_id, limit=20)
     executor_eval = dict((run.evaluation_summary or {}).get("evaluation_event", {}).get("payload", {}) or {})
     latest_outcome = outcomes[-1] if outcomes else None
+    trace_id = (execution_plan.trace_id if execution_plan else "") or (run.request_payload or {}).get("metadata", {}).get("trace_id", "")
+    legal_holds = [retention.hold_to_dict(hold) for hold in await retention.active_holds_for_run(session, run.run_id, run.tenant_id)]
     return templates.TemplateResponse(
         request,
         "run_detail.html",
@@ -297,6 +299,9 @@ async def dashboard_run_detail(
             "checkpoints": checkpoints,
             "replay_attempts": replay_attempts,
             "cost_summary": cost_summary,
+            "trace_id": trace_id,
+            "trace_ui_url": tracing.trace_ui_url(get_settings(), trace_id),
+            "legal_holds": legal_holds,
             "active": "runs",
         },
     )
@@ -573,19 +578,6 @@ async def dashboard_worker(request: Request, session: AsyncSession = Depends(get
             "attempts": attempts,
             "dlq": dlq,
             "active": "worker",
-        },
-    )
-
-
-@router.get("/dashboard/observability", response_class=HTMLResponse)
-async def dashboard_observability(request: Request, session: AsyncSession = Depends(get_session)):
-    summary = await observability_summary(session)
-    return templates.TemplateResponse(
-        request,
-        "observability.html",
-        {
-            "summary": summary,
-            "active": "observability",
         },
     )
 
@@ -1337,73 +1329,6 @@ async def dashboard_admin_finops_pricing_disable(
 ):
     await disable_pricing_item(session, pricing_id, updated_by="dashboard")
     return RedirectResponse(f"/dashboard/admin/finops/pricing/{pricing_id}", status_code=303)
-
-
-@router.get("/dashboard/operations", response_class=HTMLResponse)
-async def dashboard_operations(
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-    state_store: RunStateStore = Depends(get_state_store),
-):
-    readiness = await compute_operations_readiness(session, settings=get_settings(), state_store=state_store)
-    evidence = await list_operations_evidence(session, limit=25)
-    gates = await list_release_gates(session, limit=10)
-    gate_items = {}
-    for gate in gates:
-        gate_items[gate.gate_id] = await list_release_gate_items(session, gate.gate_id)
-    return templates.TemplateResponse(
-        request,
-        "operations.html",
-        {
-            "readiness": readiness,
-            "evidence": evidence,
-            "gates": gates,
-            "gate_items": gate_items,
-            "active": "operations",
-        },
-    )
-
-
-@router.post("/dashboard/operations/evidence", response_class=HTMLResponse)
-async def dashboard_operations_evidence(
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-):
-    form = await request.form()
-    await persist_operations_evidence(
-        session,
-        evidence_type=str(form.get("evidence_type", "")),
-        status=str(form.get("status", "pass")),
-        summary=str(form.get("summary", "")),
-        reference_url=str(form.get("reference_url", "")),
-        metadata={"source": "dashboard"},
-        created_by="dashboard",
-    )
-    return HTMLResponse(
-        '<meta http-equiv="refresh" content="0; url=/dashboard/operations">'
-        '<a href="/dashboard/operations">Back to operations</a>'
-    )
-
-
-@router.post("/dashboard/operations/release-gates", response_class=HTMLResponse)
-async def dashboard_operations_release_gate(
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-    state_store: RunStateStore = Depends(get_state_store),
-):
-    form = await request.form()
-    readiness = await compute_operations_readiness(session, settings=get_settings(), state_store=state_store)
-    await persist_release_gate(
-        session,
-        release_version=str(form.get("release_version", "v1.5.12")),
-        created_by=str(form.get("created_by", "dashboard")),
-        trace_id=str(getattr(request.state, "trace_id", "")),
-        readiness=readiness,
-    )
-    return HTMLResponse(
-        '<meta http-equiv="refresh" content="0; url=/dashboard/operations">'
-        '<a href="/dashboard/operations">Back to operations</a>'
-    )
 
 
 @router.post("/dashboard/runs/{run_id}/replay", response_class=HTMLResponse)

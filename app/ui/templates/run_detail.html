@@ -22,6 +22,27 @@
   <div class="stat"><div class="stat-label">Incidents</div><div class="stat-value">{{ incidents|length }}</div></div>
 </section>
 
+<section class="panel" id="run-trace-hold">
+  <h2>Trace &amp; Legal Hold <span class="heading-note">追蹤與法律保全</span></h2>
+  <p><strong>Trace ID</strong> <code>{{ trace_id or "-" }}</code>
+  {% if trace_ui_url %} · <a href="{{ trace_ui_url }}" target="_blank" rel="noopener">Open in Jaeger | 在 Jaeger 開啟</a>{% endif %}</p>
+  {% if legal_holds %}
+  <div class="error" role="status" id="run-legal-hold">Legal hold active | 此 run 受 legal hold 保護（不會被清理）:
+    {% for hold in legal_holds %}{{ hold.hold_id }} ({{ hold.scope_type }}: {{ hold.reason }}){% if not loop.last %}, {% endif %}{% endfor %}
+  </div>
+  {% endif %}
+  <form method="post" action="/dashboard/retention/holds" class="form-grid" id="run-hold-form">
+    <input type="hidden" name="scope_type" value="run">
+    <input type="hidden" name="scope_id" value="{{ run.run_id }}">
+    <label>Reason
+      <input name="reason" required maxlength="2000">
+    </label>
+    <label>&nbsp;
+      <button class="button secondary" type="submit">Create legal hold | 建立 legal hold</button>
+    </label>
+  </form>
+</section>
+
 <section class="panel">
   <h2>Cost Summary <span class="heading-note">V1.5.7 FinOps ledger</span></h2>
   <section class="grid stats">
@@ -314,13 +335,15 @@
   </div>
   <div class="panel">
     <h2>Tool Transcript <span class="heading-note">工具執行紀錄</span></h2>
-    <table>
-      <thead><tr><th>Tool</th><th>Status</th><th>Detail</th></tr></thead>
+    <table id="sandbox-execution">
+      <thead><tr><th>Tool</th><th>Status</th><th>Detail</th><th>Sandbox <span class="muted">backend / isolation / required / satisfied / spec</span></th></tr></thead>
       <tbody>
       {% for entry in run.evaluation_summary.get("execution_event", {}).get("payload", {}).get("tool_transcript", []) %}
-        <tr><td>{{ entry.get("tool_name") }}</td><td>{{ entry.get("status") }}</td><td>{{ entry.get("detail") }}</td></tr>
+        {% set sbx = entry.get("sandbox_execution") or {} %}
+        <tr><td>{{ entry.get("tool_name") }}</td><td>{{ entry.get("status") }}</td><td>{{ entry.get("detail") }}</td>
+          <td>{% if sbx %}{{ sbx.get("backend_id") }} / {{ sbx.get("isolation_level") }} / {{ sbx.get("required_isolation") }} / {{ sbx.get("isolation_satisfied") }} / <code>{{ (sbx.get("spec_digest") or "")[:12] }}</code> ({{ sbx.get("status") }}){% else %}<span class="muted">-</span>{% endif %}</td></tr>
       {% else %}
-        <tr><td colspan="3" class="muted">No tool transcript.</td></tr>
+        <tr><td colspan="4" class="muted">No tool transcript.</td></tr>
       {% endfor %}
       </tbody>
     </table>

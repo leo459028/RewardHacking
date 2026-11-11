@@ -38,7 +38,7 @@ ANCHORS: tuple[Anchor, ...] = (
     Anchor(1, "pyproject.toml", rf'^version = "{_V}"$'),
     Anchor(2, "app/main.py", rf'^    version="{_V}",$'),
     Anchor(3, "scripts/security_check.py", rf"Security & Secret Scan \(v{_V}\)"),
-    Anchor(4, "app/ui/routes.py", rf'form\.get\("release_version", "v{_V}"\)'),
+    Anchor(4, "app/ui/routers/operations.py", rf'form\.get\("release_version", "v{_V}"\)'),
     Anchor(4, "app/ui/templates/operations.html", rf'<input name="release_version" value="v{_V}">'),
     Anchor(5, "scripts/browser_manual_test.py", rf'assert release_ver == "v{_V}"'),
     Anchor(5, "scripts/browser_manual_test.py", rf'manual_test\.md suite for v{_V}"'),

@@ -143,7 +143,7 @@ Use `python scripts/bump_version.py X.Y.Z` (and `--check` to verify); it fails i
 1. `pyproject.toml`: `version = "X.Y.Z"`
 2. `app/main.py`: `FastAPI(..., version="X.Y.Z")`
 3. `scripts/security_check.py`: Banner print string `(vX.Y.Z)`
-4. `app/ui/routes.py` & `app/ui/templates/operations.html`: Default `release_version` (`"vX.Y.Z"`)
+4. `app/ui/routers/operations.py` & `app/ui/templates/operations.html`: Default `release_version` (`"vX.Y.Z"`)
 5. `scripts/browser_manual_test.py`: Operations release version assertion (`assert release_ver == "vX.Y.Z"`)
 6. `app/services/finops/core.py`: `FINOPS_CALCULATION_VERSION = "vX.Y.Z"`
 

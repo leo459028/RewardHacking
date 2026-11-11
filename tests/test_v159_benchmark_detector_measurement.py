@@ -1373,7 +1373,7 @@ def test_v159_version_anchors():
     assert 'version = "1.5.' in (root / "pyproject.toml").read_text(encoding="utf-8")
     assert "(v1.5." in (root / "scripts" / "security_check.py").read_text(encoding="utf-8")
     assert 'value="v1.5.' in (root / "app" / "ui" / "templates" / "operations.html").read_text(encoding="utf-8")
-    assert 'release_version", "v1.5.' in (root / "app" / "ui" / "routes.py").read_text(encoding="utf-8")
+    assert 'release_version", "v1.5.' in (root / "app" / "ui" / "routers" / "operations.py").read_text(encoding="utf-8")
     browser = (root / "scripts" / "browser_manual_test.py").read_text(encoding="utf-8")
     assert 'assert release_ver == "v1.5.' in browser and '"/dashboard/benchmark"' in browser
     assert "cryptography" in (root / "requirements.txt").read_text(encoding="utf-8")

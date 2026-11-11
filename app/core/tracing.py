@@ -277,6 +277,15 @@ def status(settings: Any) -> dict[str, Any]:
     }
 
 
+def trace_ui_url(settings: Any, trace_id: str) -> str:
+    """``OTEL_TRACE_UI_URL_TEMPLATE`` with ``{trace_id}`` = the 32-hex W3C id (from ``trace_<32 hex>``); else ``""``."""
+    template = str(getattr(settings, "otel_trace_ui_url_template", "") or "")
+    value = (trace_id or "").removeprefix("trace_").lower()
+    if not template or "{trace_id}" not in template or len(value) != 32 or any(c not in "0123456789abcdef" for c in value):
+        return ""
+    return template.replace("{trace_id}", value)
+
+
 def dropped_attribute_count() -> int:
     """Attributes refused by the D6 allowlist in this process since start (Prometheus counter value)."""
     from prometheus_client import REGISTRY
