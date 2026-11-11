@@ -86,7 +86,7 @@ flowchart LR
 
 ### 2. Prompt Sanitizer & Classical Chinese Guard (`app/services/prompt_sanitizer.py`)
 - Analyzes prompts for direct jailbreaks (`ignore previous instructions`, `bypass policy`, `reveal system prompt`).
-- Conducts specialized detection against **Classical Chinese Prompt Injection** (archaic idioms, obscure obfuscations, credential harvesting disguised in classical poetry).
+- Matches a **classical Chinese phrase list** and, since prompt-guard/2.0 (`v1.6.1` P0), **modern Chinese rules**, after Unicode normalization (NFKC, zero-width removal, Simplified → Traditional, punctuation-free compact view); adds `sensitive_term_mention` and the `classical_style_task_mismatch` heuristic. Rule-based only: it is a risk signal, not a boundary ([`security.md`](security.md), Known Boundaries).
 - Generates structured prompt flags attached to `evaluation_summary.prompt_guard`.
 
 ### 3. Risk Scorer & Policy Engine (`app/services/risk_scoring.py`, `app/services/policy_engine.py`)

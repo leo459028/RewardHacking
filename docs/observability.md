@@ -17,7 +17,7 @@ RewardHacking provides deep observability across API gateways, background worker
 | `agent_requests_total` | Counter | `status` | Agent task submissions partitioned by status (`queued`, `awaiting_approval`, `denied`) |
 | `agent_policy_risk_score` | Histogram | None | Distribution of computed policy risk scores (0.0 to 1.0) |
 | `agent_policy_decisions_total` | Counter | `status` | Decisions categorized by policy outcome |
-| `agent_prompt_guard_flags_total`| Counter | `flag` | Trigger counts for prompt injection & Classical Chinese guard flags |
+| `agent_prompt_guard_flags_total`| Counter | `flag` | Trigger counts for prompt-guard flags (English patterns, `classical_*`, `zh_*`, `sensitive_term_mention`, `classical_style_task_mismatch`) |
 | `agent_control_plane_steps_total`| Counter | `step_type`, `status` | Pre-execution steps generated during planning |
 | `agent_worker_jobs_total` | Counter | `status` | Worker task executions partitioned by outcome (`completed`, `failed`) |
 | `agent_worker_duration_seconds` | Histogram | None | Execution duration for bounded tool workers |

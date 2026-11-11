@@ -17,7 +17,13 @@ def compute_risk_score(request: AgentRequest, prompt_flags: list[str], mcp_risk_
         "classical_destructive_intent",
         "classical_malware_intent",
     }
-    if set(prompt_flags).intersection(high_risk_classical_flags):
+    # prompt-guard/2.0: the same intents written in modern Chinese carry the same weight.
+    high_risk_modern_flags = {
+        "zh_credential_exfiltration",
+        "zh_destructive_intent",
+        "zh_malware_intent",
+    }
+    if set(prompt_flags).intersection(high_risk_classical_flags | high_risk_modern_flags):
         score += 0.20
 
     if request.constraints.requires_human_approval:

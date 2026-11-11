@@ -50,6 +50,7 @@ python scripts/browser_manual_test.py --qa-currency USD
 | `tests/test_v08_operations_gate.py` | Operations evidence submission, release readiness checks, release gate snapshot generation. |
 | `tests/test_v10_production_ready.py` | Production release gate fail-closed behavior, safety regression evidence, Prometheus metric increments. |
 | `tests/test_v11_classical_chinese_guard.py` | Classical Chinese prompt guard: permitting benign literature, blocking archaic adversarial jailbreaks. |
+| `tests/test_v161_prompt_guard_hardening.py` | Prompt-guard/2.0: normalization (Simplified, punctuation, zero-width, full-width), modern Chinese rules with positive and negative fixtures per rule, `sensitive_term_mention`, `classical_style_task_mismatch`, risk and policy integration, API / Run Detail, and expected-miss evasions. |
 | `tests/test_v12_control_plane.py` | Control plane execution planning, workflow/tool registries, missing-plan fail-closed handling. |
 | `tests/test_v13_trace_replay.py` | Distributed `X-Trace-Id` propagation, step-level audits, self-contained Replay Bundle exports. |
 | `tests/test_v14_checkpoint_replay.py` | Submit checkpoints, resume checkpoint re-dispatching, dry-run replay attempts without side-effects. |

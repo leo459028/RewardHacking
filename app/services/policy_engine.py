@@ -13,6 +13,10 @@ HARD_DENY_FLAG_PREFIXES: tuple[str, ...] = (
     "mcp_argument_injection_detected:",
 )
 
+# Named prompt-guard flags copied into the policy flags (English pattern flags are raw regexes and
+# stay summarised as ``prompt_injection_signals``).
+PROMPT_FLAG_PREFIXES: tuple[str, ...] = ("classical_", "zh_", "sensitive_term_")
+
 
 @dataclass(frozen=True)
 class RuleContext:
@@ -45,7 +49,7 @@ class PolicyEngine:
             flags.append("prompt_injection_signals")
 
         for prompt_flag in sorted(set(context.prompt_flags)):
-            if prompt_flag.startswith("classical_"):
+            if prompt_flag.startswith(PROMPT_FLAG_PREFIXES):
                 flags.append(prompt_flag)
 
         if request.constraints.max_tool_calls <= 0:
