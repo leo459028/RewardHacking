@@ -103,3 +103,13 @@ Every GitHub pull request and commit to `main` triggers automated verification v
 2. **Security & Secret Scan**: `python scripts/security_check.py`
 3. **Automated Tests**: `pytest -q -W error::DeprecationWarning` (deprecation warnings fail CI since `v1.5.8`)
 4. **Architecture Contracts** (`v1.6.0`): `lint-imports` (`[tool.importlinter]` in `pyproject.toml`); CI installs `requirements-otel.txt` so the OpenTelemetry tests run.
+
+**CI resolves newer dependencies than a local environment.** `requirements.txt` only sets lower bounds, so CI installs the newest releases while a developer machine keeps older ones. This broke CI twice although every local run passed: `v1.5.8` (PR #21, newer `pytest-asyncio` warned about `asyncio_default_fixture_loop_scope`) and `v1.6.0` (PR #26, FastAPI 0.16x keeps included routers as `_IncludedRouter` objects in `app.routes`, and Pydantic 2.14 dropped the `pattern` of `Decimal` JSON schemas). Before pushing a release, run the suite once in a fresh virtual environment built from the requirements files (same resolution as CI):
+
+```bash
+python -m venv <scratch>/civenv
+<scratch>/civenv/Scripts/python -m pip install -r requirements.txt -r requirements-otel.txt   # bin/python on Linux / macOS
+<scratch>/civenv/Scripts/python -m pytest -q -W error::DeprecationWarning -p no:cacheprovider
+```
+
+Tests must not depend on framework internals that change between releases: walk routes with `tests.openapi_contract.iter_routes()` / `route_owners()` instead of `app.routes`, and keep library-generated schema details out of contract digests.

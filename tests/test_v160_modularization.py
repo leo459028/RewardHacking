@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.openapi_contract import current_contract
+from tests.openapi_contract import current_contract, route_owners
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = ROOT / "tests" / "fixtures" / "v160" / "openapi_v1512.json"
@@ -83,10 +83,9 @@ def test_finops_paths_are_served_by_the_finops_router():
     from app.main import app
 
     owners: dict[str, set[str]] = {}
-    for route in app.routes:
-        path = getattr(route, "path", "")
+    for (path, _method), module in route_owners(app).items():
         if path.startswith(FINOPS_PATH_PREFIXES):
-            owners.setdefault(route.endpoint.__module__, set()).add(path)
+            owners.setdefault(module, set()).add(path)
     assert set(owners) == {"app.api.routers.finops"}, owners
     assert len(owners["app.api.routers.finops"]) >= 30
 

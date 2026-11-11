@@ -16,6 +16,7 @@ from app.api.routers import retention as retention_router
 from app.api.routers import sandbox as sandbox_router
 from app.core.config import get_settings
 from app.main import app
+from tests.openapi_contract import route_owners
 from tests.test_v160_retention import _add_full_children, _add_run
 
 RUN_SUBRESOURCES = (
@@ -302,12 +303,7 @@ def test_v160_tracing_endpoint_exposes_host_only(client, monkeypatch):
 
 
 def test_v160_new_and_moved_paths_are_served_by_domain_routers():
-    owners = {
-        (route.path, method): route.endpoint.__module__
-        for route in app.routes
-        if hasattr(route, "methods")
-        for method in route.methods
-    }
+    owners = route_owners(app)
     expected = {
         ("/v1/operations/readiness", "GET"): operations_router.__name__,
         ("/v1/operations/evidence", "POST"): operations_router.__name__,

@@ -19,6 +19,7 @@ Authority: `AGENTS.md` §3 Stage 2 and §5 (release commit only after every step
    It stops at the first failure (`--keep-going` runs the rest) and returns non-zero when any step failed.
 3. Read the summary. On failure, fix and rerun; never record or commit a failing gate.
 4. Prepend a new entry to the top of `docs/test_report.md` from the summary plus the live IDs printed by the browser E2E (run / review / benchmark IDs). Record only what actually ran.
-5. Then the release commit (`feat(vX.Y.Z): <title>`), using `rh-phase-commit` step 3 with the `feat(...)` message.
+5. Before pushing, run the suite once in a fresh venv built from `requirements.txt` + `requirements-otel.txt` (CI resolves newer versions than the local environment; see `docs/testing_guide.md` § CI / CD Verification Gate).
+6. Then the release commit (`feat(vX.Y.Z): <title>`), using `rh-phase-commit` step 3 with the `feat(...)` message.
 
 Notes: the browser E2E runs against the persistent local stack, so dedup / cap responses on same-day reruns are expected (see `docs/manual_test.md`). The script never edits `docs/test_report.md` itself.

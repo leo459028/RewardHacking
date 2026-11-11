@@ -773,7 +773,7 @@
    "header:X-API-Key",
    "path:pricing_id"
   ],
-  "request": "ddcfcfc65303f4e3",
+  "request": "ec47660bd46b6591",
   "response_200": "0ac03f03994d3816"
  },
  "PATCH /v1/budgets/{budget_id}": {
@@ -781,7 +781,7 @@
    "header:X-API-Key",
    "path:budget_id"
   ],
-  "request": "ee9b2720ca9c77b8",
+  "request": "34aa7766d470b91b",
   "response_200": "38e6de1b73d79dc4"
  },
  "PATCH /v1/pricing/{pricing_id}": {
@@ -789,7 +789,7 @@
    "header:X-API-Key",
    "path:pricing_id"
   ],
-  "request": "ddcfcfc65303f4e3",
+  "request": "ec47660bd46b6591",
   "response_200": "0ac03f03994d3816"
  },
  "PATCH /v1/tenants/{tenant_id}": {
@@ -1215,7 +1215,7 @@
   "params": [
    "header:X-API-Key"
   ],
-  "request": "212672c59427c9cf",
+  "request": "0adb17af39b62dbe",
   "response_200": "38e6de1b73d79dc4"
  },
  "POST /v1/budgets/{budget_id}/disable": {
@@ -1291,7 +1291,7 @@
   "params": [
    "header:X-API-Key"
   ],
-  "request": "b3a2bebd97fb336f",
+  "request": "c2530545919a32c2",
   "response_200": "979d692bd10cc2ff"
  },
  "POST /v1/cost/leases/{run_id}/release": {
@@ -1389,7 +1389,7 @@
   "params": [
    "header:X-API-Key"
   ],
-  "request": "91542266ae716bf2",
+  "request": "98c883c5cea0d9aa",
   "response_200": "0ac03f03994d3816"
  },
  "POST /v1/reviews/{review_id}/decision": {
@@ -1485,7 +1485,7 @@
   "params": [
    "header:X-API-Key"
   ],
-  "request": "db2d6b376cba65f3",
+  "request": "e104abdc3b97d833",
   "response_200": "cb0e3bf227f0c718"
  },
  "POST /v1/worker/dlq/{run_id}/requeue": {

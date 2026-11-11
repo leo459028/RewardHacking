@@ -15,6 +15,7 @@ from app.main import app
 from app.models.agent_run import AgentRun
 from app.ui.routers import operations as ui_operations
 from app.ui.routers import retention as ui_retention
+from tests.openapi_contract import route_owners
 from tests.test_v160_retention import _add_run
 
 SAME_ORIGIN = {"Origin": "http://testserver"}
@@ -103,12 +104,7 @@ def test_v160_retention_page_renders_policy_and_has_no_apply_or_release(client, 
 
 
 def test_v160_retention_dashboard_routes_exclude_apply_and_release():
-    paths = {
-        (route.path, method)
-        for route in app.routes
-        if getattr(route, "path", "").startswith("/dashboard/retention")
-        for method in getattr(route, "methods", ())
-    }
+    paths = {key for key in route_owners(app) if key[0].startswith("/dashboard/retention")}
     assert paths == {
         ("/dashboard/retention", "GET"),
         ("/dashboard/retention/plans", "POST"),
@@ -223,12 +219,7 @@ def test_v160_operations_page_lists_new_checks(client, monkeypatch):
 
 
 def test_v160_operations_and_observability_views_moved_to_ui_router():
-    owners = {
-        (route.path, method): route.endpoint.__module__
-        for route in app.routes
-        if hasattr(route, "methods")
-        for method in route.methods
-    }
+    owners = route_owners(app)
     for key in (
         ("/dashboard/operations", "GET"),
         ("/dashboard/operations/evidence", "POST"),
