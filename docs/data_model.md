@@ -1,8 +1,8 @@
 # Database Schema & Audit Models
 
-> **Data Model Version**: `v1.5.7`
+> **Data Model Version**: `v1.6.0`
 > **ORM**: SQLAlchemy (asyncio)  
-> **Migration Baseline**: Alembic revision `202606010004` (head)
+> **Migration Baseline**: Alembic revision `202611120002` (head)
 
 This specification details the relational data models and audit schemas maintained in PostgreSQL for the **RewardHacking** platform.
 
@@ -104,6 +104,19 @@ Probes: `name`, `description` (operator-only), `task_type`, `prompt`, `goal`, `p
 
 ### `TenantAttestationKey` (`tenant_attestation_keys`, `attk_` IDs)
 `tenant_id`, `name`, `algorithm` (`ed25519` | `ecdsa-p256-sha256`), `public_key_pem`, `key_fingerprint` (sha256 of DER SubjectPublicKeyInfo), `allowed_subjects`, `status` (`active` | `revoked`), `created_by`, `revoked_at`.
+
+## Audit Retention (`v1.6.0`, Alembic `202611120002`)
+
+### `LegalHold` (`legal_holds`, `lh_` IDs)
+`scope_type` (`tenant` | `run`), `scope_id`, `tenant_id` (the run's tenant for run scope), `reason` (required), `status` (`active` | `released`), `created_by`, `created_at`, `released_by`, `released_at`, `release_reason`. Index `(scope_type, scope_id, status)`. Several active holds may cover one scope; it stays protected until all are released.
+
+### `RetentionPurge` (`retention_purges`, `purge_` IDs)
+A plan and, after apply, its receipt: `status` (`planned` | `applied` | `partial` | `expired`), `plan_digest` (sha256 of cutoff, settings snapshot and sorted candidate ids), `cutoff_at`, `expires_at`, `settings_snapshot`, `candidate_run_ids`, `excluded_summary` (reason → count and up to five example run ids), `estimated_counts`, `scan_summary`, `created_by`, `applied_by`, `applied_at`, `applied_counts`, `skipped_at_apply` (run id and reasons), `failures` (run id and error type), `receipt_digest` (sha256 of the tombstone digests). No run content is stored.
+
+### `RetentionTombstone` (`retention_tombstones`, `tomb_` IDs)
+One per purged run (`run_id` unique): `tenant_id`, `purge_id`, `purged_at`, `run_created_at`, `final_status`, `record_counts` (rows deleted per table), `content_digest` (sha256 of the sorted `(table, primary key, sha256(canonical row))` list: hashes only), `policy_snapshot`. **Reserved, unused in `v1.6.0`**: `chain_version` (empty string), `prev_hash` and `entry_hash` (NULL) for a later tamper-evident hash chain; no tamper-evidence guarantee yet.
+
+A purge deletes the run's `agent_runs`, `approval_events`, `worker_attempts`, `tool_executions`, `evaluation_results`, `run_outcomes`, `evaluation_reviews`, low / medium `incidents`, `execution_plans`, `execution_plan_steps`, eligible `run_checkpoints` / `replay_attempts`, run-scoped `governance_events`, non-benchmark `judge_assessments`, `review_sampling_decisions` and its Redis state keys. It never deletes the FinOps ledger (`usage_events`, `cost_events`, `budget_violations`), `benchmark_*`, `honeypot_*`, `judge_profile_*`, governance events without a `run_id`, operations tables, tenants or keys.
 
 ## Judge Activation (`v1.5.12`, Alembic `202611120001`)
 

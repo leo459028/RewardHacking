@@ -1,8 +1,8 @@
 # Project Roadmap: Evolutionary Milestones
 
-> **Roadmap Baseline**: `v1.5.12`
-> **Status**: Active Open-Source Track (`v1.5.x` Governance, FinOps & Evaluation Series)
-> **Next Target**: `v1.6.0` (Runtime Foundations)
+> **Roadmap Baseline**: `v1.6.0`
+> **Status**: Active Open-Source Track (`v1.6.x` Verified Execution Series)
+> **Next Target**: `v1.6.1` (Isolated Sandbox Runtime MVP)
 
 This roadmap outlines the past development trajectory, the `v1.5.x` evaluation series, the `v1.6.x` runtime execution series, and long-term architectural milestones for the **RewardHacking** platform.
 
@@ -36,14 +36,22 @@ This roadmap outlines the past development trajectory, the `v1.5.x` evaluation s
 | `v1.5.9` | Completed | Labeled Benchmark & Detector Measurement | Review labels exported as benchmark samples, TPR at low FPR / AUROC / audit-budget curves, shadow `special_casing` detector, honeypot (impossible-task) probes, per-agent cheat rates, and CI attestation verification. |
 | `v1.5.10` | Completed | LLM-as-Judge Triage (Shadow) & Review Sampling | Pluggable trusted judge providers that only prioritize review work and never turn `review` into `pass`, plus quota-capped `sample_for_review` with a uniform random audit slice and triage precision@K measurement. |
 | `v1.5.11` | Completed | Real Local & Cloud Judges | Named judge profiles, backend compatibility (structured-output fallback, reasoning control, retries), background triage, profile cost attribution, tenant consent for external judges and multi-profile benchmarks; verified with a local model in LM Studio. |
-| `v1.5.12` | **Current** | **Judge Activation & Provider Adapters** | Test-then-activate gate with configuration fingerprints (rule-based judge by default), Dashboard judge profile management with templates and an editing gate, key-variable allowlist and HTTPS / metadata hardening, native Anthropic adapter, fallback chains, circuit breakers and per-profile budgets. |
-| `v1.6.0` | **Next** | Runtime Foundations | OTLP / W3C trace export, audit retention purge with legal hold (FinOps ledger excluded), FinOps module split, and a `SandboxBackend` interface. |
-| `v1.6.1` | Planned | Isolated Sandbox Runtime MVP | Hardened Docker backend with a configurable OCI runtime (`runc` locally, `runsc`/gVisor on Linux), limited to low-risk tools behind a feature flag; sandbox re-runs upgrade evidence to `platform_verified`. |
+| `v1.5.12` | Completed | Judge Activation & Provider Adapters | Test-then-activate gate with configuration fingerprints (rule-based judge by default), Dashboard judge profile management with templates and an editing gate, key-variable allowlist and HTTPS / metadata hardening, native Anthropic adapter, fallback chains, circuit breakers and per-profile budgets. |
+| `v1.6.0` | **Current** | **Runtime Foundations** | W3C trace context with optional OTLP export, audit retention plan → apply purge with legal holds and hash-only tombstones (FinOps ledger report-only), FinOps package split with `import-linter` contracts, and the sandbox execution spec with a `simulated` backend and conformance suite. |
+| `v1.6.1` | **Next** | Isolated Sandbox Runtime MVP | Dashboard RBAC and CSRF (then Dashboard retention apply and hold release); Hardened Docker backend with a configurable OCI runtime (`runc` locally, `runsc`/gVisor on Linux), limited to low-risk tools behind a feature flag; sandbox re-runs upgrade evidence to `platform_verified`. |
 | `v1.6.2+` | Long-Term | Remote MCP, MicroVM & Graph Replay | Real remote MCP transports behind an egress proxy, K8s Job and microVM backends, hidden held-out tests, mutation testing, resampling, and stateful graph time-travel replay. |
 
 ---
 
-## Current Release: `v1.5.12` Judge Activation & Provider Adapters
+## Current Release: `v1.6.0` Runtime Foundations
+
+The `v1.6.0` milestone prepares the platform to re-run agent work itself (Verified Execution); nothing is executed for real yet and evidence provenance is unchanged:
+- **Tracing**: W3C Trace Context on HTTP and Kafka, optional OpenTelemetry export with an attribute allowlist, GenAI judge spans, background span links, exemplars and a Jaeger compose profile.
+- **Retention & Legal Holds**: plan → apply purges with fixed exclusion reasons, a re-check per run at apply, hash-only tombstones and receipts, legal holds, `410 run_purged`, a report-only FinOps ledger and no automatic deletion by default. `/dashboard/retention` creates dry-run reports and holds; apply and hold release stay API-only until `v1.6.1` RBAC / CSRF.
+- **Sandbox Execution Spec**: `ExecutionSpec` / `ExecutionResult`, isolation levels with a record-only policy, a deterministic `simulated` backend and a conformance suite every real backend must pass.
+- **Modularization**: FinOps package, per-domain routers and `import-linter` contracts (post-execution review cannot import Kafka publishing or token leases).
+
+## Previous Release: `v1.5.12` Judge Activation & Provider Adapters
 
 The `v1.5.12` milestone makes choosing a judge an explicit, tested operator decision:
 - **Activation Gate**: rule-based by default; an LLM profile is used only after a successful probe whose configuration fingerprint still matches (Dashboard profiles also need *Activate*; `EVALUATION_JUDGE_PROFILE` profiles are probed at startup). Configuration or key changes fall back to the rule-based judge until re-tested.
@@ -52,7 +60,7 @@ The `v1.5.12` milestone makes choosing a judge an explicit, tested operator deci
 - **Provider Adapters**: adapter interface with the unchanged OpenAI-compatible adapter and a native Anthropic Messages API adapter (structured output through `output_config.format`).
 - **Resilience**: per-profile fallback chains, Redis circuit breakers with half-open retry, and per-profile daily token caps.
 
-## Previous Release: `v1.5.11` Real Local & Cloud Judges
+## Earlier Release: `v1.5.11` Real Local & Cloud Judges
 
 The `v1.5.11` milestone turns the `v1.5.10` judge framework into something that runs against real models while keeping every safety property:
 - **Judge Profiles**: named, validated profiles (YAML file and/or JSON setting) with provider, endpoint, model, API-key environment-variable *name*, structured-output mode, timeout, input budget, pricing provider / model, external policy, execution mode, retries, reasoning stripping and `reasoning_effort`. Keys inside a profile fail startup. Without profiles, behaviour and `judge_version` strings equal `v1.5.10`; named profiles prefix `judge_version` so results stay comparable across models.
@@ -110,7 +118,7 @@ The pre-execution perimeter (prompt guards, policy engine, Safe MCP Gateway, Fin
 - **Compatibility & Background Execution**: structured-output fallback, reasoning control, bounded retries, and background triage so slow local models never block outcome submission.
 - **Cost & Consent**: real-provider cost attribution and tenant consent before evidence leaves for an external judge.
 
-### `v1.5.12` (Current): Judge Activation & Provider Adapters
+### `v1.5.12` (Completed): Judge Activation & Provider Adapters
 - **Test, then activate**: no LLM judge without a matching successful probe; rule-based by default.
 - **Operator UI**: Dashboard profile management with templates and an editing gate; keys stay in environment variables.
 - **Adapters & Resilience**: native Anthropic adapter, fallback chains, circuit breakers and per-profile budgets.
@@ -177,13 +185,14 @@ Re-running an agent's change means executing untrusted code. The change could de
 
 **Summary**: `v1.5.x` made the platform a skilled reviewer of evidence; `v1.6.x` makes it a proctor with its own answer key who re-runs the exam. The first catches cheating that leaves traces; the second catches cheating where the evidence itself is fake, the hardest and most dangerous form of reward hacking.
 
-### `v1.6.0`: Runtime Foundations
+### `v1.6.0` (Current): Runtime Foundations
 - **OpenTelemetry Export**: W3C `traceparent` propagation and OTLP span export across API, worker, judge and executor.
 - **Audit Retention Purge with Legal Hold**: Dry-run and scheduled purges driven by `audit_retention_days`, excluding open incidents, runs under review, and runs referenced by checkpoints or replay bundles. The FinOps ledger is never auto-purged and follows a separate `finops_ledger_retention_days` setting (default about seven years) that only reports due records.
 - **Modularization**: Split `app/services/finops.py` into domain submodules and continue moving endpoints out of `app/api/routes.py` into per-domain routers.
 - **`SandboxBackend` Interface**: Abstracts tool execution while keeping deterministic simulation as the default backend.
 
-### `v1.6.1`: Isolated Sandbox Runtime MVP
+### `v1.6.1` (Next): Isolated Sandbox Runtime MVP
+- **P1 Dashboard RBAC & CSRF**: signed-in Dashboard roles and CSRF tokens on every form; afterwards the Dashboard may apply retention plans and release legal holds (API-only in `v1.6.0`).
 - **Hardened Docker Backend**: Read-only root filesystem, no network by default, all capabilities dropped, non-root user, and pid/memory/CPU limits. The OCI runtime is configurable: `runc` for local Docker Desktop verification, `runsc` (gVisor) on Linux hosts without code changes.
 - **Narrow Scope**: Only low-risk tools (for example `read_repo`, `run_tests`) and in-sandbox `stdio` MCP servers, behind a disabled-by-default feature flag.
 - **Platform-Verified Evidence**: Re-running tests inside the sandbox upgrades outcome evidence to `platform_verified`; dry-run replay can optionally re-execute inside the sandbox.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 import time
 import uuid
@@ -1013,6 +1014,48 @@ def run_manual_test_suite(
         assert 'id="judge-profiles-manage-link"' in page.content()
         print("[Scenario 10.7] Benchmark page links to Judge Profiles")
 
+        # Scenario 11 (v1.6.0): retention dry-run, legal hold, Run Detail trace / sandbox fields, tracing panel.
+        # Never applies a plan: the live database holds the user's persistent data.
+        policy = page.request.get(f"{base_url}/v1/retention/policy").json()
+        assert policy["purge_mode"] != "apply", "E2E refuses to run against a stack with AUDIT_RETENTION_PURGE_MODE=apply"
+        page.goto(f"{base_url}/dashboard/retention")
+        ret_html = page.content()
+        assert 'id="retention-policy"' in ret_html and 'id="no-delete-banner"' in ret_html
+        assert page.locator('form[action*="/apply"]').count() == 0 and page.locator('form[action*="release"]').count() == 0
+        page.click("#create-plan")
+        page.wait_for_load_state("networkidle")
+        assert "Dry-run report purge_" in page.content()
+        e2e_purge_id = page.inner_text("#plan-purge-id").strip()
+        candidates = page.inner_text("#plan-candidates").strip()
+        assert e2e_purge_id.startswith("purge_") and 'id="apply-api-only"' in page.content()
+        print(f"[Scenario 11.1] Retention page: mode {policy['purge_mode']} (no deletes); dry-run report {e2e_purge_id} with {candidates} candidates; no apply / release form")
+        hold_tenant = f"e2e-hold-{uuid.uuid4().hex[:8]}"
+        page.select_option('#hold-form select[name="scope_type"]', "tenant")
+        page.fill('#hold-form input[name="scope_id"]', hold_tenant)
+        page.fill('#hold-form input[name="reason"]', "E2E legal hold check")
+        page.click('#hold-form button[type="submit"]')
+        page.wait_for_load_state("networkidle")
+        hold_match = re.search(r"Legal hold (lh_[0-9a-f]+) created", page.content())
+        assert hold_match and hold_tenant in page.content()
+        e2e_hold_id = hold_match.group(1)
+        holds = page.request.get(f"{base_url}/v1/legal-holds?status=active").json()
+        assert any(h["hold_id"] == e2e_hold_id and h["tenant_id"] == hold_tenant for h in holds)
+        print(f"[Scenario 11.2] Legal hold {e2e_hold_id} created for tenant {hold_tenant} and listed (release stays API-only)")
+        for _ in range(10):
+            page.goto(f"{base_url}/dashboard/runs/{run1_id}")
+            if 'class="status completed"' in page.content():
+                break
+            time.sleep(1.0)
+        run_html = page.content()
+        assert 'id="run-trace-hold"' in run_html and "trace_" in run_html and 'id="run-hold-form"' in run_html
+        assert 'id="sandbox-execution"' in run_html and "simulated / simulated /" in run_html
+        print(f"[Scenario 11.3] Run Detail {run1_id}: trace id, legal hold form and sandbox_execution (simulated) shown")
+        sandbox = page.request.get(f"{base_url}/v1/sandbox/status").json()
+        assert sandbox["status"] == "pass" and sandbox["executes_tools"] is False
+        page.goto(f"{base_url}/dashboard/observability")
+        assert 'id="tracing"' in page.content() and "Dropped attributes" in page.content()
+        print("[Scenario 11.4] Sandbox status pass (simulated, no execution); Observability Tracing panel present")
+
         page.goto(f"{base_url}/dashboard/observability")
         obs_html = page.content()
         assert "FinOps" in obs_html
@@ -1056,21 +1099,22 @@ def run_manual_test_suite(
         assert "evaluation_review_queue_health" in ops_html
         assert "evaluation_benchmark_gate" in ops_html
         assert "evaluation_judge_health" in ops_html and "evaluation_sampling_health" in ops_html
+        assert "retention_policy" in ops_html and "sandbox_backend_health" in ops_html
         release_ver = page.input_value('input[name="release_version"]')
-        assert release_ver == "v1.5.12"
+        assert release_ver == "v1.6.0"
 
         page.select_option('select[name="evidence_type"]', "safety_regression")
         page.select_option('select[name="status"]', "pass")
         page.fill('input[name="reference_url"]', "docs/manual_test.md")
-        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.5.12")
+        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.6.0")
         page.click('button:has-text("Save Evidence")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
         page.click('button:has-text("Create Release Gate Snapshot")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
-        assert "v1.5.12" in page.content()
-        print("[Scenario 4.3] Operations evidence saved & v1.5.12 Release Gate snapshot created via browser")
+        assert "v1.6.0" in page.content()
+        print("[Scenario 4.3] Operations evidence saved & v1.6.0 Release Gate snapshot created via browser")
 
         # 6. Check all primary navigation tabs for 0E-8 and HTTP 200
         nav_routes = [
@@ -1090,6 +1134,7 @@ def run_manual_test_suite(
             "/dashboard/admin/finops/pricing/sources",
             "/dashboard/admin/finops/budgets",
             "/dashboard/operations",
+            "/dashboard/retention",
             "/dashboard/playground",
         ]
         for route in nav_routes:

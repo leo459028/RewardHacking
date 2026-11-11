@@ -1,6 +1,6 @@
 # Manual QA & Interactive Browser Testing Guide
 
-> **Testing Baseline**: `v1.5.12`
+> **Testing Baseline**: `v1.6.0`
 > **Target Environment**: Local Docker Compose Stack (`http://localhost:8000`)
 > **Primary Interface**: Web Browser (`/dashboard`) & REST API (`/v1`)
 > **Automated Browser Runner**: `python scripts/browser_manual_test.py` (supports `--qa-currency TWD|USD|CNY`, default `TWD`)
@@ -20,7 +20,7 @@ docker compose up -d --build
 ```
 
 ### 1.2 Verify Container & Database Health
-Run the following commands in your terminal to confirm all 5 containers are healthy and migrations are at head (`202611120001`). Since `v1.5.12` the QA stack needs `EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev` in `.env` (local only) so Scenario 10 can edit judge profiles:
+Run the following commands in your terminal to confirm all 5 containers are healthy and migrations are at head (`202611120002`). Since `v1.5.12` the QA stack needs `EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev` in `.env` (local only) so Scenario 10 can edit judge profiles:
 
 ```bash
 docker compose ps
@@ -274,11 +274,22 @@ Optional API checks: `GET /v1/control-plane/mcp-servers`; `POST /v1/control-plan
 7. **Benchmark link** — `/dashboard/benchmark#judge-profiles` shows *Manage, test and activate profiles*.
 8. **(Manual) Real local model** — start LM Studio, use the LM Studio template with its real port and model, **Test** (expect latency, tokens and `json_schema`), **Activate**, submit flagged evidence and see the profile's assessment; change the model and expect *Needs re-test* and the rule-based judge; stop LM Studio and watch three failures open the breaker (*Offline (breaker)*) with the fallback used.
 
+## 5.11 Scenario 11: Retention Dry-Run, Legal Hold, Run Trace & Sandbox Fields (`v1.6.0`)
+
+> Steps 1–5 are automated by `scripts/browser_manual_test.py`. The live database holds persistent data, so the E2E **never applies a purge**; it refuses to run when `AUDIT_RETENTION_PURGE_MODE=apply`.
+
+1. **Retention page** — `/dashboard/retention` (sidebar *Retention \| 資料保留*, the 18th primary view): policy tiles (retention days, purge mode `plan`, batch size, plan TTL, FinOps ledger days) and the banner *This environment does not delete data*. There is no apply form and no hold release form.
+2. **Dry-run report** — click **Generate dry-run report**: *Dry-run report purge_… created*, with candidates, exclusion reasons (expand *show* for example runs linking to Run Detail), estimated deletions per table, `plan_digest`, expiry and the `curl` command for the API-only apply.
+3. **Legal hold** — create a hold for a unique tenant `e2e-hold-<id>` with a reason: *Legal hold lh_… created*; it is listed under *Active* with *Use the API (admin required)* in the release column; `GET /v1/legal-holds?status=active` returns it.
+4. **Run Detail** — open the Scenario 1 run: the *Trace & Legal Hold* panel shows `trace_<32 hex>` (and *Open in Jaeger* when `OTEL_TRACE_UI_URL_TEMPLATE` is set) and the hold form; the tool transcript shows `simulated / simulated / <required isolation> / n/a / <spec digest prefix>` for each allowed tool.
+5. **Sandbox & tracing** — `GET /v1/sandbox/status` is `pass` with `executes_tools: false`; `/dashboard/observability` shows the *Tracing* panel; `/dashboard/operations` lists `retention_policy` and `sandbox_backend_health`.
+6. **(Manual, API only, not on live data)** — on a throwaway stack with `AUDIT_RETENTION_PURGE_MODE=apply`, apply a plan with its `plan_digest` and `confirm: true`, then `GET /v1/runs/{run_id}` returns `410 run_purged` with the tombstone and Run Detail shows the purge notice (see `docs/runbook.md`).
+
 ## 6. Browser QA Sign-Off Checklist
 
 Before signing off a release via manual browser testing, verify all items below:
 
-- [ ] All primary navigation tabs (`Overview`, `Runs`, `Approvals`, `Reviews`, `Benchmark`, `Judge Profiles`, `Worker`, `Observability`, `Governance`, `Control Plane`, `Costs`, `Admin FinOps`, `Operations`, `Playground`) return HTTP 200 with zero server tracebacks.
+- [ ] All primary navigation tabs (`Overview`, `Runs`, `Approvals`, `Reviews`, `Benchmark`, `Judge Profiles`, `Worker`, `Observability`, `Governance`, `Control Plane`, `Costs`, `Admin FinOps`, `Operations`, `Retention`, `Playground`) return HTTP 200 with zero server tracebacks.
 - [ ] Browser Developer Tools (`F12` $\rightarrow$ **Console** & **Network**) show `0` unhandled JavaScript errors or broken asset requests (`404`/`500`).
 - [ ] No scientific notation artifacts (`0E-8` or `0E-12`) appear on `/dashboard/costs`, `/dashboard/runs/{run_id}`, `/dashboard/admin/finops/pricing`, or `/dashboard/admin/finops/budgets`.
 - [ ] Budget violation inline buttons (**Acknowledge**, **Resolve**, **Ignore**) transition violation state and persist across page reloads.

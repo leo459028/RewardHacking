@@ -34,7 +34,7 @@ def _run_worker(session_factory, run_id: str, client) -> None:
 def test_v156_burn_rate_forecast_and_exhaustion_warning(
     client, session_factory, low_risk_payload
 ):
-    assert FINOPS_CALCULATION_VERSION.startswith("v1.5.")
+    assert FINOPS_CALCULATION_VERSION.startswith("v1.")
     tenant_id = "burn-t-156"
     effective_start = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc).isoformat()
 

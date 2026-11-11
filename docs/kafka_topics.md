@@ -42,6 +42,12 @@ All Kafka messages conform to the standardized envelope generated via `app/worke
 
 ---
 
+### Message Headers (`v1.6.0`)
+
+Producers attach W3C Trace Context headers: `traceparent` (always) and `tracestate` (when present). The envelope `trace_id` is the current trace as `trace_<32 hex>` (or the client's legacy `X-Trace-Id`). The consumer continues the producer span from `traceparent`; without headers it recovers the trace id from `trace_id` when it has the `trace_<32 hex>` form, otherwise it starts a new trace. See [`observability.md`](observability.md).
+
+---
+
 ## Consumer Guarantees & Fail-Closed Logic
 
 1. **Partition Key**: All events published to `agent.requests` use the unique `run_id` as the message key, ensuring strict sequential processing for a given agent task.
