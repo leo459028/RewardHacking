@@ -7,7 +7,7 @@
     <div class="title-note">執行紀錄</div>
     <div class="muted">依 status 與 task type 篩選 audit trail 中的 runs。</div>
   </div>
-  <a class="button" href="/dashboard/playground">New Test Run</a>
+  {% if can("runs.submit", "playground") %}<a class="button" href="/dashboard/playground">New Test Run</a>{% endif %}
 </div>
 
 <section class="panel">

@@ -94,6 +94,8 @@ from app.services.finops import (
     disable_pricing_item,
     export_tenant_cost_ledger,
     format_decimal_plain,
+    get_budget_policy,
+    get_budget_violation,
     get_pricing_item,
     list_budget_policies,
     list_budget_violations,
@@ -118,8 +120,18 @@ from app.schemas.finops import (
 )
 from app.services.pricing_import import apply_pricing_seed, dry_run_pricing_seed, load_pricing_seed
 from app.services.run_state import RunStateStore
+from app.services.access.permissions import PLATFORM_VIEW
 from app.services.access.principal import Principal
-from app.ui.security import dashboard_principal, install_template_globals
+from app.ui.security import (
+    actor_for,
+    dashboard_principal,
+    ensure_permission,
+    ensure_tenant_access,
+    install_template_globals,
+    needs,
+    principal_of,
+    scoped_tenant,
+)
 from app.workers.producer import make_event
 
 
@@ -171,7 +183,7 @@ async def _attach_execution_plan(
     await persist_execution_plan(session, plan)
 
 
-@router.get("/", include_in_schema=False)
+@router.get("/", include_in_schema=False, dependencies=needs("dashboard.view"))
 async def root():
     return HTMLResponse(
         '<meta http-equiv="refresh" content="0; url=/dashboard">'
@@ -179,16 +191,17 @@ async def root():
     )
 
 
-@router.get("/favicon.ico", include_in_schema=False)
+@router.get("/favicon.ico", include_in_schema=False, dependencies=needs("dashboard.view"))
 async def favicon():
     return HTMLResponse("", status_code=204)
 
 
-@router.get("/dashboard", response_class=HTMLResponse)
+@router.get("/dashboard", response_class=HTMLResponse, dependencies=needs("dashboard.view", view="overview"))
 async def dashboard(request: Request, session: AsyncSession = Depends(get_session)):
-    summary = await dashboard_summary(session)
-    runs = await list_runs(session, limit=8)
-    incidents = await list_incidents(session, limit=5)
+    own_tenant = await scoped_tenant(request, session, None)
+    summary = await dashboard_summary(session, tenant_id=own_tenant)
+    runs = await list_runs(session, tenant_id=own_tenant, limit=8)
+    incidents = await list_incidents(session, tenant_id=own_tenant, limit=5)
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -201,7 +214,7 @@ async def dashboard(request: Request, session: AsyncSession = Depends(get_sessio
     )
 
 
-@router.get("/dashboard/runs", response_class=HTMLResponse)
+@router.get("/dashboard/runs", response_class=HTMLResponse, dependencies=needs("dashboard.view", view="runs"))
 async def dashboard_runs(
     request: Request,
     status: str | None = None,
@@ -209,6 +222,7 @@ async def dashboard_runs(
     tenant_id: str | None = None,
     session: AsyncSession = Depends(get_session),
 ):
+    tenant_id = await scoped_tenant(request, session, tenant_id)
     runs = await list_runs(
         session,
         status=status or None,
@@ -229,7 +243,7 @@ async def dashboard_runs(
     )
 
 
-@router.get("/dashboard/runs/{run_id}", response_class=HTMLResponse)
+@router.get("/dashboard/runs/{run_id}", response_class=HTMLResponse, dependencies=needs("dashboard.view", view="run_detail"))
 async def dashboard_run_detail(
     request: Request,
     run_id: str,
@@ -243,10 +257,14 @@ async def dashboard_run_detail(
         # v1.6.0 D17: a purged run renders its tombstone with 200 (the API answers 410 run_purged).
         tombstone = await retention.tombstone_for(session, run_id)
         if tombstone is None:
+            if not principal_of(request).is_platform:
+                await ensure_tenant_access(request, session, None)  # no existence oracle for tenant-bound users
             raise HTTPException(status_code=404, detail="Run not found.")
+        await ensure_tenant_access(request, session, tombstone.tenant_id)
         return templates.TemplateResponse(
             request, "run_purged.html", {"tombstone": retention.tombstone_summary(tombstone), "active": "runs"}
         )
+    await ensure_tenant_access(request, session, run.tenant_id)
     incidents = await incidents_for_run(session, run_id)
     attempts = await list_worker_attempts(session, run_id=run_id)
     tool_executions = await list_tool_executions(session, run_id=run_id)
@@ -292,7 +310,7 @@ async def dashboard_run_detail(
     )
 
 
-@router.get("/dashboard/control-plane", response_class=HTMLResponse)
+@router.get("/dashboard/control-plane", response_class=HTMLResponse, dependencies=needs("dashboard.view", view="control_plane"))
 async def dashboard_control_plane(
     request: Request,
     session: AsyncSession = Depends(get_session),
@@ -322,7 +340,7 @@ async def dashboard_control_plane(
     )
 
 
-@router.post("/dashboard/control-plane/workflows", response_class=HTMLResponse)
+@router.post("/dashboard/control-plane/workflows", response_class=HTMLResponse, dependencies=needs("control_plane.manage", view="control_plane"))
 async def dashboard_control_plane_workflow_upsert(
     request: Request,
     session: AsyncSession = Depends(get_session),
@@ -353,7 +371,7 @@ async def dashboard_control_plane_workflow_upsert(
     return RedirectResponse("/dashboard/control-plane", status_code=303)
 
 
-@router.post("/dashboard/control-plane/tools", response_class=HTMLResponse)
+@router.post("/dashboard/control-plane/tools", response_class=HTMLResponse, dependencies=needs("control_plane.manage", view="control_plane"))
 async def dashboard_control_plane_tool_upsert(
     request: Request,
     session: AsyncSession = Depends(get_session),
@@ -405,7 +423,7 @@ async def dashboard_control_plane_tool_upsert(
     return RedirectResponse("/dashboard/control-plane", status_code=303)
 
 
-@router.post("/dashboard/control-plane/mcp-servers", response_class=HTMLResponse)
+@router.post("/dashboard/control-plane/mcp-servers", response_class=HTMLResponse, dependencies=needs("control_plane.manage", view="control_plane"))
 async def dashboard_control_plane_mcp_server_upsert(
     request: Request,
     session: AsyncSession = Depends(get_session),
@@ -434,7 +452,7 @@ async def dashboard_control_plane_mcp_server_upsert(
     await persist_governance_event(
         session,
         tenant_id="default",
-        user_id="dashboard-admin",
+        user_id=actor_for(request, "dashboard-admin"),
         event_type="mcp_server.upserted",
         decision="recorded",
         reason=f"MCP server {server['mcp_server_id']} upserted from Control Plane Dashboard.",
@@ -443,7 +461,7 @@ async def dashboard_control_plane_mcp_server_upsert(
     return RedirectResponse("/dashboard/control-plane", status_code=303)
 
 
-@router.post("/dashboard/control-plane/mcp-servers/{mcp_server_id}/breaker/open", response_class=HTMLResponse)
+@router.post("/dashboard/control-plane/mcp-servers/{mcp_server_id}/breaker/open", response_class=HTMLResponse, dependencies=needs("breakers.manage", view="control_plane"))
 async def dashboard_control_plane_mcp_breaker_open(
     mcp_server_id: str,
     request: Request,
@@ -459,7 +477,7 @@ async def dashboard_control_plane_mcp_breaker_open(
     await persist_governance_event(
         session,
         tenant_id="default",
-        user_id="dashboard-admin",
+        user_id=actor_for(request, "dashboard-admin"),
         event_type="mcp_breaker.opened",
         decision="tripped",
         reason=reason,
@@ -468,7 +486,7 @@ async def dashboard_control_plane_mcp_breaker_open(
     return RedirectResponse("/dashboard/control-plane", status_code=303)
 
 
-@router.post("/dashboard/control-plane/mcp-servers/{mcp_server_id}/breaker/close", response_class=HTMLResponse)
+@router.post("/dashboard/control-plane/mcp-servers/{mcp_server_id}/breaker/close", response_class=HTMLResponse, dependencies=needs("breakers.manage", view="control_plane"))
 async def dashboard_control_plane_mcp_breaker_close(
     mcp_server_id: str,
     request: Request,
@@ -481,7 +499,7 @@ async def dashboard_control_plane_mcp_breaker_close(
     await persist_governance_event(
         session,
         tenant_id="default",
-        user_id="dashboard-admin",
+        user_id=actor_for(request, "dashboard-admin"),
         event_type="mcp_breaker.closed",
         decision="reset",
         reason=reason,
@@ -490,7 +508,7 @@ async def dashboard_control_plane_mcp_breaker_close(
     return RedirectResponse("/dashboard/control-plane", status_code=303)
 
 
-@router.post("/dashboard/control-plane/tools/{tool_name}/breaker/open", response_class=HTMLResponse)
+@router.post("/dashboard/control-plane/tools/{tool_name}/breaker/open", response_class=HTMLResponse, dependencies=needs("breakers.manage", view="control_plane"))
 async def dashboard_control_plane_breaker_open(
     tool_name: str,
     request: Request,
@@ -508,7 +526,7 @@ async def dashboard_control_plane_breaker_open(
     await persist_governance_event(
         session,
         tenant_id="default",
-        user_id="dashboard-admin",
+        user_id=actor_for(request, "dashboard-admin"),
         event_type="tool_breaker.opened",
         decision="tripped",
         reason=reason,
@@ -517,7 +535,7 @@ async def dashboard_control_plane_breaker_open(
     return RedirectResponse("/dashboard/control-plane", status_code=303)
 
 
-@router.post("/dashboard/control-plane/tools/{tool_name}/breaker/close", response_class=HTMLResponse)
+@router.post("/dashboard/control-plane/tools/{tool_name}/breaker/close", response_class=HTMLResponse, dependencies=needs("breakers.manage", view="control_plane"))
 async def dashboard_control_plane_breaker_close(
     tool_name: str,
     request: Request,
@@ -530,7 +548,7 @@ async def dashboard_control_plane_breaker_close(
     await persist_governance_event(
         session,
         tenant_id="default",
-        user_id="dashboard-admin",
+        user_id=actor_for(request, "dashboard-admin"),
         event_type="tool_breaker.closed",
         decision="reset",
         reason=reason,
@@ -539,9 +557,9 @@ async def dashboard_control_plane_breaker_close(
     return RedirectResponse("/dashboard/control-plane", status_code=303)
 
 
-@router.get("/dashboard/approvals", response_class=HTMLResponse)
+@router.get("/dashboard/approvals", response_class=HTMLResponse, dependencies=needs("dashboard.view", view="approvals"))
 async def dashboard_approvals(request: Request, session: AsyncSession = Depends(get_session)):
-    approvals = await list_approvals(session)
+    approvals = await list_approvals(session, tenant_id=await scoped_tenant(request, session, None))
     return templates.TemplateResponse(
         request,
         "approvals.html",
@@ -552,7 +570,7 @@ async def dashboard_approvals(request: Request, session: AsyncSession = Depends(
     )
 
 
-@router.get("/dashboard/worker", response_class=HTMLResponse)
+@router.get("/dashboard/worker", response_class=HTMLResponse, dependencies=needs("dashboard.view", view="worker"))
 async def dashboard_worker(request: Request, session: AsyncSession = Depends(get_session)):
     attempts = await list_worker_attempts(session)
     dlq = await list_worker_attempts(session, status="dlq")
@@ -567,25 +585,34 @@ async def dashboard_worker(request: Request, session: AsyncSession = Depends(get
     )
 
 
-@router.get("/dashboard/governance", response_class=HTMLResponse)
+@router.get("/dashboard/governance", response_class=HTMLResponse, dependencies=needs("dashboard.view", view="governance"))
 async def dashboard_governance(
     request: Request,
     tenant_id: str | None = None,
     session: AsyncSession = Depends(get_session),
 ):
+    from app.services.access.permissions import has_permission
+
+    principal = principal_of(request)
+    tenant_id = await scoped_tenant(request, session, tenant_id)
     runs = await list_runs(session, tenant_id=tenant_id or None, limit=100)
     tenants = await list_tenants(session)
+    if not principal.is_platform:
+        tenants = [tenant for tenant in tenants if tenant.tenant_id == principal.tenant_id]
     tenant_ids = [tenant.tenant_id for tenant in tenants]
     if not tenant_ids:
-        tenant_ids = sorted({run.tenant_id for run in await list_runs(session, limit=200)})
+        tenant_ids = sorted({run.tenant_id for run in await list_runs(session, tenant_id=tenant_id or None, limit=200)})
     selected_tenant = tenant_id or (tenant_ids[0] if tenant_ids else "default")
     summary = await governance_summary(session, tenant_id=selected_tenant)
     events = await list_governance_events(session, tenant_id=tenant_id or None, limit=25)
-    api_keys = await list_tenant_api_keys(session, tenant_id=selected_tenant)
+    # API parity: listing API keys is admin only (``api_keys.view`` adds the read-only auditor, D21).
+    api_keys = await list_tenant_api_keys(session, tenant_id=selected_tenant) if has_permission(principal.role, "api_keys.view") else []
     from app.services.review_queue import get_evaluation_policy, policy_to_dict
     from app.ui.routers.reviews import list_evaluation_policies
 
-    evaluation_policies = await list_evaluation_policies(session)
+    evaluation_policies = [
+        policy for policy in await list_evaluation_policies(session) if principal.is_platform or policy.tenant_id == principal.tenant_id
+    ]
     selected_policy = policy_to_dict(selected_tenant, await get_evaluation_policy(session, selected_tenant))
     return templates.TemplateResponse(
         request,
@@ -609,7 +636,7 @@ async def dashboard_governance(
     )
 
 
-@router.post("/dashboard/governance/tenants", response_class=HTMLResponse)
+@router.post("/dashboard/governance/tenants", response_class=HTMLResponse, dependencies=needs("tenants.manage", view=PLATFORM_VIEW))
 async def dashboard_governance_tenant_upsert(
     request: Request,
     session: AsyncSession = Depends(get_session),
@@ -626,6 +653,8 @@ async def dashboard_governance_tenant_upsert(
         hr_limit = max(1, int(str(form.get("high_risk_limit_per_hour", "10")).strip() or "10"))
     except ValueError:
         hr_limit = 10
+    if status != "active":
+        await ensure_permission(request, session, "tenants.disable")
 
     existing = await get_tenant(session, tenant_id)
     if existing is None:
@@ -649,7 +678,7 @@ async def dashboard_governance_tenant_upsert(
         await persist_governance_event(
             session,
             tenant_id=tenant_id,
-            user_id="dashboard-admin",
+            user_id=actor_for(request, "dashboard-admin"),
             event_type="tenant.created",
             decision="created",
             reason=f"Tenant {tenant_id} created from Governance Dashboard.",
@@ -670,7 +699,7 @@ async def dashboard_governance_tenant_upsert(
         await persist_governance_event(
             session,
             tenant_id=tenant_id,
-            user_id="dashboard-admin",
+            user_id=actor_for(request, "dashboard-admin"),
             event_type="tenant.updated",
             decision="updated",
             reason=f"Tenant {tenant_id} updated from Governance Dashboard.",
@@ -716,7 +745,7 @@ async def _issue_tenant_api_key_and_render(
     await persist_governance_event(
         session,
         tenant_id=tenant_id,
-        user_id="dashboard-admin",
+        user_id=actor_for(request, "dashboard-admin"),
         event_type="api_key.created",
         decision="created",
         reason=f"API key {name} ({role}) issued for tenant {tenant_id}.",
@@ -756,7 +785,7 @@ async def _issue_tenant_api_key_and_render(
     return response
 
 
-@router.post("/dashboard/governance/api-keys", response_class=HTMLResponse)
+@router.post("/dashboard/governance/api-keys", response_class=HTMLResponse, dependencies=needs("api_keys.manage", view=PLATFORM_VIEW))
 async def dashboard_governance_api_key_create_form(
     request: Request,
     session: AsyncSession = Depends(get_session),
@@ -765,7 +794,7 @@ async def dashboard_governance_api_key_create_form(
     tenant_id = str(form.get("tenant_id", "default")).strip() or "default"
     name = str(form.get("name", "dashboard-key")).strip() or "dashboard-key"
     role = str(form.get("role", "operator")).strip() or "operator"
-    if role not in {"admin", "operator", "viewer", "finops_admin", "reviewer"}:
+    if role not in {"admin", "operator", "viewer", "finops_admin", "reviewer", "auditor"}:
         role = "operator"
     return await _issue_tenant_api_key_and_render(
         request,
@@ -776,7 +805,7 @@ async def dashboard_governance_api_key_create_form(
     )
 
 
-@router.post("/dashboard/governance/tenants/{tenant_id}/api-keys", response_class=HTMLResponse)
+@router.post("/dashboard/governance/tenants/{tenant_id}/api-keys", response_class=HTMLResponse, dependencies=needs("api_keys.manage", view=PLATFORM_VIEW))
 async def dashboard_governance_api_key_create(
     tenant_id: str,
     request: Request,
@@ -786,7 +815,7 @@ async def dashboard_governance_api_key_create(
     eff_tenant = str(form.get("tenant_id", "")).strip() or tenant_id or "default"
     name = str(form.get("name", "dashboard-key")).strip() or "dashboard-key"
     role = str(form.get("role", "operator")).strip() or "operator"
-    if role not in {"admin", "operator", "viewer", "finops_admin", "reviewer"}:
+    if role not in {"admin", "operator", "viewer", "finops_admin", "reviewer", "auditor"}:
         role = "operator"
     return await _issue_tenant_api_key_and_render(
         request,
@@ -797,8 +826,9 @@ async def dashboard_governance_api_key_create(
     )
 
 
-@router.post("/dashboard/governance/tenants/{tenant_id}/api-keys/{key_id}/revoke", response_class=HTMLResponse)
+@router.post("/dashboard/governance/tenants/{tenant_id}/api-keys/{key_id}/revoke", response_class=HTMLResponse, dependencies=needs("api_keys.manage", view=PLATFORM_VIEW))
 async def dashboard_governance_api_key_revoke(
+    request: Request,
     tenant_id: str,
     key_id: str,
     session: AsyncSession = Depends(get_session),
@@ -809,7 +839,7 @@ async def dashboard_governance_api_key_revoke(
         await persist_governance_event(
             session,
             tenant_id=tenant_id,
-            user_id="dashboard-admin",
+            user_id=actor_for(request, "dashboard-admin"),
             event_type="api_key.revoked",
             decision="revoked",
             reason=f"API key {revoked.name} (id={revoked.key_id}) revoked from Governance Dashboard.",
@@ -818,7 +848,7 @@ async def dashboard_governance_api_key_revoke(
     return RedirectResponse(f"/dashboard/governance?tenant_id={tenant_id}", status_code=303)
 
 
-@router.get("/dashboard/costs", response_class=HTMLResponse)
+@router.get("/dashboard/costs", response_class=HTMLResponse, dependencies=needs("dashboard.view", view="costs"))
 async def dashboard_costs(
     request: Request,
     tenant_id: str | None = None,
@@ -829,7 +859,7 @@ async def dashboard_costs(
     session: AsyncSession = Depends(get_session),
     state_store: RunStateStore = Depends(get_state_store),
 ):
-    selected_tenant = tenant_id or "default"
+    selected_tenant = await scoped_tenant(request, session, tenant_id) or "default"
     summary = await tenant_cost_summary(
         session,
         tenant_id=selected_tenant,
@@ -865,7 +895,7 @@ async def dashboard_costs(
     )
 
 
-@router.post("/dashboard/costs/leases/{run_id}/release", response_class=HTMLResponse)
+@router.post("/dashboard/costs/leases/{run_id}/release", response_class=HTMLResponse, dependencies=needs("finops.manage"))
 async def dashboard_costs_lease_release(
     run_id: str,
     request: Request,
@@ -873,9 +903,11 @@ async def dashboard_costs_lease_release(
     state_store: RunStateStore = Depends(get_state_store),
 ):
     form = await request.form()
-    tenant_id = str(form.get("tenant_id", "default")).strip() or "default"
+    tenant_id = await scoped_tenant(request, session, str(form.get("tenant_id", "")), permission="finops.manage") or "default"
     reason = str(form.get("reason", "Manual lease release from Costs Dashboard")).strip() or "Manual lease release"
     run = await get_run(session, run_id)
+    if run is not None:
+        await ensure_tenant_access(request, session, run.tenant_id, permission="finops.manage")
     if run is not None and run.status == "running":
         raise HTTPException(
             status_code=409,
@@ -890,7 +922,7 @@ async def dashboard_costs_lease_release(
         run_id=run_id,
         tenant_id=run.tenant_id if run is not None else tenant_id,
         reason=reason,
-        actor="dashboard-finops-admin",
+        actor=actor_for(request, "dashboard-finops-admin"),
         record_governance_event=True,
     )
     await session.commit()
@@ -898,8 +930,9 @@ async def dashboard_costs_lease_release(
     return RedirectResponse(f"/dashboard/costs?tenant_id={eff_tenant}", status_code=303)
 
 
-@router.get("/dashboard/costs/export")
+@router.get("/dashboard/costs/export", dependencies=needs("finops.export", view="costs"))
 async def dashboard_costs_export(
+    request: Request,
     tenant_id: str = "default",
     format: str = Query(default="csv", pattern="^(json|csv)$"),
     project_id: str | None = None,
@@ -912,7 +945,7 @@ async def dashboard_costs_export(
     mcp_server_id: str | None = None,
     session: AsyncSession = Depends(get_session),
 ):
-    selected_tenant = tenant_id or "default"
+    selected_tenant = await scoped_tenant(request, session, tenant_id, permission="finops.export") or "default"
     export_data = await export_tenant_cost_ledger(
         session,
         tenant_id=selected_tenant,
@@ -938,13 +971,13 @@ async def dashboard_costs_export(
     return export_data
 
 
-@router.post("/dashboard/costs/adjustments", response_class=HTMLResponse)
+@router.post("/dashboard/costs/adjustments", response_class=HTMLResponse, dependencies=needs("finops.manage"))
 async def dashboard_costs_adjustment_create(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ):
     form = await request.form()
-    tenant_id = str(form.get("tenant_id", "default")).strip() or "default"
+    tenant_id = await scoped_tenant(request, session, str(form.get("tenant_id", "")), permission="finops.manage") or "default"
     amount_str = str(form.get("amount", "0")).strip() or "0"
     currency_str = str(form.get("currency", "USD")).strip().upper() or "USD"
     tax_rate_str = str(form.get("tax_rate", "")).strip()
@@ -966,21 +999,24 @@ async def dashboard_costs_adjustment_create(
         reverses_cost_id=str(form.get("reverses_cost_id", "")).strip() or None,
         reason=str(form.get("reason", "Manual adjustment from dashboard")).strip()
         or "Manual adjustment from dashboard",
-        created_by="dashboard-finops-admin",
+        created_by=actor_for(request, "dashboard-finops-admin"),
     )
-    await create_cost_adjustment(session, payload, actor="dashboard-finops-admin")
+    await create_cost_adjustment(session, payload, actor=actor_for(request, "dashboard-finops-admin"))
     return RedirectResponse(f"/dashboard/costs?tenant_id={tenant_id}", status_code=303)
 
 
-@router.post("/dashboard/costs/violations/{violation_id}/acknowledge", response_class=HTMLResponse)
+@router.post("/dashboard/costs/violations/{violation_id}/acknowledge", response_class=HTMLResponse, dependencies=needs("finops.manage"))
 async def dashboard_acknowledge_violation(
     request: Request,
     violation_id: str,
     session: AsyncSession = Depends(get_session),
 ):
     form = await request.form()
+    violation = await get_budget_violation(session, violation_id)
+    if violation is not None:
+        await ensure_tenant_access(request, session, violation.tenant_id, permission="finops.manage")
     notes = str(form.get("notes", "Acknowledged from dashboard"))
-    resolved_by = str(form.get("resolved_by", "dashboard-operator"))
+    resolved_by = actor_for(request, str(form.get("resolved_by", "dashboard-operator")))
     await acknowledge_budget_violation(
         session,
         violation_id,
@@ -990,7 +1026,7 @@ async def dashboard_acknowledge_violation(
     return RedirectResponse("/dashboard/costs", status_code=303)
 
 
-@router.post("/dashboard/costs/violations/{violation_id}/resolve", response_class=HTMLResponse)
+@router.post("/dashboard/costs/violations/{violation_id}/resolve", response_class=HTMLResponse, dependencies=needs("finops.manage"))
 async def dashboard_resolve_violation(
     request: Request,
     violation_id: str,
@@ -1000,8 +1036,11 @@ async def dashboard_resolve_violation(
     resolution_status = str(form.get("resolution_status", "resolved"))
     if resolution_status not in {"resolved", "ignored"}:
         resolution_status = "resolved"
+    violation = await get_budget_violation(session, violation_id)
+    if violation is not None:
+        await ensure_tenant_access(request, session, violation.tenant_id, permission="finops.manage")
     notes = str(form.get("notes", f"Marked {resolution_status} from dashboard"))
-    resolved_by = str(form.get("resolved_by", "dashboard-finops-admin"))
+    resolved_by = actor_for(request, str(form.get("resolved_by", "dashboard-finops-admin")))
     await resolve_budget_violation(
         session,
         violation_id,
@@ -1012,13 +1051,14 @@ async def dashboard_resolve_violation(
     return RedirectResponse("/dashboard/costs", status_code=303)
 
 
-@router.get("/dashboard/admin/finops/budgets", response_class=HTMLResponse)
+@router.get("/dashboard/admin/finops/budgets", response_class=HTMLResponse, dependencies=needs("dashboard.view", view="budgets"))
 async def dashboard_admin_finops_budgets(
     request: Request,
     tenant_id: str | None = None,
     active_only: bool = False,
     session: AsyncSession = Depends(get_session),
 ):
+    tenant_id = await scoped_tenant(request, session, tenant_id)
     budgets = await list_budget_policies(
         session,
         tenant_id=tenant_id or None,
@@ -1042,7 +1082,7 @@ async def dashboard_admin_finops_budgets(
     )
 
 
-@router.post("/dashboard/admin/finops/budgets", response_class=HTMLResponse)
+@router.post("/dashboard/admin/finops/budgets", response_class=HTMLResponse, dependencies=needs("finops.manage"))
 async def dashboard_admin_finops_budgets_create(
     request: Request,
     session: AsyncSession = Depends(get_session),
@@ -1061,11 +1101,12 @@ async def dashboard_admin_finops_budgets_create(
     soft_val = str(form.get("soft_limit_amount", "")).strip()
     hard_val = str(form.get("hard_limit_amount", "")).strip()
     fallback_tier = str(form.get("fallback_model_tier", "")).strip() or None
+    budget_tenant = await scoped_tenant(request, session, str(form.get("tenant_id", "")), permission="finops.manage") or "default"
     await create_budget_policy(
         session,
         BudgetPolicyCreateRequest(
             name=str(form.get("name", "Dashboard Budget Policy")),
-            tenant_id=str(form.get("tenant_id", "default")) or "default",
+            tenant_id=budget_tenant,
             scope_type=str(form.get("scope_type", "tenant")) or "tenant",
             scope_id=str(form.get("scope_id", "default")) or "default",
             period=str(form.get("period", "monthly")) or "monthly",
@@ -1083,16 +1124,20 @@ async def dashboard_admin_finops_budgets_create(
     return RedirectResponse("/dashboard/admin/finops/budgets", status_code=303)
 
 
-@router.post("/dashboard/admin/finops/budgets/{budget_id}/disable", response_class=HTMLResponse)
+@router.post("/dashboard/admin/finops/budgets/{budget_id}/disable", response_class=HTMLResponse, dependencies=needs("finops.manage"))
 async def dashboard_admin_finops_budgets_disable(
+    request: Request,
     budget_id: str,
     session: AsyncSession = Depends(get_session),
 ):
+    budget = await get_budget_policy(session, budget_id)
+    if budget is not None:
+        await ensure_tenant_access(request, session, budget.tenant_id, permission="finops.manage")
     await disable_budget_policy(session, budget_id)
     return RedirectResponse("/dashboard/admin/finops/budgets", status_code=303)
 
 
-@router.get("/dashboard/admin/finops/pricing", response_class=HTMLResponse)
+@router.get("/dashboard/admin/finops/pricing", response_class=HTMLResponse, dependencies=needs("dashboard.view", view="pricing"))
 async def dashboard_admin_finops_pricing(
     request: Request,
     provider: str | None = None,
@@ -1133,7 +1178,7 @@ async def dashboard_admin_finops_pricing(
     )
 
 
-@router.get("/dashboard/admin/finops/pricing/import", response_class=HTMLResponse)
+@router.get("/dashboard/admin/finops/pricing/import", response_class=HTMLResponse, dependencies=needs("dashboard.view", view="pricing"))
 async def dashboard_admin_finops_import(
     request: Request,
     session: AsyncSession = Depends(get_session),
@@ -1157,7 +1202,7 @@ async def dashboard_admin_finops_import(
     )
 
 
-@router.post("/dashboard/admin/finops/pricing/import", response_class=HTMLResponse)
+@router.post("/dashboard/admin/finops/pricing/import", response_class=HTMLResponse, dependencies=needs("pricing.manage", view="pricing"))
 async def dashboard_admin_finops_import_post(
     request: Request,
     session: AsyncSession = Depends(get_session),
@@ -1167,12 +1212,14 @@ async def dashboard_admin_finops_import_post(
     mode = str(form.get("mode", "dry_run"))
     strict = str(form.get("strict", "")) == "on"
     allow_warnings = str(form.get("allow_warnings", "")) == "on" if strict else True
+    if mode == "apply":
+        await ensure_permission(request, session, "pricing.import_apply")
     seed = load_pricing_seed(file_path)
     if mode == "apply":
         report = await apply_pricing_seed(
             session,
             seed,
-            created_by="dashboard",
+            created_by=actor_for(request, "dashboard"),
             strict=strict,
             allow_warnings=allow_warnings,
         )
@@ -1180,7 +1227,7 @@ async def dashboard_admin_finops_import_post(
         report = await dry_run_pricing_seed(
             session,
             seed,
-            created_by="dashboard",
+            created_by=actor_for(request, "dashboard"),
             strict=strict,
             allow_warnings=allow_warnings,
         )
@@ -1203,7 +1250,7 @@ async def dashboard_admin_finops_import_post(
     )
 
 
-@router.get("/dashboard/admin/finops/pricing/sources", response_class=HTMLResponse)
+@router.get("/dashboard/admin/finops/pricing/sources", response_class=HTMLResponse, dependencies=needs("dashboard.view", view="pricing"))
 async def dashboard_admin_finops_sources(
     request: Request,
     session: AsyncSession = Depends(get_session),
@@ -1233,7 +1280,7 @@ async def dashboard_admin_finops_sources(
     )
 
 
-@router.get("/dashboard/admin/finops/pricing/{pricing_id}", response_class=HTMLResponse)
+@router.get("/dashboard/admin/finops/pricing/{pricing_id}", response_class=HTMLResponse, dependencies=needs("dashboard.view", view="pricing"))
 async def dashboard_admin_finops_pricing_detail(
     request: Request,
     pricing_id: str,
@@ -1265,7 +1312,7 @@ async def dashboard_admin_finops_pricing_detail(
     )
 
 
-@router.post("/dashboard/admin/finops/pricing/{pricing_id}/edit", response_class=HTMLResponse)
+@router.post("/dashboard/admin/finops/pricing/{pricing_id}/edit", response_class=HTMLResponse, dependencies=needs("pricing.manage", view="pricing"))
 async def dashboard_admin_finops_pricing_edit(
     request: Request,
     pricing_id: str,
@@ -1297,33 +1344,36 @@ async def dashboard_admin_finops_pricing_edit(
             effective_to=str(form.get("effective_to", "")) or None,
             is_active=str(form.get("is_active", "")) == "on",
             change_reason=str(form.get("change_reason", "")),
-            updated_by="dashboard",
+            updated_by=actor_for(request, "dashboard"),
             supersede_existing=str(form.get("supersede_existing", "")) == "on",
             metadata=merged_meta,
         ),
-        updated_by="dashboard",
+        updated_by=actor_for(request, "dashboard"),
     )
     target_id = updated.pricing_id if updated is not None else pricing_id
     return RedirectResponse(f"/dashboard/admin/finops/pricing/{target_id}", status_code=303)
 
 
-@router.post("/dashboard/admin/finops/pricing/{pricing_id}/disable", response_class=HTMLResponse)
+@router.post("/dashboard/admin/finops/pricing/{pricing_id}/disable", response_class=HTMLResponse, dependencies=needs("pricing.manage", view="pricing"))
 async def dashboard_admin_finops_pricing_disable(
+    request: Request,
     pricing_id: str,
     session: AsyncSession = Depends(get_session),
 ):
-    await disable_pricing_item(session, pricing_id, updated_by="dashboard")
+    await disable_pricing_item(session, pricing_id, updated_by=actor_for(request, "dashboard"))
     return RedirectResponse(f"/dashboard/admin/finops/pricing/{pricing_id}", status_code=303)
 
 
-@router.post("/dashboard/runs/{run_id}/replay", response_class=HTMLResponse)
+@router.post("/dashboard/runs/{run_id}/replay", response_class=HTMLResponse, dependencies=needs("runs.replay"))
 async def dashboard_run_replay(
+    request: Request,
     run_id: str,
     session: AsyncSession = Depends(get_session),
 ):
     run = await get_run(session, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
+    await ensure_tenant_access(request, session, run.tenant_id, permission="runs.replay")
     plan = await get_execution_plan_for_run(session, run_id)
     if plan is None:
         raise HTTPException(status_code=404, detail="Execution plan not found.")
@@ -1334,7 +1384,7 @@ async def dashboard_run_replay(
         plan=plan,
         steps=steps,
         mode="dry_run",
-        created_by="dashboard-operator",
+        created_by=actor_for(request, "dashboard-operator"),
     )
     await record_replay_usage(session, run=run, plan=plan, attempt=attempt)
     return HTMLResponse(
@@ -1343,7 +1393,7 @@ async def dashboard_run_replay(
     )
 
 
-@router.post("/dashboard/runs/{run_id}/resume", response_class=HTMLResponse)
+@router.post("/dashboard/runs/{run_id}/resume", response_class=HTMLResponse, dependencies=needs("runs.resume"))
 async def dashboard_run_resume(
     request: Request,
     run_id: str,
@@ -1355,6 +1405,7 @@ async def dashboard_run_resume(
     run = await get_run(session, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
+    await ensure_tenant_access(request, session, run.tenant_id, permission="runs.resume")
     plan = await get_execution_plan_for_run(session, run_id)
     steps = await list_execution_plan_steps(session, run_id)
     checkpoint = await resume_run_from_checkpoint(
@@ -1364,7 +1415,7 @@ async def dashboard_run_resume(
         steps=steps,
         resume_reason=str(form.get("resume_reason", "Resumed from dashboard")),
         resume_cursor=str(form.get("resume_cursor", "worker_queue")),
-        created_by="dashboard-operator",
+        created_by=actor_for(request, "dashboard-operator"),
     )
     await session.refresh(run)
     await record_checkpoint_usage(session, run=run, plan=plan, checkpoint=checkpoint)
@@ -1379,7 +1430,7 @@ async def dashboard_run_resume(
     )
 
 
-@router.post("/dashboard/worker/dlq/{run_id}/requeue", response_class=HTMLResponse)
+@router.post("/dashboard/worker/dlq/{run_id}/requeue", response_class=HTMLResponse, dependencies=needs("worker.manage", view="worker"))
 async def dashboard_worker_dlq_requeue(
     run_id: str,
     session: AsyncSession = Depends(get_session),
@@ -1405,7 +1456,7 @@ async def dashboard_worker_dlq_requeue(
     )
 
 
-@router.post("/dashboard/worker/dlq/{run_id}/resolve", response_class=HTMLResponse)
+@router.post("/dashboard/worker/dlq/{run_id}/resolve", response_class=HTMLResponse, dependencies=needs("worker.manage", view="worker"))
 async def dashboard_worker_dlq_resolve(
     request: Request,
     run_id: str,
@@ -1420,7 +1471,7 @@ async def dashboard_worker_dlq_resolve(
     )
 
 
-@router.post("/dashboard/approvals/expire-stale", response_class=HTMLResponse)
+@router.post("/dashboard/approvals/expire-stale", response_class=HTMLResponse, dependencies=needs("approvals.expire", view=PLATFORM_VIEW))
 async def dashboard_expire_stale_approvals(
     session: AsyncSession = Depends(get_session),
     state_store: RunStateStore = Depends(get_state_store),
@@ -1441,7 +1492,7 @@ async def dashboard_expire_stale_approvals(
     )
 
 
-@router.post("/dashboard/approvals/{run_id}/decision", response_class=HTMLResponse)
+@router.post("/dashboard/approvals/{run_id}/decision", response_class=HTMLResponse, dependencies=needs("approvals.decide"))
 async def dashboard_approval_decision(
     request: Request,
     run_id: str,
@@ -1450,9 +1501,12 @@ async def dashboard_approval_decision(
     event_publisher: EventPublisher = Depends(get_event_publisher),
 ):
     form = await request.form()
+    target = await get_run(session, run_id)
+    if target is not None:
+        await ensure_tenant_access(request, session, target.tenant_id, permission="approvals.decide")
     decision = ApprovalDecisionRequest(
         decision=str(form.get("decision", "")),
-        reviewer=str(form.get("reviewer", "dashboard-operator")),
+        reviewer=actor_for(request, str(form.get("reviewer", "dashboard-operator"))),
         reason=str(form.get("reason", "Dashboard decision")),
     )
     try:
@@ -1486,7 +1540,7 @@ async def dashboard_approval_decision(
     )
 
 
-@router.get("/dashboard/playground", response_class=HTMLResponse)
+@router.get("/dashboard/playground", response_class=HTMLResponse, dependencies=needs("dashboard.view", view="playground"))
 async def playground(request: Request):
     return templates.TemplateResponse(
         request,
@@ -1500,7 +1554,7 @@ async def playground(request: Request):
     )
 
 
-@router.post("/dashboard/playground", response_class=HTMLResponse)
+@router.post("/dashboard/playground", response_class=HTMLResponse, dependencies=needs("runs.submit", view="playground"))
 async def submit_playground(
     request: Request,
     session: AsyncSession = Depends(get_session),
@@ -1525,9 +1579,10 @@ async def submit_playground(
                 raise ValueError(f"tool_arguments must be valid JSON: {exc.msg}") from exc
             if not isinstance(parsed_tool_args, dict) or not all(isinstance(v, dict) for v in parsed_tool_args.values()):
                 raise ValueError("tool_arguments must be a JSON object mapping tool_name to an argument object.")
+        playground_tenant = await scoped_tenant(request, session, str(form.get("tenant_id", "")), permission="runs.submit")
         agent_request = AgentRequest(
             tool_arguments=parsed_tool_args,
-            tenant_id=str(form.get("tenant_id", "default")) or "default",
+            tenant_id=playground_tenant or "default",
             user_id=str(form.get("user_id", "demo-user")),
             task_type=str(form.get("task_type", "analysis")),
             prompt=str(form.get("prompt", "")),
@@ -1773,7 +1828,7 @@ async def submit_playground(
                 steps=await list_execution_plan_steps(session, result.response.run_id),
                 checkpoint_type="submit",
                 resume_cursor="worker_queue" if run.status == "queued" else "approval_queue",
-                created_by="dashboard",
+                created_by=actor_for(request, "dashboard"),
             )
             if run.status != "denied":
                 await record_submit_usage(

@@ -128,8 +128,7 @@ Risk scores range deterministically from `0.0` to `1.0`:
 ## Dashboard Sign-In & Sessions (`v1.6.1`)
 
 `v1.6.1` replaces the single shared Basic Auth account with personal accounts and server-side sessions. Roles are
-applied per route from P3, CSRF tokens and re-authentication from P4; until then every signed-in user acts with
-`admin` power.
+applied per route (see the next section); CSRF tokens and re-authentication arrive with P4.
 
 | Threat | Control |
 | :--- | :--- |
@@ -147,7 +146,63 @@ applied per route from P3, CSRF tokens and re-authentication from P4; until then
 
 Access events are governance events with tenant `system`: `access.login`, `access.logout`, `access.lockout`,
 `access.password_changed`, `access.user_created`, `access.user_updated`, `access.user_disabled`,
-`access.role_changed`, `access.session_revoked` (`access.reauth` and `access.denied` arrive with P4 / P3).
+`access.role_changed`, `access.session_revoked`, `access.denied` (`access.reauth` arrives with P4).
+
+## Dashboard Roles, Tenant Scope & Operator Identity (`v1.6.1`)
+
+Every Dashboard route declares one permission (`require_permission("<name>", view=...)` in `app/ui/security.py`;
+the table is `app/services/access/permissions.py`). A route without a declaration is refused at run time
+(`permission_undeclared`) and fails the contract test `tests/test_v161_dashboard_permissions.py`. Templates hide
+buttons with `can()`, but the server checks every request.
+
+| Dashboard action | `admin` | `tenant_admin` (own tenant) | `reviewer` | `operator` | `auditor` |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| Read views (`dashboard.view`) | ✓ | ✓ (allow-listed views) | ✓ | ✓ | ✓ |
+| Benchmark page / Judge Profiles page | ✓ | platform view (refused) | ✓ | | ✓ |
+| Retention page | ✓ | platform view (refused) | | ✓ | ✓ |
+| Cost ledger export | ✓ | ✓ | | | ✓ |
+| Honeypot task package | ✓ | platform view (refused) | | | |
+| Playground submit, approval decision, expire stale approvals | ✓ | | | ✓ | |
+| Submit outcome evidence | ✓ | | | ✓ | |
+| Review decision, evidence preview | ✓ | ✓ | ✓ | | |
+| Re-run judge triage | ✓ | ✓ | | | |
+| Worker DLQ requeue / resolve, replay, resume | ✓ | | | ✓ | |
+| Tool / MCP circuit breakers, Control Plane registry | ✓ | | | | |
+| Tenants, API keys (listing keys: admin and auditor) | ✓ | | | | |
+| Protected paths, external judge consent | ✓ | ✓ | | | |
+| Judge profile edit / activate / probe / sweep | ✓ | | | | |
+| Benchmark runs, review export, honeypot launch, attestation keys | ✓ | ✓ (API; the page is a platform view) | | | |
+| Inspect log import, pricing edit and import | ✓ | | | | |
+| Budgets, cost adjustments, violations, lease release | ✓ | ✓ | | | |
+| Operations evidence and release gates, retention dry-run report | ✓ | | | | |
+| Create a legal hold | ✓ | ✓ (API; the page is a platform view) | | | |
+| User management | ✓ | | | | |
+
+- **API parity (D20)**: where the API's `require_role()` is narrower, the Dashboard follows it (approvals,
+  Playground submit and expire-stale are `operator` / `admin`; breakers and Inspect import are `admin`; judge re-triage
+  is `tenant_admin` / `admin`; the benchmark page is not open to `operator`). Where the API is broader, the Dashboard
+  keeps the narrower plan (`evaluations.preview`, judge sweep). FinOps actions follow the release decision that gives
+  `tenant_admin` budgets, adjustments, violations and lease release for its own tenant, although the corresponding
+  API endpoints accept `finops_admin` instead of `tenant_admin`.
+- **`auditor`** (D21): reads every view (including platform views) and exports, holds no write permission; every
+  existing Dashboard POST answers 403 (sign-out and changing one's own password excepted). As an API key role it is
+  treated like `viewer`.
+- **Tenant scope** (D22, allow list, default deny): a user bound to a tenant sees only that tenant on Overview, Runs,
+  Approvals, Governance, Reviews, Costs, Budgets and Playground; a `tenant_id` query for another tenant answers 403.
+  A run, review, budget or violation of another tenant answers 403 without content, and so does an unknown run or
+  review id (no existence oracle). Platform views (Control Plane, Worker, Operations, Observability, Pricing, Judge
+  Profiles, Benchmark, Retention, Users) and platform-wide actions (expire stale approvals, DLQ) answer 403.
+- **Refusals**: pages render `forbidden.html` (403) naming the permission and the reason (`missing_permission`,
+  `tenant_scope`, `platform_view`, `permission_undeclared`); other methods answer a 403 JSON error
+  (`permission_denied`, `tenant_scope_denied`, `platform_view_denied`, `permission_undeclared`) and nothing runs. Each
+  refusal increments `dashboard_access_denied_total{reason}` and writes an `access.denied` governance event (tenant
+  `system`; at most one per session and permission per minute, counted per API process).
+- **Operator identity** (D23): in `session` mode every audit field the Dashboard writes (governance events, approval
+  and review decisions, outcome `submitted_by`, policy `updated_by`, replay / resume / checkpoint `created_by`,
+  FinOps actors, judge profile actors, legal hold actor and role) is `user:<username>`; form fields that used to carry
+  an operator name are ignored and removed from the pages. Because outcome evidence submitted from the Dashboard is
+  recorded as the signed-in user, the same user cannot decide that run's review (`review_self_approval_forbidden`).
+  `off` mode keeps the historical strings (`dashboard-admin`, `dashboard`, form values).
 
 ## Runtime Foundations Threat Model (`v1.6.0`)
 

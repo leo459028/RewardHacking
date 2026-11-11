@@ -26,7 +26,7 @@
   {% endif %}
   {% if resolution.source == "environment" %}<p class="muted">Selected by <code>EVALUATION_JUDGE_PROFILE</code>; to stop using it, change <code>.env</code> and restart.</p>{% endif %}
   {% if editing.allowed %}
-  <form method="post" action="/dashboard/judge-profiles/deactivate" style="display:inline;"><button class="button secondary" type="submit" id="judge-deactivate">Use rule-based judge | 改回規則判斷</button></form>
+  {% if can("judge.profile.write", "judge_profiles") %}<form method="post" action="/dashboard/judge-profiles/deactivate" style="display:inline;"><button class="button secondary" type="submit" id="judge-deactivate">Use rule-based judge | 改回規則判斷</button></form>{% endif %}
   {% endif %}
 </section>
 
@@ -63,17 +63,17 @@
         <td>
           {% if editing.allowed %}
             {% if p.provider != "deterministic" and p.status not in ["draft", "invalid"] %}
-            <form method="post" action="/dashboard/judge-profiles/{{ p.name }}/probe" style="display:inline;"><button class="button secondary" type="submit" id="judge-probe-{{ p.name }}">Test | 測試連線</button></form>
+            {% if can("judge.profile.operate", "judge_profiles") %}<form method="post" action="/dashboard/judge-profiles/{{ p.name }}/probe" style="display:inline;"><button class="button secondary" type="submit" id="judge-probe-{{ p.name }}">Test | 測試連線</button></form>{% endif %}
             {% endif %}
             {% if p.status != "active" and p.status not in ["draft", "invalid"] and (p.readiness.ready if p.readiness else false) %}
-            <form method="post" action="/dashboard/judge-profiles/{{ p.name }}/activate" style="display:inline;"><button class="button" type="submit" id="judge-activate-{{ p.name }}">Activate | 啟用</button></form>
+            {% if can("judge.profile.write", "judge_profiles") %}<form method="post" action="/dashboard/judge-profiles/{{ p.name }}/activate" style="display:inline;"><button class="button" type="submit" id="judge-activate-{{ p.name }}">Activate | 啟用</button></form>{% endif %}
             {% elif p.status != "active" and p.status not in ["draft", "invalid"] %}
             <button class="button" type="button" disabled id="judge-activate-{{ p.name }}" title="Not ready">Activate | 啟用</button>
             {% endif %}
             {% if p.editable %}
             <a class="button secondary" href="/dashboard/judge-profiles?edit={{ p.name }}#judge-form" id="judge-edit-{{ p.name }}">Edit | 編輯</a>
             {% if p.status != "active" %}
-            <form method="post" action="/dashboard/judge-profiles/{{ p.name }}/delete" style="display:inline;"><input type="hidden" name="version" value="{{ p.version or '' }}"><button class="button secondary" type="submit" id="judge-delete-{{ p.name }}">Delete | 刪除</button></form>
+            {% if can("judge.profile.write", "judge_profiles") %}<form method="post" action="/dashboard/judge-profiles/{{ p.name }}/delete" style="display:inline;"><input type="hidden" name="version" value="{{ p.version or '' }}"><button class="button secondary" type="submit" id="judge-delete-{{ p.name }}">Delete | 刪除</button></form>{% endif %}
             {% endif %}
             {% endif %}
           {% else %}<span class="muted">read-only</span>{% endif %}
@@ -93,7 +93,7 @@
   </p>
   {% if template %}<p class="muted" id="judge-template-note">Template <strong>{{ template.label }}</strong> filled the form; nothing is saved until you press Save. Model names are examples — check the provider's current documentation.</p>{% endif %}
   {% if show_form %}
-  <form method="post" action="{% if editing_row %}/dashboard/judge-profiles/{{ editing_row.name }}/update{% else %}/dashboard/judge-profiles{% endif %}" id="judge-profile-form">
+  {% if can("judge.profile.write", "judge_profiles") %}<form method="post" action="{% if editing_row %}/dashboard/judge-profiles/{{ editing_row.name }}/update{% else %}/dashboard/judge-profiles{% endif %}" id="judge-profile-form">
     {% if editing_row %}<input type="hidden" name="version" value="{{ editing_row.version }}">{% endif %}
     <div class="form-grid">
       <label>Name | 名稱 <input name="name" value="{{ editing_row.name if editing_row else '' }}" {{ "readonly" if editing_row else "" }} placeholder="e.g. local-small (a-z, 0-9, -)" required></label>
@@ -118,7 +118,7 @@
     {% if template and template.hints %}<ul class="muted">{% for field, hint in template.hints.items() %}<li><code>{{ field }}</code>: {{ hint }}</li>{% endfor %}</ul>{% endif %}
     <p class="muted">* required to test or activate; without them the profile is saved as a draft. Blank optional fields use the system default shown in grey.</p>
     <div style="margin-top:12px;"><button class="button" type="submit" id="judge-save">Save | 儲存</button> <a class="button secondary" href="/dashboard/judge-profiles">Cancel</a></div>
-  </form>
+  </form>{% endif %}
   {% else %}
   <p><a class="button" href="/dashboard/judge-profiles?new=1#judge-form" id="judge-new">New profile | 新增</a></p>
   {% endif %}

@@ -31,7 +31,7 @@
     {% for hold in legal_holds %}{{ hold.hold_id }} ({{ hold.scope_type }}: {{ hold.reason }}){% if not loop.last %}, {% endif %}{% endfor %}
   </div>
   {% endif %}
-  <form method="post" action="/dashboard/retention/holds" class="form-grid" id="run-hold-form">
+  {% if can("legal_hold.create", "retention") %}<form method="post" action="/dashboard/retention/holds" class="form-grid" id="run-hold-form">
     <input type="hidden" name="scope_type" value="run">
     <input type="hidden" name="scope_id" value="{{ run.run_id }}">
     <label>Reason
@@ -40,7 +40,7 @@
     <label>&nbsp;
       <button class="button secondary" type="submit">Create legal hold | 建立 legal hold</button>
     </label>
-  </form>
+  </form>{% endif %}
 </section>
 
 <section class="panel">
@@ -173,9 +173,9 @@
 {% if run.status in ["completed", "review_required"] %}
 <section class="panel" id="submit-outcome">
   <h2>Submit Outcome Evidence <span class="heading-note">提交產出證據（agent 自行回報＝self_reported）</span></h2>
-  <form method="post" action="/dashboard/runs/{{ run.run_id }}/outcome">
+  {% if can("outcomes.submit") %}<form method="post" action="/dashboard/runs/{{ run.run_id }}/outcome">
     <div class="form-grid">
-      <label>Submitted By <input name="submitted_by" value="dashboard-agent"></label>
+      {% if dashboard_auth_mode() != "session" %}<label>Submitted By <input name="submitted_by" value="dashboard-agent"></label>{% else %}<span class="muted" data-testid="acting-as">Recorded as | 記錄為 <code>{{ dashboard_user(request).actor }}</code></span>{% endif %}
       <label>Provenance
         <select name="provenance"><option value="self_reported">self_reported</option><option value="ci_attested">ci_attested</option></select>
       </label>
@@ -190,7 +190,7 @@
     <label style="margin-top:12px;">CI Attestation (DSSE envelope JSON, only with provenance ci_attested) <textarea name="attestation_json" style="min-height:60px;" placeholder='{"payloadType": "application/vnd.in-toto+json", "payload": "...", "signatures": [...]}'></textarea></label>
     <div style="margin-top:12px;"><button class="button" type="submit">Submit Outcome</button>
       <span class="muted">{{ outcomes|length }} / {{ outcome_max_submissions }} submissions used; a run under review is never downgraded by new evidence.</span></div>
-  </form>
+  </form>{% endif %}
 </section>
 {% endif %}
 
@@ -265,14 +265,14 @@
   <p><strong>Checkpoints API</strong> <a href="/v1/runs/{{ run.run_id }}/checkpoints">/v1/runs/{{ run.run_id }}/checkpoints</a></p>
   <p><strong>Resume API</strong> <code>POST /v1/runs/{{ run.run_id }}/resume</code> | <strong>Replay API</strong> <code>POST /v1/runs/{{ run.run_id }}/replay</code></p>
   <div class="form-grid" style="margin-bottom: 12px;">
-    <form method="post" action="/dashboard/runs/{{ run.run_id }}/replay" class="decision-form">
+    {% if can("runs.replay") %}<form method="post" action="/dashboard/runs/{{ run.run_id }}/replay" class="decision-form">
       <button class="button secondary" type="submit">Trigger Dry-Run Replay</button>
-    </form>
-    <form method="post" action="/dashboard/runs/{{ run.run_id }}/resume" class="decision-form">
+    </form>{% endif %}
+    {% if can("runs.resume") %}<form method="post" action="/dashboard/runs/{{ run.run_id }}/resume" class="decision-form">
       <input name="resume_reason" value="Operator checkpoint resume" placeholder="Resume reason">
       <input type="hidden" name="resume_cursor" value="worker_queue">
       <button class="button" type="submit">Resume from Checkpoint</button>
-    </form>
+    </form>{% endif %}
   </div>
   <table>
     <thead><tr><th>Checkpoint</th><th>Type</th><th>Status</th><th>Cursor</th><th>Created By</th></tr></thead>

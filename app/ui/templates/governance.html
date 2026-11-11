@@ -7,7 +7,7 @@
     <div class="title-note">治理中心</div>
     <div class="muted">依 tenant 檢視 quota、risk 與治理事件。</div>
   </div>
-  <a class="button" href="/dashboard/playground">New Test Run</a>
+  {% if can("runs.submit", "playground") %}<a class="button" href="/dashboard/playground">New Test Run</a>{% endif %}
 </div>
 
 {% if newly_created_key %}
@@ -44,7 +44,7 @@
 <section class="detail-grid">
   <div class="panel">
     <h2>Create / Update Tenant Quota Policy <span class="heading-note">建立或更新租戶限流政策</span></h2>
-    <form method="post" action="/dashboard/governance/tenants" class="form-grid">
+    {% if can("tenants.manage", "platform") %}<form method="post" action="/dashboard/governance/tenants" class="form-grid">
       <label>Tenant ID
         <input name="tenant_id" value="{{ tenant_id or 'v156-gov-tenant' }}" required>
       </label>
@@ -66,11 +66,11 @@
       <label>&nbsp;
         <button class="button" type="submit">Save Tenant</button>
       </label>
-    </form>
+    </form>{% endif %}
   </div>
   <div class="panel">
     <h2>Issue Tenant API Key <span class="heading-note">簽發租戶 API 金鑰</span></h2>
-    <form method="post" action="/dashboard/governance/api-keys" class="form-grid">
+    {% if can("api_keys.manage", "platform") %}<form method="post" action="/dashboard/governance/api-keys" class="form-grid">
       <label>Tenant ID
         <input name="tenant_id" value="{{ tenant_id or summary.tenant_id }}" required>
       </label>
@@ -81,6 +81,7 @@
         <select name="role">
           <option value="operator">operator</option>
           <option value="viewer">viewer</option>
+          <option value="auditor">auditor</option>
           <option value="approver">approver</option>
           <option value="admin">admin</option>
         </select>
@@ -88,7 +89,7 @@
       <label>&nbsp;
         <button class="button" type="submit">Create API Key</button>
       </label>
-    </form>
+    </form>{% endif %}
   </div>
 </section>
 
@@ -128,9 +129,9 @@
         <td>{{ api_key.revoked_at or "" }}</td>
         <td>
           {% if api_key.status == "active" and not api_key.revoked %}
-          <form method="post" action="/dashboard/governance/tenants/{{ api_key.tenant_id }}/api-keys/{{ api_key.key_id }}/revoke">
+          {% if can("api_keys.manage", "platform") %}<form method="post" action="/dashboard/governance/tenants/{{ api_key.tenant_id }}/api-keys/{{ api_key.key_id }}/revoke">
             <button class="button danger" type="submit">Revoke Key</button>
-          </form>
+          </form>{% endif %}
           {% else %}
           <span class="muted">Revoked</span>
           {% endif %}
@@ -199,17 +200,17 @@
   <h2>Evaluation Policy <span class="heading-note">評估政策（受保護路徑）</span></h2>
   {% if governance_message %}<div class="success" role="status">{{ governance_message }}</div>{% endif %}
   <p class="muted">Changes to protected paths are flagged as test / grader tampering. Run metadata may only add paths, never remove them.</p>
-  <form method="post" action="/dashboard/governance/evaluation-policy">
+  {% if can("evaluation_policy.write") %}<form method="post" action="/dashboard/governance/evaluation-policy">
     <div class="form-grid">
       <label>Tenant ID <input name="tenant_id" value="{{ selected_policy.tenant_id }}" required></label>
-      <label>Updated By <input name="updated_by" value="dashboard-admin"></label>
+      {% if dashboard_auth_mode() != "session" %}<label>Updated By <input name="updated_by" value="dashboard-admin"></label>{% else %}<span class="muted" data-testid="acting-as">Recorded as | 記錄為 <code>{{ dashboard_user(request).actor }}</code></span>{% endif %}
       <label class="checkline"><input type="checkbox" name="allow_default_protected_paths" {{ "checked" if selected_policy.allow_default_protected_paths else "" }}> Include default protected paths</label>
     </div>
     <label style="margin-top:12px;">Custom Protected Paths (one glob per line)
       <textarea name="protected_paths" style="min-height:80px;" placeholder="scoring/**">{{ selected_policy.protected_paths|join("\n") }}</textarea>
     </label>
     <div style="margin-top:12px;"><button class="button" type="submit">Save Evaluation Policy</button></div>
-  </form>
+  </form>{% endif %}
   <table style="margin-top:14px;">
     <thead><tr><th>Tenant</th><th>Custom Paths</th><th>Defaults</th><th>Updated By</th></tr></thead>
     <tbody>

@@ -10,7 +10,7 @@ All REST API endpoints are exposed under the `/v1` route prefix. The service ret
 
 ## Authentication & Headers
 
-- **`X-API-Key`**: API key header when `AUTH_ENABLED=true`. Maps the request to an authorized tenant and RBAC role (`viewer`, `operator`, `admin`, `finops_admin`).
+- **`X-API-Key`**: API key header when `AUTH_ENABLED=true`. Maps the request to an authorized tenant and RBAC role (`viewer`, `operator`, `admin`, `finops_admin`, `reviewer`, `tenant_admin`, and since `v1.6.1` the read-only `auditor`, which is accepted wherever `viewer` is and never on write endpoints; `POST /v1/tenants/{tenant_id}/api-keys` accepts `role: "auditor"`).
 - **`X-Trace-Id`**: Distributed trace identifier. If provided in the request header, it is echoed unchanged and bound to the execution plan and audit events; otherwise the server returns `trace_<32 hex>`, the W3C trace id with a prefix.
 - **`traceparent` / `tracestate`** (`v1.6.0`): W3C Trace Context. A valid incoming `traceparent` is continued; every response carries `traceparent`. See [`observability.md`](observability.md).
 
@@ -145,7 +145,7 @@ The tombstone is tenant-scoped like the run (another tenant's key gets `403 tena
 | `POST` | `/v1/tenants` | Provisions a new tenant | `admin` |
 | `GET` | `/v1/tenants/{tenant_id}/api-keys`| Lists hashed API keys for a tenant | `admin` |
 | `POST` | `/v1/tenants/{tenant_id}/api-keys`| Generates new API key (plaintext returned once) | `admin` |
-| `GET` | `/v1/governance/events` | Queries tenant policy and quota event log | `viewer`, `operator`, `admin` |
+| `GET` | `/v1/governance/events` | Queries tenant policy and quota event log (role enforced since `v1.6.1`; before, any valid key could read it) | `viewer`, `operator`, `admin` (and the roles treated as `viewer`) |
 
 ---
 

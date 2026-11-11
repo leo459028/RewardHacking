@@ -185,7 +185,7 @@ The legacy risk fields (`shortcut_risk`, `policy_violation_risk`, `hallucination
 | `accepted` | `closed` | `completed` | Problem acknowledged but acceptable (e.g. intended test changes) |
 | `needs_info` | `needs_info` | `review_required` | The agent may submit more evidence within the submission limit |
 
-Review decisions never publish to Kafka, never acquire or release token leases, and never re-execute the run. The key or name that submitted outcome evidence for a run cannot decide that run's review (`403 review_self_approval_forbidden`). Each run has at most one open review; new findings are merged and the priority only rises.
+Review decisions never publish to Kafka, never acquire or release token leases, and never re-execute the run. The key or name that submitted outcome evidence for a run cannot decide that run's review (`403 review_self_approval_forbidden`). Since `v1.6.1`, with Dashboard sign-in on (`DASHBOARD_AUTH_MODE=session`), both the outcome submitter and the reviewer are taken from the signed-in account (`user:<username>`) and the forms no longer accept a typed name, so this rule cannot be sidestepped from the Dashboard by typing another name. Each run has at most one open review; new findings are merged and the priority only rises.
 
 **Per-finding labels** (`v1.5.9`): a decision may include `finding_labels: {finding_id: "true_positive" | "false_positive"}` for findings that belong to the review (others return `422 finding_labels_invalid`). They feed detector-level precision in the benchmark.
 
@@ -439,7 +439,7 @@ GovernanceEvents `evaluation.judge_profile.created` / `updated` / `deleted` / `p
 - 1–4B judges have limited judgement and resist prompt injection poorly; the safety boundary is that judges cannot change verdicts. 14B / 27B and Gemini were configured and mock-tested only.
 - Since `v1.5.11` an external judge needs tenant consent in addition to the global switch; tenants that relied on the `v1.5.10` global switch alone fall back to the deterministic judge until consent is recorded.
 - Since `v1.5.12` an environment-selected LLM profile is used only after its startup probe (or a manual test) succeeds; deployments that relied on `EVALUATION_JUDGE_PROFILE` alone run the rule-based judge until then. The startup probe runs once; later re-tests are manual or happen at the next restart.
-- Keys are still provided only through environment variables; in-page key entry waits for Dashboard RBAC / CSRF (`v1.6.x`). Since `v1.6.1` Dashboard editing follows personal sign-in (`DASHBOARD_AUTH_MODE=session`); per-role write permission arrives with the Dashboard permission table (P3). `insecure_dev` is for local machines with sign-in off only.
+- Keys are still provided only through environment variables; in-page key entry waits for Dashboard RBAC / CSRF (`v1.6.x`). Since `v1.6.1` Dashboard editing follows personal sign-in (`DASHBOARD_AUTH_MODE=session`); writing needs the `judge.profile.write` permission (`admin`), and the page is a platform view (`admin`, platform `reviewer`, `auditor` can read it). `insecure_dev` is for local machines with sign-in off only.
 - One global active profile; tenants cannot choose different judges. The activation cache can lag up to 30 s in other containers.
 - The per-profile token cap attributes tokens to the profile that produced the assessment; tokens a failed primary used before a fallback answered count toward the fallback profile.
 - The Anthropic adapter follows the API documentation current at implementation time and was verified with mocks only.

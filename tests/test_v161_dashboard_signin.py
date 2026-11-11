@@ -431,7 +431,8 @@ def test_sidebar_shows_the_user_and_sign_out(client, signed_in):
     who = signed_in(role="tenant_admin", tenant_id="t-42")
     page = client.get("/dashboard").text
     assert 'data-testid="sidebar-user"' in page and who.username in page and "t-42" in page
-    assert 'action="/dashboard/logout"' in page and 'href="/dashboard/admin/users"' in page
+    assert 'action="/dashboard/logout"' in page
+    assert 'href="/dashboard/admin/users"' not in page  # P3: user management is users.manage (admin) only
     assert 'data-testid="auth-off-banner"' not in page
     account = client.get("/dashboard/account").text
     assert f"user:{who.username}" in account and 'data-testid="account-role">tenant_admin<' in account

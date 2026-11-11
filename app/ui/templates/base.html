@@ -201,22 +201,24 @@
     <aside class="sidebar">
       <div class="brand">Reward Guardrail<span>Operational Dashboard</span></div>
       <nav class="nav">
-        <a class="{{ 'active' if active == 'dashboard' else '' }}" href="/dashboard">Overview</a>
-        <a class="{{ 'active' if active == 'runs' else '' }}" href="/dashboard/runs">Runs</a>
-        <a class="{{ 'active' if active == 'approvals' else '' }}" href="/dashboard/approvals">Approvals</a>
-        <a class="{{ 'active' if active == 'reviews' else '' }}" href="/dashboard/reviews">Reviews</a>
-        <a class="{{ 'active' if active == 'benchmark' else '' }}" href="/dashboard/benchmark">Benchmark</a>
-        <a class="{{ 'active' if active == 'judge-profiles' else '' }}" href="/dashboard/judge-profiles">Judge Profiles</a>
-        <a class="{{ 'active' if active == 'worker' else '' }}" href="/dashboard/worker">Worker</a>
-        <a class="{{ 'active' if active == 'observability' else '' }}" href="/dashboard/observability">Observability</a>
-        <a class="{{ 'active' if active == 'governance' else '' }}" href="/dashboard/governance">Governance</a>
-        <a class="{{ 'active' if active == 'control-plane' else '' }}" href="/dashboard/control-plane">Control Plane</a>
-        <a class="{{ 'active' if active == 'costs' else '' }}" href="/dashboard/costs">Costs</a>
-        <a class="{{ 'active' if active == 'admin-finops' else '' }}" href="/dashboard/admin/finops/pricing">Admin FinOps</a>
-        <a class="{{ 'active' if active == 'operations' else '' }}" href="/dashboard/operations">Operations</a>
-        <a class="{{ 'active' if active == 'retention' else '' }}" href="/dashboard/retention">Retention | 資料保留</a>
-        <a class="{{ 'active' if active == 'playground' else '' }}" href="/dashboard/playground">Playground</a>
-        {% if principal_ and not principal_.synthetic %}
+        {# v1.6.1 P3: links follow the permission table (D19 / D22); the server re-checks every request. #}
+        {% if can("dashboard.view", "overview") %}<a class="{{ 'active' if active == 'dashboard' else '' }}" href="/dashboard">Overview</a>{% endif %}
+        {% if can("dashboard.view", "runs") %}<a class="{{ 'active' if active == 'runs' else '' }}" href="/dashboard/runs">Runs</a>{% endif %}
+        {% if can("dashboard.view", "approvals") %}<a class="{{ 'active' if active == 'approvals' else '' }}" href="/dashboard/approvals">Approvals</a>{% endif %}
+        {% if can("dashboard.view", "reviews") %}<a class="{{ 'active' if active == 'reviews' else '' }}" href="/dashboard/reviews">Reviews</a>{% endif %}
+        {% if can("benchmark.view", "benchmark") %}<a class="{{ 'active' if active == 'benchmark' else '' }}" href="/dashboard/benchmark">Benchmark</a>{% endif %}
+        {% if can("judge.view", "judge_profiles") %}<a class="{{ 'active' if active == 'judge-profiles' else '' }}" href="/dashboard/judge-profiles">Judge Profiles</a>{% endif %}
+        {% if can("dashboard.view", "worker") %}<a class="{{ 'active' if active == 'worker' else '' }}" href="/dashboard/worker">Worker</a>{% endif %}
+        {% if can("dashboard.view", "observability") %}<a class="{{ 'active' if active == 'observability' else '' }}" href="/dashboard/observability">Observability</a>{% endif %}
+        {% if can("dashboard.view", "governance") %}<a class="{{ 'active' if active == 'governance' else '' }}" href="/dashboard/governance">Governance</a>{% endif %}
+        {% if can("dashboard.view", "control_plane") %}<a class="{{ 'active' if active == 'control-plane' else '' }}" href="/dashboard/control-plane">Control Plane</a>{% endif %}
+        {% if can("dashboard.view", "costs") %}<a class="{{ 'active' if active == 'costs' else '' }}" href="/dashboard/costs">Costs</a>{% endif %}
+        {% if can("dashboard.view", "pricing") %}<a class="{{ 'active' if active == 'admin-finops' else '' }}" href="/dashboard/admin/finops/pricing">Admin FinOps</a>
+        {% elif can("dashboard.view", "budgets") %}<a class="{{ 'active' if active == 'admin-finops' else '' }}" href="/dashboard/admin/finops/budgets">Budgets | 預算</a>{% endif %}
+        {% if can("dashboard.view", "operations") %}<a class="{{ 'active' if active == 'operations' else '' }}" href="/dashboard/operations">Operations</a>{% endif %}
+        {% if can("retention.view", "retention") %}<a class="{{ 'active' if active == 'retention' else '' }}" href="/dashboard/retention">Retention | 資料保留</a>{% endif %}
+        {% if can("runs.submit", "playground") %}<a class="{{ 'active' if active == 'playground' else '' }}" href="/dashboard/playground">Playground</a>{% endif %}
+        {% if principal_ and not principal_.synthetic and can("users.manage", "users") %}
         <a class="{{ 'active' if active == 'users' else '' }}" href="/dashboard/admin/users">Users | 使用者</a>
         {% endif %}
         <a href="/docs">OpenAPI</a>

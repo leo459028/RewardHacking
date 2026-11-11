@@ -8,7 +8,8 @@
 
 Only ``DASHBOARD_AUTH_MODE=session`` has accounts. In ``off`` mode the sign-in pages redirect to the Dashboard and the
 user-management actions are refused (``403 dashboard_auth_off``), so nobody can create accounts without signing in.
-In P2 every signed-in user acts with ``admin`` power; P3 adds per-route permissions, P4 CSRF and re-authentication.
+P3: the sign-in pages are ``public_route()``; the account pages need ``account.self`` and user management
+``users.manage`` (admin, platform view). P4 adds CSRF and re-authentication.
 """
 
 from __future__ import annotations
@@ -32,7 +33,8 @@ from app.ui.security import (
     LOGIN_PATH,
     clear_session_cookie,
     current_session,
-    dashboard_principal,
+    public_route,
+    require_permission,
     safe_next,
     set_session_cookie,
 )
@@ -79,7 +81,7 @@ def _login_page(request: Request, *, next_path: str, error: str = "", username: 
 # ---------------------------------------------------------------------------
 
 
-@router.get("/dashboard/login", response_class=HTMLResponse)
+@router.get("/dashboard/login", response_class=HTMLResponse, dependencies=[Depends(public_route())])
 async def login_page(request: Request, session: AsyncSession = Depends(get_session)):
     next_path = safe_next(request.query_params.get("next"))
     if not _session_mode():
@@ -89,7 +91,7 @@ async def login_page(request: Request, session: AsyncSession = Depends(get_sessi
     return _login_page(request, next_path=next_path)
 
 
-@router.post("/dashboard/login", response_class=HTMLResponse)
+@router.post("/dashboard/login", response_class=HTMLResponse, dependencies=[Depends(public_route())])
 async def login_submit(
     request: Request,
     username: str = Form(""),
@@ -128,7 +130,7 @@ async def login_submit(
     return destination
 
 
-@router.post("/dashboard/logout")
+@router.post("/dashboard/logout", dependencies=[Depends(public_route())])
 async def logout(request: Request, session: AsyncSession = Depends(get_session)):
     settings = get_settings()
     response: Response = RedirectResponse(LOGIN_PATH if _session_mode() else "/dashboard", status_code=303)
@@ -153,7 +155,7 @@ async def logout(request: Request, session: AsyncSession = Depends(get_session))
 
 
 @router.get("/dashboard/account", response_class=HTMLResponse)
-async def account_page(request: Request, principal: Principal = Depends(dashboard_principal), session: AsyncSession = Depends(get_session)):
+async def account_page(request: Request, principal: Principal = Depends(require_permission("account.self", view="account")), session: AsyncSession = Depends(get_session)):
     live_sessions: list[Any] = []
     if not principal.synthetic:
         live_sessions = await sessions.list_user_sessions(session, principal.user_id)
@@ -180,7 +182,7 @@ async def account_password(
     new_password: str = Form(""),
     confirm_password: str = Form(""),
     next: str = Form(""),
-    principal: Principal = Depends(dashboard_principal),
+    principal: Principal = Depends(require_permission("account.self", view="account")),
     session: AsyncSession = Depends(get_session),
 ):
     settings = get_settings()
@@ -218,7 +220,7 @@ async def account_password(
 
 
 @router.get("/dashboard/admin/users", response_class=HTMLResponse)
-async def users_page(request: Request, principal: Principal = Depends(dashboard_principal), session: AsyncSession = Depends(get_session)):
+async def users_page(request: Request, principal: Principal = Depends(require_permission("users.manage", view="users")), session: AsyncSession = Depends(get_session)):
     rows = [users.user_view(user) for user in await users.list_users(session)] if _session_mode() else []
     return templates.TemplateResponse(
         request,
@@ -253,7 +255,7 @@ async def users_create(
     role: str = Form(""),
     tenant_id: str = Form(""),
     password: str = Form(""),
-    principal: Principal = Depends(dashboard_principal),
+    principal: Principal = Depends(require_permission("users.manage", view="users")),
     session: AsyncSession = Depends(get_session),
 ):
     if principal.synthetic:
@@ -274,7 +276,7 @@ async def users_role(
     user_id: str,
     role: str = Form(""),
     tenant_id: str = Form(""),
-    principal: Principal = Depends(dashboard_principal),
+    principal: Principal = Depends(require_permission("users.manage", view="users")),
     session: AsyncSession = Depends(get_session),
 ):
     if principal.synthetic:
@@ -293,7 +295,7 @@ async def users_role(
 async def users_status(
     user_id: str,
     status: str = Form(""),
-    principal: Principal = Depends(dashboard_principal),
+    principal: Principal = Depends(require_permission("users.manage", view="users")),
     session: AsyncSession = Depends(get_session),
 ):
     if principal.synthetic:
@@ -310,7 +312,7 @@ async def users_status(
 async def users_reset_password(
     user_id: str,
     new_password: str = Form(""),
-    principal: Principal = Depends(dashboard_principal),
+    principal: Principal = Depends(require_permission("users.manage", view="users")),
     session: AsyncSession = Depends(get_session),
 ):
     if principal.synthetic:
@@ -328,7 +330,7 @@ async def users_reset_password(
 
 
 @router.post("/dashboard/admin/users/{user_id}/unlock")
-async def users_unlock(user_id: str, principal: Principal = Depends(dashboard_principal), session: AsyncSession = Depends(get_session)):
+async def users_unlock(user_id: str, principal: Principal = Depends(require_permission("users.manage", view="users")), session: AsyncSession = Depends(get_session)):
     if principal.synthetic:
         return _auth_off()
 
@@ -340,7 +342,7 @@ async def users_unlock(user_id: str, principal: Principal = Depends(dashboard_pr
 
 
 @router.post("/dashboard/admin/users/{user_id}/sessions/revoke")
-async def users_revoke_sessions(user_id: str, principal: Principal = Depends(dashboard_principal), session: AsyncSession = Depends(get_session)):
+async def users_revoke_sessions(user_id: str, principal: Principal = Depends(require_permission("users.manage", view="users")), session: AsyncSession = Depends(get_session)):
     if principal.synthetic:
         return _auth_off()
 

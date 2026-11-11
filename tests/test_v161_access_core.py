@@ -551,7 +551,8 @@ def test_principal_from_user_and_session_and_local_admin(session_factory):
         ("tenant_admin", {"finops.manage", "reviews.decide", "legal_hold.create", "change_requests.decide"},
          {"users.manage", "retention.apply", "pricing.manage", "control_plane.manage", "audit_chain.read"}),
         ("reviewer", {"reviews.decide", "evaluations.preview", "dashboard.view"}, {"runs.submit", "outcomes.submit", "worker.manage"}),
-        ("operator", {"runs.submit", "outcomes.submit", "worker.manage", "breakers.manage"}, {"reviews.decide", "judge.profile.write"}),
+        # P3 (D20): breakers are admin only, as in the API
+        ("operator", {"runs.submit", "outcomes.submit", "worker.manage"}, {"reviews.decide", "judge.profile.write", "breakers.manage"}),
         ("auditor", {"dashboard.view", "account.self", "audit_chain.read", "audit_chain.verify"}, {"approvals.decide", "audit_chain.checkpoint"}),
     ],
 )
@@ -561,8 +562,8 @@ def test_permission_matrix(role, allowed, denied):
 
 
 def test_auditor_holds_no_write_permission_and_table_is_consistent():
-    read_only = {"dashboard.view", "account.self", "audit_chain.read", "audit_chain.verify"}
-    assert permissions.permissions_for("auditor") == read_only
+    # P3 added read-only view permissions (benchmark.view, judge.view, retention.view, finops.export, api_keys.view)
+    assert permissions.permissions_for("auditor") == permissions.READ_PERMISSIONS
     assert permissions.STEP_UP_PERMISSIONS <= set(permissions.PERMISSIONS)
     assert all(roles <= set(permissions.ROLES) for roles in permissions.PERMISSIONS.values())
     assert permissions.has_permission("admin", "no.such.permission") is False

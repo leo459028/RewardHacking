@@ -29,7 +29,14 @@ from app.ui.routers.operations import router as operations_ui_router
 from app.ui.routers.retention import router as retention_ui_router
 from app.ui.routers.reviews import router as reviews_ui_router
 from app.ui.routes import router as ui_router
-from app.ui.security import ACCOUNT_PATH, DashboardSignInRequired, PasswordChangeRequired, login_redirect_url
+from app.ui.security import (
+    ACCOUNT_PATH,
+    DashboardForbidden,
+    DashboardSignInRequired,
+    PasswordChangeRequired,
+    login_redirect_url,
+    principal_of,
+)
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -166,6 +173,32 @@ async def password_change_required_handler(request: Request, exc: PasswordChange
     return JSONResponse(
         status_code=403,
         content={"error": {"code": "password_change_required", "message": "Change your password first."}},
+    )
+
+
+@app.exception_handler(DashboardForbidden)
+async def dashboard_forbidden_handler(request: Request, exc: DashboardForbidden):
+    """v1.6.1 P3 (feature six): GET / HEAD render the 403 page naming the permission; other methods get a 403 JSON
+    error. The handler ran nothing: the refusal is raised before the route body or before its first write."""
+    if request.method in {"GET", "HEAD"}:
+        from app.ui.routes import templates
+
+        return templates.TemplateResponse(
+            request,
+            "forbidden.html",
+            {"permission": exc.permission, "reason": exc.reason, "principal": principal_of(request), "active": ""},
+            status_code=403,
+        )
+    return JSONResponse(
+        status_code=403,
+        content={
+            "error": {
+                "code": exc.code,
+                "message": "This Dashboard action is not allowed for your account.",
+                "permission": exc.permission,
+                "reason": exc.reason,
+            }
+        },
     )
 
 

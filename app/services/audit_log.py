@@ -986,14 +986,19 @@ async def resolve_dlq_run(
     return attempts
 
 
-async def dashboard_summary(session: AsyncSession) -> DashboardSummary:
-    total_runs = await session.scalar(select(func.count()).select_from(AgentRun)) or 0
-    average_risk_score = await session.scalar(select(func.avg(AgentRun.risk_score))) or 0.0
+async def dashboard_summary(session: AsyncSession, *, tenant_id: str | None = None) -> DashboardSummary:
+    """Overview counts; ``tenant_id`` limits them to one tenant (v1.6.1 D22, tenant-bound Dashboard users)."""
+
+    def scoped(stmt):
+        return stmt.where(AgentRun.tenant_id == tenant_id) if tenant_id else stmt
+
+    total_runs = await session.scalar(scoped(select(func.count()).select_from(AgentRun))) or 0
+    average_risk_score = await session.scalar(scoped(select(func.avg(AgentRun.risk_score)))) or 0.0
 
     async def count_status(status: str) -> int:
         return (
             await session.scalar(
-                select(func.count()).select_from(AgentRun).where(AgentRun.status == status)
+                scoped(select(func.count()).select_from(AgentRun).where(AgentRun.status == status))
             )
             or 0
         )
@@ -1008,7 +1013,7 @@ async def dashboard_summary(session: AsyncSession) -> DashboardSummary:
         awaiting_approval=await count_status("awaiting_approval"),
         failed=await count_status("failed"),
         average_risk_score=round(float(average_risk_score), 3),
-        recent_incidents=await list_incidents(session, limit=5),
+        recent_incidents=await list_incidents(session, tenant_id=tenant_id, limit=5),
     )
 
 

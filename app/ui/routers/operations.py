@@ -25,11 +25,12 @@ from app.services.operations import (
 )
 from app.services.run_state import RunStateStore
 from app.ui.routes import dashboard_auth, templates
+from app.ui.security import actor_for, needs
 
 router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth)])
 
 
-@router.get("/dashboard/observability", response_class=HTMLResponse)
+@router.get("/dashboard/observability", response_class=HTMLResponse, dependencies=needs("dashboard.view", view="observability"))
 async def dashboard_observability(request: Request, session: AsyncSession = Depends(get_session)):
     summary = await observability_summary(session)
     return templates.TemplateResponse(
@@ -43,7 +44,7 @@ async def dashboard_observability(request: Request, session: AsyncSession = Depe
     )
 
 
-@router.get("/dashboard/operations", response_class=HTMLResponse)
+@router.get("/dashboard/operations", response_class=HTMLResponse, dependencies=needs("dashboard.view", view="operations"))
 async def dashboard_operations(
     request: Request,
     session: AsyncSession = Depends(get_session),
@@ -68,7 +69,7 @@ async def dashboard_operations(
     )
 
 
-@router.post("/dashboard/operations/evidence", response_class=HTMLResponse)
+@router.post("/dashboard/operations/evidence", response_class=HTMLResponse, dependencies=needs("operations.manage", view="operations"))
 async def dashboard_operations_evidence(
     request: Request,
     session: AsyncSession = Depends(get_session),
@@ -81,7 +82,7 @@ async def dashboard_operations_evidence(
         summary=str(form.get("summary", "")),
         reference_url=str(form.get("reference_url", "")),
         metadata={"source": "dashboard"},
-        created_by="dashboard",
+        created_by=actor_for(request, "dashboard"),
     )
     return HTMLResponse(
         '<meta http-equiv="refresh" content="0; url=/dashboard/operations">'
@@ -89,7 +90,7 @@ async def dashboard_operations_evidence(
     )
 
 
-@router.post("/dashboard/operations/release-gates", response_class=HTMLResponse)
+@router.post("/dashboard/operations/release-gates", response_class=HTMLResponse, dependencies=needs("operations.manage", view="operations"))
 async def dashboard_operations_release_gate(
     request: Request,
     session: AsyncSession = Depends(get_session),
@@ -100,7 +101,7 @@ async def dashboard_operations_release_gate(
     await persist_release_gate(
         session,
         release_version=str(form.get("release_version", "v1.6.0")),
-        created_by=str(form.get("created_by", "dashboard")),
+        created_by=actor_for(request, str(form.get("created_by", "dashboard"))),
         trace_id=str(getattr(request.state, "trace_id", "")),
         readiness=readiness,
     )

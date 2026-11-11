@@ -8,10 +8,10 @@
     <div class="muted">檢視 awaiting approval 與 destructive runs，並送出審核決策。</div>
   </div>
   <div style="display:flex; gap:8px; align-items:center;">
-    <form method="post" action="/dashboard/approvals/expire-stale" style="display:inline-block; margin:0;">
+    {% if can("approvals.expire", "platform") %}<form method="post" action="/dashboard/approvals/expire-stale" style="display:inline-block; margin:0;">
       <button class="button secondary" type="submit">Expire Stale Approvals</button>
-    </form>
-    <a class="button" href="/dashboard/playground">New Test Run</a>
+    </form>{% endif %}
+    {% if can("runs.submit", "playground") %}<a class="button" href="/dashboard/playground">New Test Run</a>{% endif %}
   </div>
 </div>
 
@@ -28,13 +28,13 @@
         <td>{% for flag in run.policy_flags %}<span class="flag">{{ flag }}</span>{% else %}<span class="muted">none</span>{% endfor %}</td>
         <td>{{ run.goal }}</td>
         <td>
-          <form class="decision-form" method="post" action="/dashboard/approvals/{{ run.run_id }}/decision">
-            <input type="hidden" name="reviewer" value="dashboard-operator">
+          {% if can("approvals.decide") %}<form class="decision-form" method="post" action="/dashboard/approvals/{{ run.run_id }}/decision">
+            {% if dashboard_auth_mode() != "session" %}<input type="hidden" name="reviewer" value="dashboard-operator">{% endif %}
             <input name="reason" value="Reviewed in dashboard">
             <button class="button" name="decision" value="approve_once" type="submit">Approve Once</button>
             <button class="button secondary" name="decision" value="request_changes" type="submit">Request Changes</button>
             <button class="button danger" name="decision" value="deny" type="submit">Deny</button>
-          </form>
+          </form>{% endif %}
         </td>
       </tr>
     {% else %}

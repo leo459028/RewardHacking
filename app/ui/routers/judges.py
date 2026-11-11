@@ -36,6 +36,7 @@ from app.services.judge_profiles_admin import (
     update_profile,
 )
 from app.ui.routes import dashboard_auth, templates
+from app.ui.security import actor_for, needs
 
 router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth)])
 PAGE = "/dashboard/judge-profiles"
@@ -138,7 +139,7 @@ def _form_values(source: dict[str, Any] | None) -> dict[str, str]:
     return values
 
 
-@router.get(PAGE, response_class=HTMLResponse)
+@router.get(PAGE, response_class=HTMLResponse, dependencies=needs("judge.view", view="judge_profiles"))
 async def dashboard_judge_profiles(request: Request, session: AsyncSession = Depends(get_session)):
     params = request.query_params
     settings = get_settings()
@@ -181,7 +182,7 @@ async def dashboard_judge_profiles(request: Request, session: AsyncSession = Dep
     )
 
 
-@router.post(PAGE, response_class=HTMLResponse)
+@router.post(PAGE, response_class=HTMLResponse, dependencies=needs("judge.profile.write", view="judge_profiles"))
 async def dashboard_judge_profile_create(request: Request, session: AsyncSession = Depends(get_session)):
     if not same_origin(request):
         return _forbidden()
@@ -190,26 +191,26 @@ async def dashboard_judge_profile_create(request: Request, session: AsyncSession
     form = await request.form()
     name = str(form.get("name", "") or "").strip().lower()
     try:
-        result = await create_profile(session, get_settings(), name, _config_from_form(form), actor=DASHBOARD_ACTOR)
+        result = await create_profile(session, get_settings(), name, _config_from_form(form), actor=actor_for(request, DASHBOARD_ACTOR))
     except JudgeProfileAdminError as exc:
         return _redirect(error=f"{name or 'profile'}: {exc.detail}")
     state = "saved as a draft (fill in the required fields to test it)" if result["draft"] else "saved; test the connection next"
     return _redirect(message=f"Profile {name} {state}.")
 
 
-@router.post(PAGE + "/deactivate", response_class=HTMLResponse)
+@router.post(PAGE + "/deactivate", response_class=HTMLResponse, dependencies=needs("judge.profile.write", view="judge_profiles"))
 async def dashboard_judge_profile_deactivate(request: Request, session: AsyncSession = Depends(get_session)):
     if not same_origin(request):
         return _forbidden()
     if (blocked := _guard(request)) is not None:
         return blocked
-    result = await deactivate_profiles(session, get_settings(), actor=DASHBOARD_ACTOR)
+    result = await deactivate_profiles(session, get_settings(), actor=actor_for(request, DASHBOARD_ACTOR))
     in_use = result["resolution"]["profile"]
     message = f"Dashboard activation cleared; live triage now uses {in_use}."
     return _redirect(message=f"{message} {result['note']}".strip())
 
 
-@router.post(PAGE + "/{name}/update", response_class=HTMLResponse)
+@router.post(PAGE + "/{name}/update", response_class=HTMLResponse, dependencies=needs("judge.profile.write", view="judge_profiles"))
 async def dashboard_judge_profile_update(request: Request, name: str, session: AsyncSession = Depends(get_session)):
     if not same_origin(request):
         return _forbidden()
@@ -218,7 +219,7 @@ async def dashboard_judge_profile_update(request: Request, name: str, session: A
     form = await request.form()
     try:
         version = int(str(form.get("version", "0") or "0"))
-        result = await update_profile(session, get_settings(), name, _config_from_form(form), version=version, actor=DASHBOARD_ACTOR)
+        result = await update_profile(session, get_settings(), name, _config_from_form(form), version=version, actor=actor_for(request, DASHBOARD_ACTOR))
     except ValueError:
         return _redirect(error="Missing profile version; reload the page.", edit=name)
     except JudgeProfileAdminError as exc:
@@ -227,7 +228,7 @@ async def dashboard_judge_profile_update(request: Request, name: str, session: A
     return _redirect(message=f"Profile {name} updated (version {result['version']}).{note}")
 
 
-@router.post(PAGE + "/{name}/delete", response_class=HTMLResponse)
+@router.post(PAGE + "/{name}/delete", response_class=HTMLResponse, dependencies=needs("judge.profile.write", view="judge_profiles"))
 async def dashboard_judge_profile_delete(request: Request, name: str, session: AsyncSession = Depends(get_session)):
     if not same_origin(request):
         return _forbidden()
@@ -236,20 +237,20 @@ async def dashboard_judge_profile_delete(request: Request, name: str, session: A
     form = await request.form()
     version_text = str(form.get("version", "") or "")
     try:
-        await delete_profile(session, get_settings(), name, actor=DASHBOARD_ACTOR, version=int(version_text) if version_text else None)
+        await delete_profile(session, get_settings(), name, actor=actor_for(request, DASHBOARD_ACTOR), version=int(version_text) if version_text else None)
     except JudgeProfileAdminError as exc:
         return _redirect(error=f"{name}: {exc.detail}")
     return _redirect(message=f"Profile {name} deleted.")
 
 
-@router.post(PAGE + "/{name}/probe", response_class=HTMLResponse)
+@router.post(PAGE + "/{name}/probe", response_class=HTMLResponse, dependencies=needs("judge.profile.operate", view="judge_profiles"))
 async def dashboard_judge_profile_probe(request: Request, name: str, session: AsyncSession = Depends(get_session)):
     if not same_origin(request):
         return _forbidden()
     if (blocked := _guard(request)) is not None:
         return blocked
     try:
-        result = await probe_profile(session, get_settings(), name, actor=DASHBOARD_ACTOR)
+        result = await probe_profile(session, get_settings(), name, actor=actor_for(request, DASHBOARD_ACTOR))
     except JudgeProfileAdminError as exc:
         return _redirect(error=f"{name}: {exc.detail}")
     if result["status"] != "ok":
@@ -262,14 +263,14 @@ async def dashboard_judge_profile_probe(request: Request, name: str, session: As
     )
 
 
-@router.post(PAGE + "/{name}/activate", response_class=HTMLResponse)
+@router.post(PAGE + "/{name}/activate", response_class=HTMLResponse, dependencies=needs("judge.profile.write", view="judge_profiles"))
 async def dashboard_judge_profile_activate(request: Request, name: str, session: AsyncSession = Depends(get_session)):
     if not same_origin(request):
         return _forbidden()
     if (blocked := _guard(request)) is not None:
         return blocked
     try:
-        await activate_profile(session, get_settings(), name, actor=DASHBOARD_ACTOR)
+        await activate_profile(session, get_settings(), name, actor=actor_for(request, DASHBOARD_ACTOR))
     except JudgeProfileAdminError as exc:
         return _redirect(error=f"Cannot activate {name}: {exc.detail}")
     return _redirect(message=f"{name} is now used for live triage (Dashboard activation).")

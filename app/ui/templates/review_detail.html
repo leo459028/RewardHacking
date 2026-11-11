@@ -48,9 +48,9 @@
     </tbody>
   </table>
   {% if judge_mode != "off" %}
-  <form method="post" action="/dashboard/reviews/{{ review.review_id }}/judge-assessments" style="margin-top:12px;">
+  {% if can("reviews.retriage") %}<form method="post" action="/dashboard/reviews/{{ review.review_id }}/judge-assessments" style="margin-top:12px;">
     <button class="button secondary" type="submit" id="reassess-judge">Re-assess | 重新評估</button>
-  </form>
+  </form>{% endif %}
   {% endif %}
 </section>
 
@@ -63,14 +63,14 @@
 {% if review.status in ["open", "needs_info"] %}
 <section class="panel" id="review-decision">
   <h2>Review Decision <span class="heading-note">審查決定（不會重新執行 run）</span></h2>
-  <form method="post" action="/dashboard/reviews/{{ review.review_id }}/decision">
+  {% if can("reviews.decide") %}<form method="post" action="/dashboard/reviews/{{ review.review_id }}/decision">
     <div class="form-grid">
       <label>Label
         <select name="label">
           {% for item in labels %}<option value="{{ item }}">{{ item }}</option>{% endfor %}
         </select>
       </label>
-      <label>Reviewer <input name="reviewer" value="dashboard-reviewer" required></label>
+      {% if dashboard_auth_mode() != "session" %}<label>Reviewer <input name="reviewer" value="dashboard-reviewer" required></label>{% else %}<span class="muted" data-testid="acting-as">Recorded as | 記錄為 <code>{{ dashboard_user(request).actor }}</code></span>{% endif %}
       <label>Corrected Categories
         <select name="label_categories" multiple size="4">
           {% for item in categories %}<option value="{{ item }}" {{ "selected" if item in review.categories else "" }}>{{ item }}</option>{% endfor %}
@@ -93,7 +93,7 @@
     </table>
     {% endif %}
     <div style="margin-top:12px;"><button class="button" type="submit">Submit Decision</button></div>
-  </form>
+  </form>{% endif %}
 </section>
 {% else %}
 <section class="panel">
@@ -112,15 +112,15 @@
   {% if review.exported_sample_id %}
     <p>Exported as <a href="/dashboard/benchmark?tenant_id={{ review.tenant_id }}&source=review_export&corpus=#corpus"><strong>{{ review.exported_sample_id }}</strong></a>.</p>
   {% else %}
-  <form method="post" action="/dashboard/reviews/{{ review.review_id }}/export-benchmark">
+  {% if can("benchmark.manage") %}<form method="post" action="/dashboard/reviews/{{ review.review_id }}/export-benchmark">
     <div class="form-grid">
       <label>Scope
         <select name="scope"><option value="tenant">tenant ({{ review.tenant_id }})</option><option value="global">global (admin)</option></select>
       </label>
-      <label>Exported By <input name="exported_by" value="dashboard-admin"></label>
+      {% if dashboard_auth_mode() != "session" %}<label>Exported By <input name="exported_by" value="dashboard-admin"></label>{% else %}<span class="muted" data-testid="acting-as">Recorded as | 記錄為 <code>{{ dashboard_user(request).actor }}</code></span>{% endif %}
     </div>
     <div style="margin-top:12px;"><button class="button" type="submit" id="export-to-benchmark">Export to Benchmark</button></div>
-  </form>
+  </form>{% endif %}
   {% endif %}
 </section>
 {% endif %}

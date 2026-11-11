@@ -14,7 +14,7 @@
 {% endif %}
 
 <section class="panel">
-  <form method="post">
+  {% if can("runs.submit", "playground") %}<form method="post">
     <div class="form-grid">
       <label>Tenant ID
         <input name="tenant_id" value="{{ form.get('tenant_id', 'default') if form else 'default' }}">
@@ -77,7 +77,7 @@
       <label><input type="checkbox" name="allow_pii_access" {{ "checked" if form and form.get('allow_pii_access') == 'on' else "" }}> PII access</label>
       <button class="button" type="submit">Submit Run</button>
     </div>
-  </form>
+  </form>{% endif %}
 </section>
 
 {% if submitted and result %}

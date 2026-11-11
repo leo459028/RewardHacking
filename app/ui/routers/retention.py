@@ -19,6 +19,7 @@ from app.infra.postgres import get_session
 from app.services import retention
 from app.ui.routers.judges import same_origin
 from app.ui.routes import dashboard_auth, templates
+from app.ui.security import actor_for, needs, principal_of
 
 router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth)])
 
@@ -36,7 +37,7 @@ def _forbidden() -> HTMLResponse:
     return HTMLResponse("Cross-origin form submission refused (Origin / Referer must match this host).", status_code=403)
 
 
-@router.get("/dashboard/retention", response_class=HTMLResponse)
+@router.get("/dashboard/retention", response_class=HTMLResponse, dependencies=needs("retention.view", view="retention"))
 async def dashboard_retention(request: Request, session: AsyncSession = Depends(get_session)):
     settings = get_settings()
     purge_id = request.query_params.get("purge_id", "")
@@ -68,21 +69,21 @@ async def dashboard_retention(request: Request, session: AsyncSession = Depends(
     )
 
 
-@router.post("/dashboard/retention/plans", response_class=HTMLResponse)
+@router.post("/dashboard/retention/plans", response_class=HTMLResponse, dependencies=needs("retention.plan", view="retention"))
 async def dashboard_retention_plan(request: Request, session: AsyncSession = Depends(get_session)):
     """Read-only dry-run report (D11). Never deletes anything."""
     if not same_origin(request):
         return _forbidden()
     try:
-        purge = await retention.build_plan(session, get_settings(), actor=DASHBOARD_ACTOR)
+        purge = await retention.build_plan(session, get_settings(), actor=actor_for(request, DASHBOARD_ACTOR))
     except retention.RetentionError as exc:
         return _redirect(error=f"{exc.code}: {exc.message}")
     return _redirect(purge_id=purge.purge_id, message=f"Dry-run report {purge.purge_id} created.")
 
 
-@router.post("/dashboard/retention/holds", response_class=HTMLResponse)
+@router.post("/dashboard/retention/holds", response_class=HTMLResponse, dependencies=needs("legal_hold.create", view="retention"))
 async def dashboard_retention_hold_create(request: Request, session: AsyncSession = Depends(get_session)):
-    """Create a legal hold. The Dashboard acts as a local admin; releasing a hold stays API-only (admin)."""
+    """Create a legal hold as the signed-in user (off mode: local admin); releasing a hold stays API-only until P7."""
     if not same_origin(request):
         return _forbidden()
     form = await request.form()
@@ -92,8 +93,9 @@ async def dashboard_retention_hold_create(request: Request, session: AsyncSessio
             scope_type=str(form.get("scope_type", "")),
             scope_id=str(form.get("scope_id", "")),
             reason=str(form.get("reason", "")),
-            actor=DASHBOARD_ACTOR,
-            actor_role="admin",
+            actor=actor_for(request, DASHBOARD_ACTOR),
+            actor_role=principal_of(request).role,  # v1.6.1 D23: the signed-in role (off mode: local admin)
+            actor_tenant_id=principal_of(request).tenant_id,
         )
     except retention.RetentionError as exc:
         return _redirect(error=f"{exc.code}: {exc.message}")
