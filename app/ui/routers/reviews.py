@@ -22,8 +22,10 @@ from app.services.evaluation.evidence import EvidenceError
 from app.services.evaluation.taxonomy import CATEGORIES
 from app.services.judge_triage import default_order, effective_priority, list_assessments, triage_review
 from app.services.outcomes import list_outcomes, preview_evaluation, refresh_review_queue_gauge, submit_outcome
-from app.services.review_queue import ReviewError, decide_review, get_review, list_reviews, policy_relaxes, upsert_evaluation_policy
+from app.services import change_requests
+from app.services.review_queue import ReviewError, decide_review, get_review, list_reviews, policy_relaxes
 from app.services.review_sampling import sampling_summary
+from app.ui.routers.change_requests import pending_message
 from app.ui.routes import dashboard_auth, templates
 from app.ui.security import actor_for, csrf_protect, ensure_permission, ensure_tenant_access, needs, principal_of, scoped_tenant
 
@@ -262,14 +264,24 @@ async def dashboard_evaluation_policy(request: Request, session: AsyncSession = 
     if await policy_relaxes(session, tenant_id=tenant_id, protected_paths=paths, allow_default_protected_paths=allow_defaults):
         # v1.6.1 feature seven: fewer protected paths needs evaluation_policy.relax and a recent re-authentication.
         await ensure_permission(request, session, "evaluation_policy.relax")
-    await upsert_evaluation_policy(
-        session,
-        tenant_id=tenant_id,
-        protected_paths=paths,
-        allow_default_protected_paths=allow_defaults,
-        updated_by=actor_for(request, str(form.get("updated_by", "dashboard-admin")).strip() or "dashboard-admin"),
-    )
-    message = f"Evaluation policy saved for {tenant_id} ({len(paths)} custom protected path(s))."
+    actor = actor_for(request, str(form.get("updated_by", "dashboard-admin")).strip() or "dashboard-admin")
+    # v1.6.1 D39 / D42: a relaxation becomes a change request while ``evaluation_policy.protected_paths`` is in
+    # DUAL_CONTROL_ACTIONS; adding paths applies at once.
+    try:
+        outcome = await change_requests.execute_or_request(
+            session,
+            get_settings(),
+            change_requests.POLICY_PROTECTED_PATHS,
+            {"tenant_id": tenant_id, "protected_paths": paths, "allow_default_protected_paths": allow_defaults, "updated_by": actor},
+            change_requests.Requester.from_principal(principal_of(request), actor),
+        )
+    except change_requests.ChangeRequestError as exc:
+        message = f"{exc.code}: {exc.message}"
+        return RedirectResponse(f"/dashboard/governance?tenant_id={quote(tenant_id)}&message={quote(message)}#evaluation-policy", status_code=303)
+    if outcome.pending:
+        message = pending_message(outcome)
+    else:
+        message = f"Evaluation policy saved for {tenant_id} ({len(paths)} custom protected path(s))."
     return RedirectResponse(f"/dashboard/governance?tenant_id={quote(tenant_id)}&message={quote(message)}#evaluation-policy", status_code=303)
 
 

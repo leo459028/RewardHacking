@@ -174,6 +174,8 @@ The legacy risk fields (`shortcut_risk`, `policy_violation_risk`, `hallucination
 
 **Protected paths**: defaults (`tests/**`, `**/test_*.py`, `**/conftest.py`, `pytest.ini`, `.github/workflows/**`, ...) plus the tenant policy (`GET/PUT /v1/tenants/{tenant_id}/evaluation-policy`). Run metadata (`metadata.protected_paths`) may only **add** paths.
 
+**Relaxing protected paths** (`v1.6.1`): a change that removes effective protected paths, or turns the default paths off, needs `evaluation_policy.relax` and re-authentication on the Dashboard. With `evaluation_policy.protected_paths` in `DUAL_CONTROL_ACTIONS` it also needs a second person: the API answers `202` with a change request and the Dashboard form shows its id; another signed-in `admin` or `tenant_admin` of the same tenant approves it on `/dashboard/change-requests`, and it fails as `change_request_stale` if the policy changed in between. Adding paths always applies at once. Judge activation (`judge.activate`) can be put under the same dual control (see `docs/security.md`, Dual Control).
+
 ---
 
 ## 6. Post-Execution Review Queue

@@ -8,9 +8,11 @@ re-check at apply, and legal hold roles. This router only maps the principal (``
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.common import _actor, _query_tenant
+from app.api.routers.change_requests import api_requester
 from app.api.deps import get_state_store
 from app.core.config import get_settings
 from app.infra.postgres import get_session
@@ -24,7 +26,7 @@ from app.schemas.retention import (
     RetentionPurgeRecord,
     RetentionTombstoneRecord,
 )
-from app.services import retention
+from app.services import change_requests, retention
 from app.services.auth import AuthContext, get_auth_context, require_role
 from app.services.run_state import RunStateStore
 
@@ -84,16 +86,18 @@ async def post_retention_apply(
     state_store: RunStateStore = Depends(get_state_store),
 ):
     require_role(auth_context, "admin")
-    purge = await retention.apply_plan(
+    # v1.6.1 D39: with ``retention.apply`` in DUAL_CONTROL_ACTIONS this stores a change request and answers 202.
+    outcome = await change_requests.execute_or_request(
         session,
         get_settings(),
-        purge_id,
-        plan_digest=payload.plan_digest,
-        confirm=payload.confirm,
-        actor=_actor(auth_context),
+        change_requests.RETENTION_APPLY,
+        {"purge_id": purge_id, "plan_digest": payload.plan_digest, "confirm": payload.confirm},
+        api_requester(auth_context),
         state_store=state_store,
     )
-    return retention.purge_to_dict(purge)
+    if outcome.pending:
+        return JSONResponse(status_code=202, content=change_requests.pending_response(outcome))
+    return retention.purge_to_dict(outcome.result)
 
 
 @router.get("/retention/purges", response_model=list[RetentionPurgeRecord])
@@ -169,11 +173,15 @@ async def post_release_legal_hold(
     auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
-    hold = await retention.release_hold(
+    # v1.6.1 D39: with ``legal_hold.release`` in DUAL_CONTROL_ACTIONS this stores a change request and answers 202.
+    outcome = await change_requests.execute_or_request(
         session,
-        hold_id,
-        actor=_actor(auth_context),
-        actor_role=hold_actor_role(auth_context),
-        release_reason=payload.release_reason,
+        get_settings(),
+        change_requests.LEGAL_HOLD_RELEASE,
+        {"hold_id": hold_id, "release_reason": payload.release_reason},
+        api_requester(auth_context),
+        reason=payload.release_reason,
     )
-    return retention.hold_to_dict(hold)
+    if outcome.pending:
+        return JSONResponse(status_code=202, content=change_requests.pending_response(outcome))
+    return retention.hold_to_dict(outcome.result)

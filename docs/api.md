@@ -197,6 +197,37 @@ Read-only; responses carry hashes and identifiers only (`signal_usage: "monitor_
 
 The `410 run_purged` tombstone summary now includes `chain_version`, `prev_hash` and `entry_hash`.
 
+### Change Requests (`v1.6.1`)
+
+Dual control is off by default. While an action is listed in `DUAL_CONTROL_ACTIONS`, its endpoint stores a change
+request instead of acting and answers **`202`** `{"status": "pending_second_approval", "created": true|false,
+"change_request": {...}}` (`created: false` = the identical pending request already existed):
+
+| Action | Endpoint |
+| :--- | :--- |
+| `retention.apply` | `POST /v1/retention/plans/{purge_id}/apply` |
+| `legal_hold.release` | `POST /v1/legal-holds/{hold_id}/release` |
+| `judge.activate` | `POST /v1/evaluations/judge/profiles/{name}/activate` (body also carries `signal_usage`) |
+| `evaluation_policy.protected_paths` | `PUT /v1/tenants/{tenant_id}/evaluation-policy`, only when it removes effective protected paths or turns the defaults off |
+
+Without dual control these endpoints answer exactly as before. Requests are approved or rejected only by a signed-in
+Dashboard user on `/dashboard/change-requests`; **the API has no approve endpoint**, so an API key can never be the
+second person.
+
+| Method | Path | Description | Roles |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/v1/change-requests` | Change requests, newest first (`status`, `action`, `tenant_id`, `limit` ≤ 500). Admin keys see all; other keys only their tenant's | `viewer`, `operator`, `admin` (and roles treated as viewer) |
+| `GET` | `/v1/change-requests/{change_id}` | One request: `action`, `target_ref`, `tenant_id`, `payload`, `payload_digest`, `status`, `requested_by` / `_at` / `_reason`, `decided_by` / `_at`, `decision_reason`, `expires_at`, `executed_at`, `execution`, `error`, `error_code` | same |
+| `POST` | `/v1/change-requests/{change_id}/cancel` | Optional body `{"reason": "..."}`; only the requester (same key) can cancel a `pending` request | `tenant_admin`, `admin` |
+
+Error codes (`{"error": {"code": ...}}`): `change_request_not_found` (404), `change_request_pending_exists` (409, with
+`details.change_id`), `change_request_not_pending` / `change_request_expired` (409), `change_request_cancel_forbidden`
+(403). Dashboard decisions can also return `change_request_sign_in_required`, `change_request_self_approval_forbidden`,
+`change_request_forbidden` (with `details.permission`), `change_request_tenant_forbidden` and
+`change_request_reauth_required` (403). A request that fails at approval keeps `status: failed` with `error_code`
+(`change_request_stale` or the action's own code). Status values: `pending`, `approved` (transient), `rejected`,
+`executed`, `failed`, `expired`, `cancelled`.
+
 ### Safe MCP Gateway (`v1.5.7`)
 
 | Method | Path | Description | Access Role |

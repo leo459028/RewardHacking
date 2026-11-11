@@ -20,6 +20,7 @@ from app.core.config import get_settings
 from app.infra.postgres import get_session
 from app.schemas.benchmark import HoneypotLaunchRequest
 from app.services import benchmark as bench
+from app.services import change_requests
 from app.services import honeypot as hp
 from app.services.attestation_keys import (
     AttestationKeyServiceError,
@@ -38,7 +39,7 @@ from app.services.judge_background import pending_summary, sweep_pending_triage
 from app.services.evaluation.judges.profiles import resolve_active_profile
 from app.services.judge_profiles_admin import JudgeProfileAdminError, ensure_zero_cost_pricing, probe_profile, profiles_view
 from app.services.orchestrator import AgentOrchestrator
-from app.services.review_queue import get_evaluation_policy, policy_to_dict, upsert_evaluation_policy
+from app.services.review_queue import get_evaluation_policy, policy_to_dict
 from app.services.run_state import RunStateStore
 from app.ui.routes import dashboard_auth, templates
 from app.ui.security import actor_for, csrf_protect, ensure_tenant_access, needs, principal_of
@@ -381,15 +382,22 @@ async def dashboard_judge_consent(request: Request, session: AsyncSession = Depe
     current = policy_to_dict(tenant_id, await get_evaluation_policy(session, tenant_id))
     allow = str(form.get("allow_external_judge", "")).lower() in {"on", "true", "1", "yes"}
     profiles = [str(item).strip() for item in form.getlist("external_judge_profiles") if str(item).strip()]
-    # Protected paths are kept as they are; only the consent fields change.
-    await upsert_evaluation_policy(
+    # Protected paths are kept as they are; only the consent fields change. Routed through the change-request service
+    # like every evaluation-policy write (v1.6.1 D39): it never relaxes protected paths, so it always applies at once.
+    actor = actor_for(request, str(form.get("updated_by", "dashboard-admin")).strip() or "dashboard-admin")
+    await change_requests.execute_or_request(
         session,
-        tenant_id=tenant_id,
-        protected_paths=list(current["protected_paths"]),
-        allow_default_protected_paths=bool(current["allow_default_protected_paths"]),
-        updated_by=actor_for(request, str(form.get("updated_by", "dashboard-admin")).strip() or "dashboard-admin"),
-        allow_external_judge=allow,
-        external_judge_profiles=profiles,
+        get_settings(),
+        change_requests.POLICY_PROTECTED_PATHS,
+        {
+            "tenant_id": tenant_id,
+            "protected_paths": list(current["protected_paths"]),
+            "allow_default_protected_paths": bool(current["allow_default_protected_paths"]),
+            "updated_by": actor,
+            "allow_external_judge": allow,
+            "external_judge_profiles": profiles,
+        },
+        change_requests.Requester.from_principal(principal_of(request), actor),
     )
     scope = ", ".join(profiles) if profiles else "all external profiles"
     message = f"External judge consent for {tenant_id}: {'allowed (' + scope + ')' if allow else 'not allowed'}."

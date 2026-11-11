@@ -287,3 +287,10 @@ AUDIT_CHAIN_VERIFY_FAILURES_TOTAL = Counter(
     "Audit chain verification findings that fail the check, by kind",
     ["kind"],
 )
+
+# v1.6.1 dual control (plan D43)
+CHANGE_REQUESTS_TOTAL = Counter(
+    "change_requests_total",
+    "Change request transitions (created, approved, rejected, executed, failed, expired, cancelled), by action",
+    ["action", "status"],
+)

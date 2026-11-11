@@ -473,7 +473,8 @@ def test_configured_csrf_secret_signs_the_login_cookie(client, signed_in, monkey
 
 def test_step_up_inventory_matches_the_permission_table():
     declared = {row[2] for row in STEP_UP_ROUTES}
-    assert declared == {"users.manage", "judge.profile.write", "api_keys.manage", "audit_chain.checkpoint"}  # P5 added the last
+    # P5 added audit_chain.checkpoint, P6 change_requests.decide (approve / reject)
+    assert declared == {"users.manage", "judge.profile.write", "api_keys.manage", "audit_chain.checkpoint", "change_requests.decide"}
     # handler-level step-up checks (ensure_permission): tenants.disable, pricing.import_apply, evaluation_policy.relax
     assert {"tenants.disable", "pricing.import_apply", "evaluation_policy.relax"} <= permissions.STEP_UP_PERMISSIONS
 

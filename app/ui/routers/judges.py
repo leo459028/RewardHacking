@@ -26,7 +26,6 @@ from app.services.judge_activation import REASON_MESSAGES
 from app.services.judge_profiles_admin import (
     INPUT_FIELDS,
     JudgeProfileAdminError,
-    activate_profile,
     create_profile,
     dashboard_editing,
     deactivate_profiles,
@@ -35,8 +34,10 @@ from app.services.judge_profiles_admin import (
     profiles_overview,
     update_profile,
 )
+from app.services import change_requests
+from app.ui.routers.change_requests import pending_message
 from app.ui.routes import dashboard_auth, templates
-from app.ui.security import actor_for, csrf_protect, needs
+from app.ui.security import actor_for, csrf_protect, needs, principal_of
 
 router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth), Depends(csrf_protect)])
 PAGE = "/dashboard/judge-profiles"
@@ -269,8 +270,20 @@ async def dashboard_judge_profile_activate(request: Request, name: str, session:
         return _forbidden()
     if (blocked := _guard(request)) is not None:
         return blocked
+    actor = actor_for(request, DASHBOARD_ACTOR)
     try:
-        await activate_profile(session, get_settings(), name, actor=actor_for(request, DASHBOARD_ACTOR))
+        # v1.6.1 D39: with ``judge.activate`` in DUAL_CONTROL_ACTIONS this stores a change request instead.
+        outcome = await change_requests.execute_or_request(
+            session,
+            get_settings(),
+            change_requests.JUDGE_ACTIVATE,
+            {"profile": name},
+            change_requests.Requester.from_principal(principal_of(request), actor),
+        )
     except JudgeProfileAdminError as exc:
         return _redirect(error=f"Cannot activate {name}: {exc.detail}")
+    except change_requests.ChangeRequestError as exc:
+        return _redirect(error=f"Cannot activate {name}: {exc.code}: {exc.message}")
+    if outcome.pending:
+        return _redirect(message=pending_message(outcome))
     return _redirect(message=f"{name} is now used for live triage (Dashboard activation).")

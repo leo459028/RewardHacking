@@ -486,6 +486,37 @@ async def _audit_chain_integrity_check(session: AsyncSession, *, settings: Setti
     )
 
 
+DUAL_CONTROL_REQUIRED_IN_PROD = ("retention.apply", "legal_hold.release")
+
+
+def _dual_control_configured_check(settings: Settings) -> OperationsCheck:
+    """v1.6.1 D38 / Q4: production should put purge apply and legal-hold release under dual control.
+
+    Missing actions warn in ``APP_ENV=prod``; elsewhere the warning is advisory (it does not change the overall gate,
+    like ``dashboard_auth_mode`` and ``audit_chain_integrity``). Unknown names in ``DUAL_CONTROL_ACTIONS`` also warn."""
+    from app.services.change_requests import configured_actions
+
+    prod = (settings.app_env or "").strip().lower() == "prod"
+    enabled, unknown = configured_actions(settings)
+    missing = [action for action in DUAL_CONTROL_REQUIRED_IN_PROD if action not in enabled]
+    if unknown:
+        status, advisory = "warn", False
+        detail = f"DUAL_CONTROL_ACTIONS has unknown names (ignored): {', '.join(unknown)}."
+    elif missing:
+        status, advisory = "warn", not prod
+        detail = f"Dual control is off for {', '.join(missing)}; one administrator or one admin API key can run them alone."
+    else:
+        status, advisory = "pass", False
+        detail = f"Dual control is on for {', '.join(sorted(enabled))}."
+    return OperationsCheck(
+        check_key="dual_control_configured",
+        status=status,
+        title="Dual control configured",
+        detail=detail,
+        metadata={"enabled": sorted(enabled), "missing": missing, "unknown": unknown, "advisory": advisory, "app_env": settings.app_env},
+    )
+
+
 def _sandbox_backend_health_check(settings: Settings) -> OperationsCheck:
     """v1.6.0 D24: the configured backend must load and pass the conformance smoke cases."""
     report = sandbox_health.status_report(settings)
@@ -639,6 +670,7 @@ async def compute_operations_readiness(
         _sandbox_backend_health_check(settings),
         await _dashboard_auth_mode_check(session, settings=settings),
         await _audit_chain_integrity_check(session, settings=settings),
+        _dual_control_configured_check(settings),
         OperationsCheck(
             check_key="stale_queued_runs",
             status="fail" if stale_queued else "pass",

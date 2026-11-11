@@ -96,6 +96,10 @@ class Settings(BaseSettings):
     audit_chain_signing_key: SecretStr = SecretStr("")  # or the PEM itself
     audit_chain_public_keys_file: str = ""  # PEM public keys accepted when verifying (keep old keys after rotation)
     audit_chain_verify_max_entries: int = 5000  # online (API / Dashboard) verification limit per call
+    # v1.6.1 D37-D43, D47: dual control (Change Requests). Comma list of actions that need a second, signed-in
+    # person: retention.apply, legal_hold.release, judge.activate, evaluation_policy.protected_paths. Empty = off.
+    dual_control_actions: str = ""
+    dual_control_request_ttl_hours: int = 24
     # v1.6.0 D21 / D23: sandbox spec. "simulated" (nothing is executed) is the only backend in this release;
     # the isolation requirement is recorded in the tool transcript and enforced from v1.6.1.
     sandbox_backend: str = "simulated"

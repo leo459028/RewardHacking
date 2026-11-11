@@ -216,7 +216,7 @@ re-authentication.
 | :--- | :--- |
 | Cross-site form submission (a signed-in browser driven by another site) | Every Dashboard router has the `csrf_protect` dependency: every request other than GET / HEAD / OPTIONS must carry `HMAC-SHA256(csrf_secret, session_id)` as the `_csrf` form field (rendered by `csrf_input()` in every POST form) or the `X-CSRF-Token` header. `csrf_secret` is random per session, so another session's token, or a token from before sign-out, never verifies; comparisons are constant time. A missing or wrong token answers `403 csrf_token_invalid` before the route runs, writes `access.denied` (permission `csrf`) and counts `dashboard_access_denied_total{reason="csrf_token_invalid"}`. The same-origin `Origin` / `Referer` check on the judge profile and retention forms stays as a second layer, and the session cookie keeps `SameSite=Lax` |
 | Sign-in CSRF (signing a victim into the attacker's account) | The sign-in form has no session yet: each rendering sets a signed, `HttpOnly`, `SameSite=Strict` cookie `rh_login_csrf` (`Path=/dashboard/login`, 15 minutes) and a matching hidden token (signed double submit, key `DASHBOARD_CSRF_SECRET` or a random per-process key). Without a valid pair the form is shown again (403) with a fresh token; the password is not checked and nothing is counted |
-| A stolen or unattended session performs high-risk changes | Actions whose permission is in `STEP_UP_PERMISSIONS` need a password entry within `DASHBOARD_REAUTH_MAX_AGE_SECONDS` (default 300): user management, API key create / revoke, disabling a tenant, applying a pricing import, judge profile create / edit / delete / activate / deactivate, removing protected paths (fewer effective paths, including turning the default paths off), and from later phases retention apply, legal hold release, change request approval and audit chain checkpoints. A stale session gets a 303 to `/dashboard/reauth?next=<page>` and the action does not run; after the password is accepted the user returns to the page and submits again (the original POST is never replayed). A fresh sign-in counts as re-authenticated. Wrong passwords count towards the account lockout; success writes `access.reauth` |
+| A stolen or unattended session performs high-risk changes | Actions whose permission is in `STEP_UP_PERMISSIONS` need a password entry within `DASHBOARD_REAUTH_MAX_AGE_SECONDS` (default 300): user management, API key create / revoke, disabling a tenant, applying a pricing import, judge profile create / edit / delete / activate / deactivate, removing protected paths (fewer effective paths, including turning the default paths off), change request approve / reject (`v1.6.1` P6), audit chain checkpoints, and from a later phase the Dashboard retention apply and legal hold release. A stale session gets a 303 to `/dashboard/reauth?next=<page>` and the action does not run; after the password is accepted the user returns to the page and submits again (the original POST is never replayed). A fresh sign-in counts as re-authenticated. Wrong passwords count towards the account lockout; success writes `access.reauth` |
 | Clickjacking, cached pages and referrer leaks | Every `/dashboard` response carries `Cache-Control: no-store`, `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`, `Referrer-Policy: same-origin` and `X-Content-Type-Options: nosniff`. The `/v1` API responses are unchanged |
 | Open redirect after re-authentication | `next` is validated like the sign-in `next` (relative `/dashboard` path only; the sign-in, sign-out and re-authentication pages are refused). The return page comes from a same-host `Referer`, else `/dashboard` |
 
@@ -283,6 +283,45 @@ Therefore keep the private key apart from the database (a mounted file readable 
 in the database or the image), and export checkpoints regularly (`--export-checkpoint`) to storage the database
 administrators cannot change. There is no external anchoring or trusted timestamping in this release. The chain only
 records: it never changes a verdict, releases a run or alters source rows.
+
+## Dual Control: Change Requests (`v1.6.1`)
+
+Four high-impact actions can require a second person. `DUAL_CONTROL_ACTIONS` is a comma list of
+`retention.apply`, `legal_hold.release`, `judge.activate` and `evaluation_policy.protected_paths`; it is empty by
+default, so nothing changes after an upgrade. The `dual_control_configured` operations check warns in `APP_ENV=prod`
+while `retention.apply` or `legal_hold.release` is not listed (advisory elsewhere) and warns on unknown names.
+
+**Enforcement is in the service layer** (`app/services/change_requests.py`, `execute_or_request()`), which the API
+endpoints and the Dashboard forms both call, so one admin API key cannot bypass it. While an action is listed, the
+request only stores a `pending` change request (`chg_...`) and the target does not change (the plan stays `planned`,
+the hold `active`, the judge and the protected paths unchanged); the API answers `202`
+`{"status": "pending_second_approval", "change_request": {...}}`. `python -m app.jobs.retention --apply-latest` is
+refused with `second_approval_required` (exit 2): an automated component never approves its own change.
+
+| Rule (D40) | Behaviour |
+| :--- | :--- |
+| Who approves | Only a signed-in Dashboard user (`session` mode) on `/dashboard/change-requests`. There is no approve endpoint in the API, and the synthetic `off`-mode principal is refused (`change_request_sign_in_required`) |
+| Not the requester | Compared by Dashboard user id, else by actor string (`change_request_self_approval_forbidden`) |
+| Permission | `change_requests.decide` (re-authentication) **and** the action's own permission: `retention.apply`, `legal_hold.release`, `judge.profile.write` (all `admin`) or `evaluation_policy.relax` (`admin`, `tenant_admin`) (`change_request_forbidden`) |
+| Tenant | A tenant-bound approver only sees and decides its own tenant's requests; platform requests (purge plans, judges) are platform-only |
+| Execution | Approval executes in the same request after the service re-checks the payload binding and its own rules; a failure ends as `failed` with `error_code` and is never retried |
+| Lifetime | 24 hours (`DUAL_CONTROL_REQUEST_TTL_HOURS`); `retention.apply` uses the plan's own expiry when earlier. At most one `pending` request per `(action, target_ref)`: an identical repeat returns it, a different payload is refused with `change_request_pending_exists`. The requester can cancel |
+
+**Payload binding (D41).** `retention.apply` binds `purge_id` and `plan_digest`; `legal_hold.release` binds `hold_id`
+and `release_reason`; `judge.activate` binds the profile name, its `config_fingerprint()` and the probe fingerprint;
+`evaluation_policy.protected_paths` binds the tenant, the complete new setting and a hash of the previous one. If the
+target changed before approval the request ends as `failed` (`change_request_stale`, or the service's own code such as
+`retention_plan_digest_mismatch`, `retention_apply_disabled` or `legal_hold_not_active`) and nothing changes.
+
+**Only relaxations (D42).** For evaluation policies only a change that removes effective protected paths (or turns
+the default paths off) needs a second person; adding paths applies at once. Deactivating a judge, creating a hold and
+dry-run reports never need one.
+
+Every transition writes a `change_request.created|approved|rejected|executed|failed|expired|cancelled` governance
+event (identifiers and the payload digest, not the payload), so it is in the audit chain. The executed action keeps
+its own audit (for example `retention.legal_hold_released`) with the approver as actor, and the request records both
+people and both times. Change requests never dispatch runs, publish to Kafka or touch token leases (import-linter
+contract). They are named "change requests", never approvals or reviews (AGENTS.md 2.3 Approval != Review).
 
 ## Runtime Foundations Threat Model (`v1.6.0`)
 

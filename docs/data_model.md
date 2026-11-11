@@ -129,7 +129,9 @@ One sign-in: `session_hash` (SHA-256 of the `rh_session` cookie token; the token
 A dual-control request (P6): `action`, `target_ref`, `tenant_id`, `payload` (JSON, no secrets), `payload_digest`,
 `status` (`pending` | `approved` | `rejected` | `executed` | `failed` | `expired` | `cancelled`), `requested_by`,
 `requested_reason`, `requested_at`, `decided_by`, `decision_reason`, `decided_at`, `expires_at`, `executed_at`,
-`result` (JSON), `error_code`. Index `(action, target_ref, status)`.
+`result` (JSON: `requester` (actor, kind, role, tenant, Dashboard user id) plus `execution` summary or `error`), `error_code`.
+Index `(action, target_ref, status)`. Written only by `app/services/change_requests.py`; rules in
+[`security.md`](security.md#dual-control-change-requests-v161).
 
 ### `AuditChainEntry` (`audit_chain_entries`, `ace_` IDs)
 The hash ledger (P5): `seq` (primary key assigned by the writer, part of the hash), `entry_id`, `entry_type`,

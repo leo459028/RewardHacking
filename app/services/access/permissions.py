@@ -88,7 +88,8 @@ PERMISSIONS: dict[str, frozenset[str]] = {
     "legal_hold.release": _ADMIN,
     # access administration, dual control and the audit chain
     "users.manage": _ADMIN,
-    "change_requests.decide": _ADMIN_TENANT_ADMIN,
+    "change_requests.decide": _ADMIN_TENANT_ADMIN,  # the service also needs the action's own permission (D40)
+    "change_requests.cancel": _ADMIN_TENANT_ADMIN,  # the service only lets the requester cancel
     "audit_chain.read": frozenset({ADMIN, AUDITOR}),
     "audit_chain.verify": frozenset({ADMIN, AUDITOR}),
     "audit_chain.checkpoint": _ADMIN,

@@ -177,6 +177,8 @@ def test_prod_readiness_passes_with_fresh_safety_regression_evidence(
         # v1.6.1 D9: a production gate also needs Dashboard sign-in with an active admin account.
         DASHBOARD_AUTH_MODE="session",
         DASHBOARD_PASSWORD_SCRYPT_N="16",
+        # v1.6.1 D38 (Q4): production should put purge apply and legal-hold release under dual control.
+        DUAL_CONTROL_ACTIONS="retention.apply,legal_hold.release",
     )
     _use_audit_chain_key(monkeypatch)
     _seed_dashboard_admin(session_factory)

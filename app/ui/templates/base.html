@@ -217,6 +217,7 @@
         {% elif can("dashboard.view", "budgets") %}<a class="{{ 'active' if active == 'admin-finops' else '' }}" href="/dashboard/admin/finops/budgets">Budgets | 預算</a>{% endif %}
         {% if can("dashboard.view", "operations") %}<a class="{{ 'active' if active == 'operations' else '' }}" href="/dashboard/operations">Operations</a>{% endif %}
         {% if can("retention.view", "retention") %}<a class="{{ 'active' if active == 'retention' else '' }}" href="/dashboard/retention">Retention | 資料保留</a>{% endif %}
+        {% if can("dashboard.view", "change_requests") %}<a class="{{ 'active' if active == 'change-requests' else '' }}" href="/dashboard/change-requests">Change Requests | 變更覆核</a>{% endif %}
         {% if can("audit_chain.read", "audit_chain") %}<a class="{{ 'active' if active == 'audit-chain' else '' }}" href="/dashboard/audit-chain">Audit Chain | 稽核鏈</a>{% endif %}
         {% if can("runs.submit", "playground") %}<a class="{{ 'active' if active == 'playground' else '' }}" href="/dashboard/playground">Playground</a>{% endif %}
         {% if principal_ and not principal_.synthetic and can("users.manage", "users") %}

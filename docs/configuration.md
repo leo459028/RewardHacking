@@ -59,6 +59,8 @@ Application configuration is loaded from environment variables and local `.env` 
 | `AUDIT_CHAIN_SIGNING_KEY_FILE` | *(empty)* | Ed25519 private key (unencrypted PEM file) used to sign checkpoints. Keep it apart from the database; empty = checkpoints are `unsigned` (operations check warns, fails in `APP_ENV=prod`) |
 | `AUDIT_CHAIN_SIGNING_KEY` | *(empty)* | The same key as a PEM string (secret); used only when `AUDIT_CHAIN_SIGNING_KEY_FILE` is empty |
 | `AUDIT_CHAIN_PUBLIC_KEYS_FILE` | *(empty)* | PEM file with the public keys accepted when verifying (keep old keys after a rotation); the current signing key is always accepted |
+| `DUAL_CONTROL_ACTIONS` | *(empty)* | `v1.6.1`: comma list of actions that need a second, signed-in person (Change Requests): `retention.apply`, `legal_hold.release`, `judge.activate`, `evaluation_policy.protected_paths` (relaxations only). Empty = every action runs at once (pre-`v1.6.1` behaviour). Unknown names are ignored and warned about by `dual_control_configured`, which also warns in `APP_ENV=prod` while `retention.apply` or `legal_hold.release` is missing |
+| `DUAL_CONTROL_REQUEST_TTL_HOURS` | `24` | Hours a pending change request stays approvable (`retention.apply` also stops at the plan's own expiry) |
 | `AUDIT_CHAIN_VERIFY_MAX_ENTRIES` | `5000` | Entries checked per online verification call (API / Dashboard); the CLI has no limit |
 | `SANDBOX_BACKEND` | `simulated` | `v1.6.0`: sandbox backend; `simulated` is the only option (nothing is executed). Unknown values fail closed |
 | `SANDBOX_HIGH_RISK_THRESHOLD` | *(unset)* | Risk score at or above which `SANDBOX_MIN_ISOLATION_HIGH_RISK` is required; unset or empty uses `DEFAULT_RISK_THRESHOLD` |

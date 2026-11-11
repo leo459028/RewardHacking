@@ -5,6 +5,8 @@ Scheduling is left to an external scheduler so that several API replicas never p
 same job that is still inside ``AUDIT_RETENTION_PLAN_TTL_MINUTES`` (and only when
 ``AUDIT_RETENTION_PURGE_MODE=apply``). Output is one JSON object without any run content.
 Exit codes: 0 success, 1 nothing to apply, 2 refused (the JSON carries the error code).
+v1.6.1 D39: while ``retention.apply`` is in ``DUAL_CONTROL_ACTIONS`` ``--apply-latest`` is refused with
+``second_approval_required`` (exit 2) and stores nothing: an automated component never approves its own change.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from typing import Any, Sequence
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings, get_settings
-from app.services import retention
+from app.services import change_requests, retention
 
 
 async def run_job(args: argparse.Namespace, settings: Settings, session_factory: async_sessionmaker[AsyncSession]) -> tuple[int, dict[str, Any]]:
@@ -27,6 +29,14 @@ async def run_job(args: argparse.Namespace, settings: Settings, session_factory:
             if args.plan:
                 purge = await retention.build_plan(session, settings, actor=retention.JOB_ACTOR)
                 return 0, {"action": "plan", **_summary(purge)}
+            if change_requests.is_enabled(settings, change_requests.RETENTION_APPLY):
+                return 2, {
+                    "action": "apply_latest",
+                    "error": {
+                        "code": "second_approval_required",
+                        "message": "retention.apply is under dual control: request the apply through the API and have a second person approve it.",
+                    },
+                }
             purge = await retention.latest_applicable_plan(session, created_by=retention.JOB_ACTOR)
             if purge is None:
                 return 1, {"action": "apply_latest", "error": {"code": "retention_no_applicable_plan"}}

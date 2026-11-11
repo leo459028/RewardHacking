@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from app.api.routers.audit_chain import router as audit_chain_router
 from app.api.routers.benchmark import router as benchmark_router
+from app.api.routers.change_requests import router as change_requests_router
 from app.api.routers.evaluations import router as evaluations_router
 from app.api.routers.finops import router as finops_router
 from app.api.routers.operations import router as operations_router
@@ -19,13 +20,14 @@ from app.core import trace_context, tracing
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.infra.postgres import close_engine, init_engine
-from app.services import audit_chain, judge_activation
+from app.services import audit_chain, change_requests, judge_activation
 from app.services.retention import RetentionError
 from app.services.evaluation.judges.profiles import load_profiles
 from app.observability.metrics import HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_TOTAL
 from app.ui.routers.access import router as access_ui_router
 from app.ui.routers.audit_chain import router as audit_chain_ui_router
 from app.ui.routers.benchmark import router as benchmark_ui_router
+from app.ui.routers.change_requests import router as change_requests_ui_router
 from app.ui.routers.judges import router as judges_ui_router
 from app.ui.routers.operations import router as operations_ui_router
 from app.ui.routers.retention import router as retention_ui_router
@@ -188,6 +190,15 @@ async def audit_chain_exception_handler(request: Request, exc: audit_chain.Audit
     return JSONResponse(status_code=exc.status_code, content={"error": {"code": exc.code, "message": exc.message}})
 
 
+@app.exception_handler(change_requests.ChangeRequestError)
+async def change_request_exception_handler(request: Request, exc: change_requests.ChangeRequestError):
+    """v1.6.1 P6: refused change-request operations keep the shared ``{"error": {"code"}}`` shape."""
+    error = {"code": exc.code, "message": exc.message}
+    if exc.details:
+        error["details"] = jsonable_encoder(exc.details)
+    return JSONResponse(status_code=exc.status_code, content={"error": error})
+
+
 @app.exception_handler(DashboardSignInRequired)
 async def dashboard_sign_in_required_handler(request: Request, exc: DashboardSignInRequired):
     """v1.6.1 feature five: pages redirect to the sign-in page; any other method gets 401 and nothing runs."""
@@ -283,6 +294,7 @@ app.include_router(operations_router)
 app.include_router(retention_router)
 app.include_router(sandbox_router)
 app.include_router(audit_chain_router)
+app.include_router(change_requests_router)
 app.include_router(access_ui_router)
 app.include_router(ui_router)
 app.include_router(reviews_ui_router)
@@ -291,3 +303,4 @@ app.include_router(judges_ui_router)
 app.include_router(operations_ui_router)
 app.include_router(retention_ui_router)
 app.include_router(audit_chain_ui_router)
+app.include_router(change_requests_ui_router)
