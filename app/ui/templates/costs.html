@@ -260,7 +260,7 @@
         <td>
           <div class="inline-form">
             {% if item.resolution_status == "open" %}
-            {% if can("finops.manage") %}<form method="post" action="/dashboard/costs/violations/{{ item.violation_id }}/acknowledge">
+            {% if can("finops.acknowledge") %}<form method="post" action="/dashboard/costs/violations/{{ item.violation_id }}/acknowledge">
               <input type="hidden" name="notes" value="Acknowledged from Costs Dashboard">
               <button class="button secondary" type="submit">Acknowledge</button>
             </form>{% endif %}

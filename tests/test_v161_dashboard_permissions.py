@@ -213,6 +213,8 @@ def test_permission_table_follows_api_roles():
         "honeypots.package": {"admin", "tenant_admin"},
         "operations.manage": {"admin"},
         "retention.plan": {"admin"},
+        "finops.manage": {"admin"},  # budgets, adjustments, violation resolve, lease release (API: no tenant_admin)
+        "finops.acknowledge": {"admin", "tenant_admin"},  # API acknowledge accepts tenant_admin
     }
     for name, roles in expect.items():
         assert set(permissions.PERMISSIONS[name]) == roles, name
@@ -428,31 +430,57 @@ def test_tenant_bound_navigation_hides_platform_views(client, signed_in):
     assert 'href="/dashboard/admin/finops/budgets"' in page and 'href="/dashboard/reviews"' in page
 
 
-def test_tenant_admin_finops_and_policy_actions_stay_in_own_tenant(client, signed_in):
+def test_tenant_admin_cannot_change_budgets_or_the_ledger(client, signed_in):
+    """API parity: a tenant cannot supersede / disable the platform's budgets or adjust its own ledger."""
+    signed_in(role="admin")
+    client.post("/dashboard/admin/finops/budgets", data={"tenant_id": "t-a", "name": "platform cap", "hard_limit_amount": "5"})
+    budget_id = client.get("/v1/budgets?tenant_id=t-a").json()[0]["budget_id"]
     signed_in(role="tenant_admin", tenant_id="t-a")
-    response = client.post("/dashboard/admin/finops/budgets", data={"tenant_id": "t-b", "hard_limit_amount": "5"})
-    _assert_forbidden_json(response, "finops.manage", "tenant_scope_denied")
-    created = client.post("/dashboard/admin/finops/budgets", data={"name": "own", "hard_limit_amount": "5"}, follow_redirects=False)
-    assert created.status_code == 303
+    page = client.get("/dashboard/admin/finops/budgets")
+    assert page.status_code == 200 and "platform cap" in page.text
+    assert 'action="/dashboard/admin/finops/budgets"' not in page.text
+    for path, data in (
+        ("/dashboard/admin/finops/budgets", {"name": "looser", "hard_limit_amount": "500"}),
+        (f"/dashboard/admin/finops/budgets/{budget_id}/disable", {}),
+        ("/dashboard/costs/adjustments", {"amount": "-10", "reason": "credit"}),
+        ("/dashboard/costs/leases/run-x/release", {}),
+        ("/dashboard/costs/violations/bv-x/resolve", {}),
+    ):
+        _assert_forbidden_json(client.post(path, data=data), "finops.manage")
     budgets = client.get("/v1/budgets?tenant_id=t-a").json()
-    assert any(item["tenant_id"] == "t-a" for item in budgets)
+    assert [(item["budget_id"], item["is_active"]) for item in budgets] == [(budget_id, True)]
     _assert_forbidden_page(client.get("/dashboard/admin/finops/budgets?tenant_id=t-b"), "dashboard.view", "tenant_scope")
+
+
+def test_tenant_admin_acknowledges_only_own_tenant_violations(client, signed_in, session_factory):
+    from app.models.finops import BudgetViolation
+
+    async def seed(session):
+        for vid, tenant in (("bv_own", "t-a"), ("bv_other", "t-b")):
+            session.add(BudgetViolation(violation_id=vid, budget_id="budget_x", tenant_id=tenant, scope="tenant",
+                                        scope_id=tenant, violation_type="soft_limit_exceeded", resolution_status="open"))
+        await session.commit()
+
+    _db(session_factory, seed)
+    signed_in(role="tenant_admin", tenant_id="t-a")
+    other = client.post("/dashboard/costs/violations/bv_other/acknowledge", data={"notes": "x"})
+    _assert_forbidden_json(other, "finops.acknowledge", "tenant_scope_denied")
+    own = client.post("/dashboard/costs/violations/bv_own/acknowledge", data={"notes": "seen"}, follow_redirects=False)
+    assert own.status_code == 303
+    rows = _db(session_factory, lambda s: _scalars(s, select(BudgetViolation).order_by(BudgetViolation.violation_id)))
+    status = {row.violation_id: (row.resolution_status, row.acknowledged_by) for row in rows}
+    assert status["bv_other"][0] == "open"
+    assert status["bv_own"][0] != "open" and status["bv_own"][1].startswith("user:tenant-admin")
+
+
+def test_tenant_admin_policy_actions_stay_in_own_tenant(client, signed_in):
+    signed_in(role="tenant_admin", tenant_id="t-a")
 
     policy = client.post("/dashboard/governance/evaluation-policy", data={"tenant_id": "t-b", "protected_paths": "grader/"})
     _assert_forbidden_json(policy, "evaluation_policy.write", "tenant_scope_denied")
     saved = client.post("/dashboard/governance/evaluation-policy", data={"protected_paths": "grader/"}, follow_redirects=False)
     assert saved.status_code == 303 and "tenant_id=t-a" in saved.headers["location"]
     assert "grader/" in client.get("/v1/tenants/t-a/evaluation-policy").json()["protected_paths"]
-
-
-def test_tenant_admin_cannot_touch_another_tenants_budget(client, signed_in):
-    signed_in(role="admin")
-    client.post("/dashboard/admin/finops/budgets", data={"tenant_id": "t-b", "name": "theirs", "hard_limit_amount": "5"})
-    budget_id = client.get("/v1/budgets?tenant_id=t-b").json()[0]["budget_id"]
-    signed_in(role="tenant_admin", tenant_id="t-a")
-    response = client.post(f"/dashboard/admin/finops/budgets/{budget_id}/disable")
-    _assert_forbidden_json(response, "finops.manage", "tenant_scope_denied")
-    assert client.get(f"/v1/budgets/{budget_id}").json()["is_active"] is True
 
 
 def test_tenant_bound_operator_submits_and_decides_only_in_own_tenant(client, signed_in, session_factory):

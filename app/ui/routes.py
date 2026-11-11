@@ -1005,7 +1005,7 @@ async def dashboard_costs_adjustment_create(
     return RedirectResponse(f"/dashboard/costs?tenant_id={tenant_id}", status_code=303)
 
 
-@router.post("/dashboard/costs/violations/{violation_id}/acknowledge", response_class=HTMLResponse, dependencies=needs("finops.manage"))
+@router.post("/dashboard/costs/violations/{violation_id}/acknowledge", response_class=HTMLResponse, dependencies=needs("finops.acknowledge"))
 async def dashboard_acknowledge_violation(
     request: Request,
     violation_id: str,
@@ -1014,7 +1014,7 @@ async def dashboard_acknowledge_violation(
     form = await request.form()
     violation = await get_budget_violation(session, violation_id)
     if violation is not None:
-        await ensure_tenant_access(request, session, violation.tenant_id, permission="finops.manage")
+        await ensure_tenant_access(request, session, violation.tenant_id, permission="finops.acknowledge")
     notes = str(form.get("notes", "Acknowledged from dashboard"))
     resolved_by = actor_for(request, str(form.get("resolved_by", "dashboard-operator")))
     await acknowledge_budget_violation(

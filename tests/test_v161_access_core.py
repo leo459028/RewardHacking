@@ -548,8 +548,8 @@ def test_principal_from_user_and_session_and_local_admin(session_factory):
     ("role", "allowed", "denied"),
     [
         ("admin", {"users.manage", "retention.apply", "legal_hold.release", "audit_chain.verify", "pricing.manage"}, set()),
-        ("tenant_admin", {"finops.manage", "reviews.decide", "legal_hold.create", "change_requests.decide"},
-         {"users.manage", "retention.apply", "pricing.manage", "control_plane.manage", "audit_chain.read"}),
+        ("tenant_admin", {"finops.acknowledge", "reviews.decide", "legal_hold.create", "change_requests.decide"},
+         {"users.manage", "retention.apply", "pricing.manage", "control_plane.manage", "audit_chain.read", "finops.manage"}),
         ("reviewer", {"reviews.decide", "evaluations.preview", "dashboard.view"}, {"runs.submit", "outcomes.submit", "worker.manage"}),
         # P3 (D20): breakers are admin only, as in the API
         ("operator", {"runs.submit", "outcomes.submit", "worker.manage"}, {"reviews.decide", "judge.profile.write", "breakers.manage"}),

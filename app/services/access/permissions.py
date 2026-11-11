@@ -73,7 +73,12 @@ PERMISSIONS: dict[str, frozenset[str]] = {
     # FinOps (Q10)
     "pricing.manage": _ADMIN,
     "pricing.import_apply": _ADMIN,
-    "finops.manage": _ADMIN_TENANT_ADMIN,  # budgets, adjustments, violations, lease release
+    # Q10 revisited after P3 (user decision 2026-11-11): follow the API. Budgets (create / supersede / disable), cost
+    # adjustments, violation resolve and lease release are admin only, so a tenant cannot raise or remove the
+    # platform's budget limits or adjust its own ledger. Acknowledging a violation changes no control and the API
+    # allows tenant_admin, so it stays open to tenant_admin (own tenant).
+    "finops.manage": _ADMIN,
+    "finops.acknowledge": _ADMIN_TENANT_ADMIN,
     # operations evidence and release gate
     "operations.manage": _ADMIN,
     # retention and legal holds

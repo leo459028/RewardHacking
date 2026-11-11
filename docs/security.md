@@ -173,7 +173,8 @@ buttons with `can()`, but the server checks every request.
 | Judge profile edit / activate / probe / sweep | ✓ | | | | |
 | Benchmark runs, review export, honeypot launch, attestation keys | ✓ | ✓ (API; the page is a platform view) | | | |
 | Inspect log import, pricing edit and import | ✓ | | | | |
-| Budgets, cost adjustments, violations, lease release | ✓ | ✓ | | | |
+| Budgets (create / supersede / disable), cost adjustments, violation resolve, lease release | ✓ | | | | |
+| Acknowledge a budget violation | ✓ | ✓ | | | |
 | Operations evidence and release gates, retention dry-run report | ✓ | | | | |
 | Create a legal hold | ✓ | ✓ (API; the page is a platform view) | | | |
 | User management | ✓ | | | | |
@@ -181,9 +182,10 @@ buttons with `can()`, but the server checks every request.
 - **API parity (D20)**: where the API's `require_role()` is narrower, the Dashboard follows it (approvals,
   Playground submit and expire-stale are `operator` / `admin`; breakers and Inspect import are `admin`; judge re-triage
   is `tenant_admin` / `admin`; the benchmark page is not open to `operator`). Where the API is broader, the Dashboard
-  keeps the narrower plan (`evaluations.preview`, judge sweep). FinOps actions follow the release decision that gives
-  `tenant_admin` budgets, adjustments, violations and lease release for its own tenant, although the corresponding
-  API endpoints accept `finops_admin` instead of `tenant_admin`.
+  keeps the narrower plan (`evaluations.preview`, judge sweep). FinOps actions follow the API too: a tenant cannot
+  supersede or disable the platform's budgets, adjust its own cost ledger or release leases (a Dashboard budget
+  created by a tenant would supersede the platform's limit); `tenant_admin` may only acknowledge its own tenant's
+  violations. A "tighten only" tenant budget rule is a possible later feature.
 - **`auditor`** (D21): reads every view (including platform views) and exports, holds no write permission; every
   existing Dashboard POST answers 403 (sign-out and changing one's own password excepted). As an API key role it is
   treated like `viewer`.
