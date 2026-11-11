@@ -273,4 +273,12 @@ def status(settings: Any) -> dict[str, Any]:
         "sampler": os.environ.get("OTEL_TRACES_SAMPLER", "parentbased_always_on"),
         "service_name": os.environ.get("OTEL_SERVICE_NAME", ""),
         "trace_ui_url_template": getattr(settings, "otel_trace_ui_url_template", "") or "",
+        "dropped_attributes": dropped_attribute_count(),
     }
+
+
+def dropped_attribute_count() -> int:
+    """Attributes refused by the D6 allowlist in this process since start (Prometheus counter value)."""
+    from prometheus_client import REGISTRY
+
+    return int(REGISTRY.get_sample_value("tracing_dropped_attributes_total") or 0)

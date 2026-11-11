@@ -825,6 +825,75 @@ def hold_to_dict(hold: LegalHold) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# P5: read helpers for the API and Dashboard
+# ---------------------------------------------------------------------------
+
+
+async def get_purge(session: AsyncSession, purge_id: str) -> RetentionPurge | None:
+    return (await session.execute(select(RetentionPurge).where(RetentionPurge.purge_id == purge_id))).scalar_one_or_none()
+
+
+async def list_purges(session: AsyncSession, *, status: str | None = None, limit: int = 50) -> list[RetentionPurge]:
+    stmt = select(RetentionPurge).order_by(RetentionPurge.id.desc()).limit(max(1, min(limit, 200)))
+    if status:
+        stmt = stmt.where(RetentionPurge.status == status)
+    return list((await session.execute(stmt)).scalars())
+
+
+async def list_tombstones(
+    session: AsyncSession, *, tenant_id: str | None = None, purge_id: str | None = None, limit: int = 100
+) -> list[RetentionTombstone]:
+    stmt = select(RetentionTombstone).order_by(RetentionTombstone.id.desc()).limit(max(1, min(limit, 500)))
+    if tenant_id:
+        stmt = stmt.where(RetentionTombstone.tenant_id == tenant_id)
+    if purge_id:
+        stmt = stmt.where(RetentionTombstone.purge_id == purge_id)
+    return list((await session.execute(stmt)).scalars())
+
+
+async def active_holds_for_run(session: AsyncSession, run_id: str, tenant_id: str) -> list[LegalHold]:
+    """Active holds that protect this run: run-scoped ones and those on its tenant."""
+    stmt = select(LegalHold).where(
+        LegalHold.status == "active",
+        ((LegalHold.scope_type == "run") & (LegalHold.scope_id == run_id))
+        | ((LegalHold.scope_type == "tenant") & (LegalHold.scope_id == tenant_id)),
+    )
+    return list((await session.execute(stmt.order_by(LegalHold.id.asc()))).scalars())
+
+
+def policy_view(settings: Settings) -> dict[str, Any]:
+    """Effective retention policy for ``GET /v1/retention/policy`` and the Dashboard header."""
+    mode = purge_mode(settings)
+    return {
+        "purge_mode": mode,
+        "deletes_enabled": mode == "apply",
+        "retention_days": int(settings.audit_retention_days),
+        "batch_size": _batch_size(settings),
+        "plan_ttl_minutes": int(settings.audit_retention_plan_ttl_minutes),
+        "finops_ledger_retention_days": int(settings.finops_ledger_retention_days),
+        "finops_ledger_policy": "report_only",
+        "policy_version": RETENTION_POLICY_VERSION,
+        "exclusion_reasons": list(EXCLUSION_REASONS),
+    }
+
+
+async def policy_health(session: AsyncSession, settings: Settings) -> dict[str, Any]:
+    """Facts for the ``retention_policy`` operations check: mode, newest plan and active hold count."""
+    latest = (
+        await session.execute(select(RetentionPurge).order_by(RetentionPurge.id.desc()).limit(1))
+    ).scalar_one_or_none()
+    active_holds = int(
+        (await session.execute(select(func.count()).select_from(LegalHold).where(LegalHold.status == "active"))).scalar_one()
+    )
+    return {
+        **policy_view(settings),
+        "latest_plan_at": _iso(latest.created_at) if latest is not None else None,
+        "latest_plan_status": latest.status if latest is not None else None,
+        "active_holds": active_holds,
+    }
+
+
+# ---------------------------------------------------------------------------
 # D14: FinOps ledger report (never deletes)
 # ---------------------------------------------------------------------------
 
@@ -857,11 +926,17 @@ __all__ = [
     "compute_plan_digest",
     "content_digest",
     "create_hold",
+    "active_holds_for_run",
     "exclusion_reasons",
+    "get_purge",
     "hold_to_dict",
     "latest_applicable_plan",
     "ledger_report",
     "list_holds",
+    "list_purges",
+    "list_tombstones",
+    "policy_health",
+    "policy_view",
     "purge_mode",
     "purge_to_dict",
     "receipt_digest",

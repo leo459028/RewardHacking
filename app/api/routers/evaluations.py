@@ -11,6 +11,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.common import run_missing
 from app.core.config import get_settings
 from app.infra.postgres import get_session
 from app.observability.metrics import EVALUATION_REVIEWS_TOTAL
@@ -141,7 +142,7 @@ async def post_run_outcome(
     require_role(auth_context, "operator", "admin")
     run = await get_run(session, run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail="Run not found.")
+        raise await run_missing(session, run_id, auth_context)
     _scoped_tenant(run.tenant_id, auth_context)
     try:
         outcome, evaluation, review, run = await submit_outcome(
@@ -172,7 +173,7 @@ async def get_run_outcomes(
     require_role(auth_context, "viewer", "operator", "admin")
     run = await get_run(session, run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail="Run not found.")
+        raise await run_missing(session, run_id, auth_context)
     _scoped_tenant(run.tenant_id, auth_context)
     return await list_outcomes(session, run_id)
 

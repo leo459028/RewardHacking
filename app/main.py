@@ -9,12 +9,17 @@ from fastapi.responses import JSONResponse
 from app.api.routers.benchmark import router as benchmark_router
 from app.api.routers.evaluations import router as evaluations_router
 from app.api.routers.finops import router as finops_router
+from app.api.routers.operations import router as operations_router
+from app.api.routers.retention import router as retention_router
+from app.api.routers.sandbox import router as sandbox_router
+from app.api.common import RunPurgedError
 from app.api.routes import router
 from app.core import trace_context, tracing
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.infra.postgres import close_engine, init_engine
 from app.services import judge_activation
+from app.services.retention import RetentionError
 from app.services.evaluation.judges.profiles import load_profiles
 from app.observability.metrics import HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_TOTAL
 from app.ui.routers.benchmark import router as benchmark_ui_router
@@ -129,6 +134,27 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     )
 
 
+@app.exception_handler(RetentionError)
+async def retention_exception_handler(request: Request, exc: RetentionError):
+    """v1.6.0: refused retention / legal hold operations keep the shared ``{"error": {"code"}}`` shape."""
+    error = {"code": exc.code, "message": exc.message}
+    if exc.details:
+        error["details"] = jsonable_encoder(exc.details)
+    return JSONResponse(status_code=exc.status_code, content={"error": error})
+
+
+@app.exception_handler(RunPurgedError)
+async def run_purged_exception_handler(request: Request, exc: RunPurgedError):
+    """v1.6.0 D17: a purged run answers 410 with its hash-only tombstone summary."""
+    return JSONResponse(
+        status_code=410,
+        content={
+            "error": {"code": "run_purged", "message": "This run was removed by the audit retention policy."},
+            "tombstone": jsonable_encoder(exc.tombstone),
+        },
+    )
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
@@ -146,6 +172,9 @@ app.include_router(router)
 app.include_router(finops_router)
 app.include_router(evaluations_router)
 app.include_router(benchmark_router)
+app.include_router(operations_router)
+app.include_router(retention_router)
+app.include_router(sandbox_router)
 app.include_router(ui_router)
 app.include_router(reviews_ui_router)
 app.include_router(benchmark_ui_router)

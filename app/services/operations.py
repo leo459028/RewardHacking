@@ -17,7 +17,9 @@ from app.models.incident import Incident
 from app.models.operations import OperationsEvidence, ReleaseGateItem, ReleaseGateRun
 from app.models.tenant import TenantApiKey
 from app.models.worker_attempt import WorkerAttempt
+from app.services import retention
 from app.services.finops import ensure_default_pricing
+from app.services.sandbox import health as sandbox_health
 
 
 @dataclass(frozen=True)
@@ -370,6 +372,61 @@ async def _evaluation_review_queue_check(session: AsyncSession, *, settings: Set
     )
 
 
+async def _retention_policy_check(session: AsyncSession, *, settings: Settings) -> OperationsCheck:
+    """v1.6.0: replaces ``audit_retention_config`` with mode, newest plan and active legal holds."""
+    facts = await retention.policy_health(session, settings)
+    days = int(settings.audit_retention_days)
+    status = "pass" if days > 0 else "fail"
+    deletes = "deletes are enabled (apply)" if facts["deletes_enabled"] else "this environment never deletes data"
+    return OperationsCheck(
+        check_key="retention_policy",
+        status=status,
+        title="Audit retention policy",
+        detail=(
+            f"Retention {days} days, purge mode {facts['purge_mode']} ({deletes}); "
+            f"latest plan: {facts['latest_plan_at'] or 'none'}; active legal holds: {facts['active_holds']}."
+        ),
+        metadata={
+            "audit_retention_days": days,
+            "purge_mode": facts["purge_mode"],
+            "deletes_enabled": facts["deletes_enabled"],
+            "batch_size": facts["batch_size"],
+            "finops_ledger_retention_days": facts["finops_ledger_retention_days"],
+            "latest_plan_at": facts["latest_plan_at"],
+            "latest_plan_status": facts["latest_plan_status"],
+            "active_holds": facts["active_holds"],
+        },
+    )
+
+
+def _sandbox_backend_health_check(settings: Settings) -> OperationsCheck:
+    """v1.6.0 D24: the configured backend must load and pass the conformance smoke cases."""
+    report = sandbox_health.status_report(settings)
+    caps = report["capabilities"] or {}
+    if report["error"]:
+        detail = f"Sandbox backend {report['configured_backend']!r} failed to load: {report['error']}"
+    else:
+        passed = sum(1 for case in report["smoke"]["cases"] if case["passed"])
+        detail = (
+            f"Backend {caps.get('backend_id')} ({caps.get('isolation_level')}): "
+            f"{passed}/{len(report['smoke']['cases'])} smoke cases passed"
+            + ("; simulated backend does not execute tools." if not report["executes_tools"] else ".")
+        )
+    return OperationsCheck(
+        check_key="sandbox_backend_health",
+        status=report["status"],
+        title="Sandbox backend health",
+        detail=detail,
+        metadata={
+            "configured_backend": report["configured_backend"],
+            "backend_id": caps.get("backend_id"),
+            "isolation_level": caps.get("isolation_level"),
+            "executes_tools": report["executes_tools"],
+            "smoke": report["smoke"],
+        },
+    )
+
+
 async def compute_operations_readiness(
     session: AsyncSession,
     *,
@@ -491,13 +548,8 @@ async def compute_operations_readiness(
     mcp_health_status = "warn" if (unhealthy_core or open_core_breakers or open_mcp_breakers) else "pass"
 
     checks = [
-        OperationsCheck(
-            check_key="audit_retention_config",
-            status="pass" if settings.audit_retention_days > 0 else "fail",
-            title="Audit retention configured",
-            detail=f"Audit retention is set to {settings.audit_retention_days} days.",
-            metadata={"audit_retention_days": settings.audit_retention_days},
-        ),
+        await _retention_policy_check(session, settings=settings),
+        _sandbox_backend_health_check(settings),
         OperationsCheck(
             check_key="stale_queued_runs",
             status="fail" if stale_queued else "pass",

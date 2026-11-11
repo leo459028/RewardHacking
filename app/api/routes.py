@@ -33,13 +33,6 @@ from app.schemas.audit import (
     GovernanceEventRecord,
     GovernanceSummaryResponse,
     IncidentRecord,
-    OperationsCheckRecord,
-    OperationsEvidenceCreateRequest,
-    OperationsEvidenceRecord,
-    OperationsReadinessResponse,
-    ReleaseGateCreateRequest,
-    ReleaseGateItemRecord,
-    ReleaseGateRecord,
     RunRecord,
     TenantCreateRequest,
     TenantRecord,
@@ -100,7 +93,6 @@ from app.services.audit_log import (
     list_tenants,
     list_tool_executions,
     list_worker_attempts,
-    observability_summary,
     persist_governance_event,
     persist_orchestration_result,
     requeue_dlq_run,
@@ -126,15 +118,6 @@ from app.services.quota import (
     check_user_request_quota,
 )
 from app.services.run_state import RunStateStore
-from app.services.operations import (
-    compute_operations_readiness,
-    get_release_gate,
-    list_operations_evidence,
-    list_release_gate_items,
-    list_release_gates,
-    persist_operations_evidence,
-    persist_release_gate,
-)
 from app.services.control_plane import (
     ControlPlanePlanner,
     create_tool_definition,
@@ -164,7 +147,7 @@ from app.services.finops import (
 )
 from app.services.orchestrator import OrchestrationResult
 from app.workers.producer import make_event
-from app.api.common import _actor, _query_tenant, _trace_id
+from app.api.common import _actor, _query_tenant, _trace_id, raise_if_purged, run_missing
 
 router = APIRouter(prefix="/v1", tags=["agent"])
 
@@ -208,52 +191,6 @@ async def _tool_quota_limits(session: AsyncSession) -> dict[str, int]:
             except (TypeError, ValueError):
                 pass
     return limits
-
-
-def _evidence_record(evidence) -> OperationsEvidenceRecord:
-    return OperationsEvidenceRecord(
-        evidence_type=evidence.evidence_type,
-        status=evidence.status,
-        summary=evidence.summary,
-        reference_url=evidence.reference_url,
-        metadata=evidence.metadata_payload,
-        created_by=evidence.created_by,
-        created_at=evidence.created_at,
-    )
-
-
-def _check_record(check) -> OperationsCheckRecord:
-    return OperationsCheckRecord(
-        check_key=check.check_key,
-        status=check.status,
-        title=check.title,
-        detail=check.detail,
-        metadata=check.metadata,
-    )
-
-
-def _gate_item_record(item) -> ReleaseGateItemRecord:
-    return ReleaseGateItemRecord(
-        check_key=item.check_key,
-        status=item.status,
-        title=item.title,
-        detail=item.detail,
-        metadata=item.metadata_payload,
-    )
-
-
-async def _gate_record(session: AsyncSession, gate) -> ReleaseGateRecord:
-    items = await list_release_gate_items(session, gate.gate_id)
-    return ReleaseGateRecord(
-        gate_id=gate.gate_id,
-        release_version=gate.release_version,
-        status=gate.status,
-        summary=gate.summary,
-        created_by=gate.created_by,
-        trace_id=gate.trace_id,
-        created_at=gate.created_at,
-        items=[_gate_item_record(item) for item in items],
-    )
 
 
 def _workflow_record(payload: dict) -> WorkflowDefinitionRecord:
@@ -672,96 +609,6 @@ async def post_close_tool_breaker(
         ttl_seconds=0,
         failure_count=0,
     )
-
-
-@router.get("/operations/readiness", response_model=OperationsReadinessResponse)
-async def get_operations_readiness(
-    auth_context: AuthContext = Depends(get_auth_context),
-    session: AsyncSession = Depends(get_session),
-    state_store: RunStateStore = Depends(get_state_store),
-):
-    require_role(auth_context, "viewer", "operator", "admin")
-    readiness = await compute_operations_readiness(session, settings=get_settings(), state_store=state_store)
-    return OperationsReadinessResponse(
-        status=readiness.status,
-        summary=readiness.summary,
-        checks=[_check_record(check) for check in readiness.checks],
-    )
-
-
-@router.post("/operations/evidence", response_model=OperationsEvidenceRecord)
-async def post_operations_evidence(
-    payload: OperationsEvidenceCreateRequest,
-    auth_context: AuthContext = Depends(get_auth_context),
-    session: AsyncSession = Depends(get_session),
-):
-    require_role(auth_context, "admin")
-    if payload.status not in {"pass", "warn", "fail"}:
-        raise auth_error(422, "invalid_evidence_status", "Evidence status must be pass, warn, or fail.")
-    evidence = await persist_operations_evidence(
-        session,
-        evidence_type=payload.evidence_type,
-        status=payload.status,
-        summary=payload.summary,
-        reference_url=payload.reference_url,
-        metadata=payload.metadata,
-        created_by=_actor(auth_context),
-    )
-    return _evidence_record(evidence)
-
-
-@router.get("/operations/evidence", response_model=list[OperationsEvidenceRecord])
-async def get_operations_evidence(
-    evidence_type: str | None = None,
-    auth_context: AuthContext = Depends(get_auth_context),
-    session: AsyncSession = Depends(get_session),
-):
-    require_role(auth_context, "viewer", "operator", "admin")
-    evidence = await list_operations_evidence(session, evidence_type=evidence_type)
-    return [_evidence_record(item) for item in evidence]
-
-
-@router.post("/operations/release-gates", response_model=ReleaseGateRecord)
-async def post_release_gate(
-    payload: ReleaseGateCreateRequest,
-    request: Request,
-    auth_context: AuthContext = Depends(get_auth_context),
-    session: AsyncSession = Depends(get_session),
-    state_store: RunStateStore = Depends(get_state_store),
-):
-    require_role(auth_context, "admin")
-    readiness = await compute_operations_readiness(session, settings=get_settings(), state_store=state_store)
-    gate = await persist_release_gate(
-        session,
-        release_version=payload.release_version,
-        created_by=payload.created_by,
-        trace_id=_trace_id(request),
-        readiness=readiness,
-    )
-    return await _gate_record(session, gate)
-
-
-@router.get("/operations/release-gates", response_model=list[ReleaseGateRecord])
-async def get_release_gates(
-    auth_context: AuthContext = Depends(get_auth_context),
-    session: AsyncSession = Depends(get_session),
-):
-    require_role(auth_context, "viewer", "operator", "admin")
-    gates = await list_release_gates(session)
-    return [await _gate_record(session, gate) for gate in gates]
-
-
-@router.get("/operations/release-gates/{gate_id}", response_model=ReleaseGateRecord)
-async def get_release_gate_by_id(
-    gate_id: str,
-    auth_context: AuthContext = Depends(get_auth_context),
-    session: AsyncSession = Depends(get_session),
-):
-    require_role(auth_context, "viewer", "operator", "admin")
-    gate = await get_release_gate(session, gate_id)
-    if gate is None:
-        raise HTTPException(status_code=404, detail="Release gate not found.")
-    return await _gate_record(session, gate)
 
 
 @router.get("/tenants", response_model=list[TenantRecord])
@@ -1425,6 +1272,7 @@ async def get_run_execution_plan(
     require_role(auth_context, "viewer", "operator", "admin")
     plan = await get_execution_plan_for_run(session, run_id)
     if plan is None:
+        await raise_if_purged(session, run_id, auth_context)
         raise HTTPException(status_code=404, detail="Execution plan not found.")
     return _execution_plan_record(plan)
 
@@ -1438,7 +1286,7 @@ async def get_run_trace(
     require_role(auth_context, "viewer", "operator", "admin")
     run = await get_run(session, run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail="Run not found.")
+        raise await run_missing(session, run_id, auth_context)
     _query_tenant(run.tenant_id, auth_context)
     plan = await get_execution_plan_for_run(session, run_id)
     if plan is None:
@@ -1469,7 +1317,7 @@ async def get_run_replay_bundle(
     require_role(auth_context, "viewer", "operator", "admin")
     run = await get_run(session, run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail="Run not found.")
+        raise await run_missing(session, run_id, auth_context)
     _query_tenant(run.tenant_id, auth_context)
     plan = await get_execution_plan_for_run(session, run_id)
     if plan is None:
@@ -1514,7 +1362,7 @@ async def get_run_checkpoints(
     require_role(auth_context, "viewer", "operator", "admin")
     run = await get_run(session, run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail="Run not found.")
+        raise await run_missing(session, run_id, auth_context)
     _query_tenant(run.tenant_id, auth_context)
     return [_checkpoint_record(item) for item in await list_run_checkpoints(session, run_id=run_id)]
 
@@ -1531,7 +1379,7 @@ async def post_run_resume(
     require_role(auth_context, "operator", "admin")
     run = await get_run(session, run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail="Run not found.")
+        raise await run_missing(session, run_id, auth_context)
     _query_tenant(run.tenant_id, auth_context)
     plan = await get_execution_plan_for_run(session, run_id)
     steps = await list_execution_plan_steps(session, run_id)
@@ -1566,7 +1414,7 @@ async def post_run_replay(
     require_role(auth_context, "operator", "admin")
     run = await get_run(session, run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail="Run not found.")
+        raise await run_missing(session, run_id, auth_context)
     _query_tenant(run.tenant_id, auth_context)
     plan = await get_execution_plan_for_run(session, run_id)
     if plan is None:
@@ -1592,7 +1440,7 @@ async def get_run_by_id(
 ):
     run = await get_run(session, run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail="Run not found.")
+        raise await run_missing(session, run_id, auth_context)
     _query_tenant(run.tenant_id, auth_context)
     return run
 
@@ -1607,6 +1455,8 @@ async def get_run_worker_attempts(
     run = await get_run(session, run_id)
     if run is not None:
         _query_tenant(run.tenant_id, auth_context)
+    else:
+        await raise_if_purged(session, run_id, auth_context)
     return await list_worker_attempts(session, run_id=run_id)
 
 
@@ -1620,6 +1470,8 @@ async def get_run_tool_executions(
     run = await get_run(session, run_id)
     if run is not None:
         _query_tenant(run.tenant_id, auth_context)
+    else:
+        await raise_if_purged(session, run_id, auth_context)
     return await list_tool_executions(session, run_id=run_id)
 
 
@@ -1670,7 +1522,7 @@ async def post_worker_dlq_resolve(
     require_role(auth_context, "operator", "admin")
     run = await get_run(session, run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail="Run not found.")
+        raise await run_missing(session, run_id, auth_context)
     _query_tenant(run.tenant_id, auth_context)
     reason = payload.reason if payload is not None else "Resolved by operator"
     attempts = await resolve_dlq_run(session, run_id, reason=reason)
@@ -1709,23 +1561,6 @@ async def post_expire_stale_approvals(
 # v1.5.8: GET /v1/evaluations moved to app/api/routers/evaluations.py (router split rule).
 
 
-@router.get("/observability/summary")
-async def get_observability_summary(
-    auth_context: AuthContext = Depends(get_auth_context),
-    session: AsyncSession = Depends(get_session),
-):
-    require_role(auth_context, "viewer", "operator", "admin")
-    summary = await observability_summary(session)
-    return {
-        "worker": summary.worker,
-        "incidents": summary.incidents,
-        "approvals": summary.approvals,
-        "evaluator": summary.evaluator,
-        "slo": summary.slo,
-        "finops": summary.finops,
-    }
-
-
 @router.get("/incidents", response_model=list[IncidentRecord])
 async def get_incidents(
     severity: str | None = None,
@@ -1755,6 +1590,8 @@ async def get_run_incidents(
     run = await get_run(session, run_id)
     if run is not None:
         _query_tenant(run.tenant_id, auth_context)
+    else:
+        await raise_if_purged(session, run_id, auth_context)
     return await incidents_for_run(session, run_id)
 
 
