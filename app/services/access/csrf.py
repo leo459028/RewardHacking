@@ -23,6 +23,7 @@ HEADER_NAME = "X-CSRF-Token"
 LOGIN_COOKIE_NAME = "rh_login_csrf"
 LOGIN_COOKIE_PATH = "/dashboard/login"
 LOGIN_TOKEN_TTL_SECONDS = 900
+LOGIN_TOKEN_REUSE_MIN_SECONDS = 300  # a re-rendered form reuses the cookie only while this much lifetime is left
 
 _PROCESS_KEY = secrets.token_bytes(32)
 
@@ -57,6 +58,30 @@ def new_login_token(secret: str | None = None, *, now: float | None = None) -> t
     issued = str(int(now if now is not None else time.time()))
     cookie = f"{nonce}.{issued}.{_sign(key, 'login-cookie', nonce, issued)}"
     return cookie, _sign(key, "login-form", nonce)
+
+
+def login_token_from_cookie(cookie_value: str | None, secret: str | None = None, *, now: float | None = None) -> str | None:
+    """The form token of a still-valid sign-in cookie with at least ``LOGIN_TOKEN_REUSE_MIN_SECONDS`` left, else None.
+
+    v1.6.1 P8: re-rendering the form (a second tab, a reload, a browser prefetch) keeps the same pair instead of
+    replacing the cookie and silently invalidating the form already on screen. The pair stays bound to the signed,
+    HttpOnly cookie, so this does not weaken the double-submit check."""
+    if not cookie_value:
+        return None
+    parts = cookie_value.split(".")
+    if len(parts) != 3:
+        return None
+    nonce, issued, signature = parts
+    key = _login_key(secret)
+    if not hmac.compare_digest(_sign(key, "login-cookie", nonce, issued).encode("utf-8"), signature.encode("utf-8")):
+        return None
+    try:
+        age = (now if now is not None else time.time()) - int(issued)
+    except ValueError:
+        return None
+    if age < 0 or age > LOGIN_TOKEN_TTL_SECONDS - LOGIN_TOKEN_REUSE_MIN_SECONDS:
+        return None
+    return _sign(key, "login-form", nonce)
 
 
 def verify_login_token(

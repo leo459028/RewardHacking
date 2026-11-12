@@ -17,7 +17,7 @@ from app.schemas.finops import (
     PolicyBurnRateForecastRecord,
 )
 
-FINOPS_CALCULATION_VERSION = "v1.6.0"
+FINOPS_CALCULATION_VERSION = "v1.6.1"
 
 
 _ATTRIBUTION_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")

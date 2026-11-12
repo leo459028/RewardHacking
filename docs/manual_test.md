@@ -1,6 +1,6 @@
 # Manual QA & Interactive Browser Testing Guide
 
-> **Testing Baseline**: `v1.6.0`
+> **Testing Baseline**: `v1.6.1`
 > **Target Environment**: Local Docker Compose Stack (`http://localhost:8000`)
 > **Primary Interface**: Web Browser (`/dashboard`) & REST API (`/v1`)
 > **Automated Browser Runner**: `python scripts/browser_manual_test.py` (supports `--qa-currency TWD|USD|CNY`, default `TWD`)
@@ -20,7 +20,7 @@ docker compose up -d --build
 ```
 
 ### 1.2 Verify Container & Database Health
-Run the following commands in your terminal to confirm all 5 containers are healthy and migrations are at head (`202611120002`). Since `v1.5.12` the QA stack needs `EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev` in `.env` (local only) so Scenario 10 can edit judge profiles:
+Run the following commands in your terminal to confirm all 5 containers are healthy and migrations are at head (`202611120003`). Since `v1.6.1` the QA stack runs with Dashboard sign-in on (Scenarios 12–15 need it); an `off`-mode stack still runs Scenarios 1–11 (with `EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev` for Scenario 10) and the runner lists the skipped scenarios:
 
 ```bash
 docker compose ps
@@ -35,6 +35,14 @@ Open your web browser (Chrome, Edge, or Firefox) and navigate to:
 - **Swagger UI (Interactive API)**: `http://localhost:8000/docs`
 
 > **Note on Dashboard Authentication**: By default in `.env.example`, `DASHBOARD_AUTH_ENABLED=false` (`DASHBOARD_AUTH_MODE=off`, no sign-in). Since `v1.6.1`, `DASHBOARD_AUTH_ENABLED=true` (or `DASHBOARD_AUTH_MODE=session`) shows the `/dashboard/login` page instead of an HTTP Basic Auth prompt; create an account first with `python -m app.jobs.users create --username <name> --role admin --password-env <VAR>`.
+
+### 1.4 QA Stack for the `v1.6.1` Scenarios (local only)
+1. In `.env` (git-ignored) set `DASHBOARD_AUTH_MODE=session`, `DUAL_CONTROL_ACTIONS=legal_hold.release` and `AUDIT_CHAIN_SIGNING_KEY_FILE=config/audit_chain_key.pem`. Generate the Ed25519 key pair with the command in [`runbook.md`](runbook.md) § 14 into `config/` (`config/*.pem` is git-ignored; `config/` is mounted read-only into the containers). Keep `AUDIT_RETENTION_PURGE_MODE=plan`.
+2. `docker compose up -d --build` and `docker compose exec -T api alembic upgrade head`.
+3. Create three accounts: two admins and one auditor, for example `e2e-admin`, `e2e-admin2` (`--role admin`) and `e2e-auditor` (`--role auditor`), each with `python -m app.jobs.users create ... --password-env <VAR>` inside the api container. Sign in once with each account and change the password (the first sign-in requires it).
+4. Give the runner the accounts through the environment only: `E2E_ADMIN_USER` / `E2E_ADMIN_PASSWORD`, `E2E_ADMIN2_USER` / `E2E_ADMIN2_PASSWORD`, `E2E_AUDITOR_USER` / `E2E_AUDITOR_PASSWORD` (for example from a git-ignored `.env.e2e` loaded with `set -a; . ./.env.e2e; set +a`). With sign-in on and any of them missing, the runner stops with an error.
+
+The runner signs in as the first admin, re-authenticates (`/dashboard/reauth`) before every step-up action (pricing import apply, API keys, judge profiles, audit chain checkpoint, hold release, purge apply) and fails on any unexpected re-authentication redirect. In session mode the free-text operator fields (*Submitted By*, *Reviewer*) are replaced by the signed-in user, so the review in Scenario 6.3 is decided by the second admin (the evidence submitter may not decide its own review: `review_self_approval_forbidden`).
 
 ---
 
@@ -266,7 +274,7 @@ Optional API checks: `GET /v1/control-plane/mcp-servers`; `POST /v1/control-plan
 
 > Steps 1–7 are automated by `scripts/browser_manual_test.py` and call no real LLM: the test profile points at a closed local port, so its connection test fails and activation must stay blocked. Step 8 is manual and needs LM Studio.
 
-1. **Page** — `/dashboard/judge-profiles`: *In use* shows the rule-based judge (`default` or `deterministic`), the red `insecure_dev` warning, and the profiles table. `GET /v1/evaluations/judge/templates` lists `lm-studio`, `ollama`, `openai`, `gemini`, `deepseek`, `anthropic`.
+1. **Page** — `/dashboard/judge-profiles`: *In use* shows the rule-based judge (`default` or `deterministic`), the red `insecure_dev` warning (off mode) or *Editing enabled (Dashboard sign-in is on)* (session mode, `v1.6.1`), and the profiles table. `GET /v1/evaluations/judge/templates` lists `lm-studio`, `ollama`, `openai`, `gemini`, `deepseek`, `anthropic`.
 2. **Draft** — click *LM Studio (local)*: Base URL `http://host.docker.internal:1234/v1` is filled. Name `e2e-lm-<id>`, Base URL `http://host.docker.internal:9/v1`, Timeout `3`, leave Model blank → **Save**. Expect *saved as a draft*, status *Draft \| 草稿*, no **Test** button.
 3. **Untested** — **Edit**, Model `e2e-unreachable-model` → **Save**: *updated (version 2)*, status *Untested \| 待測試*, **Activate** disabled.
 4. **Failed test blocks activation** — **Test**: red *Connection test of e2e-lm-<id> failed*, status *Probe failed \| 測試失敗*, reason *The last connection test failed.*; `POST /v1/evaluations/judge/profiles/e2e-lm-<id>/activate` returns `409 judge_profile_not_ready` with `probe_failed`; *In use* is unchanged.
@@ -277,20 +285,51 @@ Optional API checks: `GET /v1/control-plane/mcp-servers`; `POST /v1/control-plan
 
 ## 5.11 Scenario 11: Retention Dry-Run, Legal Hold, Run Trace & Sandbox Fields (`v1.6.0`)
 
-> Steps 1–5 are automated by `scripts/browser_manual_test.py`. The live database holds persistent data, so the E2E **never applies a purge**; it refuses to run when `AUDIT_RETENTION_PURGE_MODE=apply`.
+> Steps 1–5 are automated by `scripts/browser_manual_test.py`. The live database holds persistent data, so the E2E **never applies a purge**; it refuses to run when `AUDIT_RETENTION_PURGE_MODE=apply`. The `v1.6.1` apply / release forms are covered by Scenarios 14 and 15.
 
-1. **Retention page** — `/dashboard/retention` (sidebar *Retention \| 資料保留*, the 18th primary view): policy tiles (retention days, purge mode `plan`, batch size, plan TTL, FinOps ledger days) and the banner *This environment does not delete data*. There is no apply form and no hold release form.
-2. **Dry-run report** — click **Generate dry-run report**: *Dry-run report purge_… created*, with candidates, exclusion reasons (expand *show* for example runs linking to Run Detail), estimated deletions per table, `plan_digest`, expiry and the `curl` command for the API-only apply.
-3. **Legal hold** — create a hold for a unique tenant `e2e-hold-<id>` with a reason: *Legal hold lh_… created*; it is listed under *Active* with *Use the API (admin required)* in the release column; `GET /v1/legal-holds?status=active` returns it.
+1. **Retention page** — `/dashboard/retention` (sidebar *Retention \| 資料保留*, the 18th primary view): policy tiles (retention days, purge mode `plan`, batch size, plan TTL, FinOps ledger days) and the banner *This environment does not delete data*. In off mode there is no apply form and no hold release form; signed in as admin (`v1.6.1`) the planned report has an **Apply** form and each active hold a **Release** form.
+2. **Dry-run report** — click **Generate dry-run report**: *Dry-run report purge_… created*, with candidates, exclusion reasons (expand *show* for example runs linking to Run Detail), estimated deletions per table, `plan_digest`, expiry and either the `curl` command (off mode) or the apply form (signed-in admin).
+3. **Legal hold** — create a hold for a unique tenant `e2e-hold-<id>` with a reason: *Legal hold lh_… created*; it is listed under *Active* with *Use the API (admin required)* in the release column (off mode) or a release form (signed-in admin); `GET /v1/legal-holds?status=active` returns it.
 4. **Run Detail** — open the Scenario 1 run: the *Trace & Legal Hold* panel shows `trace_<32 hex>` (and *Open in Jaeger* when `OTEL_TRACE_UI_URL_TEMPLATE` is set) and the hold form; the tool transcript shows `simulated / simulated / <required isolation> / n/a / <spec digest prefix>` for each allowed tool.
 5. **Sandbox & tracing** — `GET /v1/sandbox/status` is `pass` with `executes_tools: false`; `/dashboard/observability` shows the *Tracing* panel; `/dashboard/operations` lists `retention_policy` and `sandbox_backend_health`.
 6. **(Manual, API only, not on live data)** — on a throwaway stack with `AUDIT_RETENTION_PURGE_MODE=apply`, apply a plan with its `plan_digest` and `confirm: true`, then `GET /v1/runs/{run_id}` returns `410 run_purged` with the tombstone and Run Detail shows the purge notice (see `docs/runbook.md`).
+
+## 5.12 Scenario 12: Sign-In, Read-Only Auditor & CSRF (`v1.6.1`)
+
+> Automated in session mode. The expected refusals run in a separate browser context that is not counted in the 4xx / console totals.
+
+1. **Sign-in** — `/dashboard` redirects to `/dashboard/login`. A wrong password shows *Invalid username or password. \| 帳號或密碼錯誤。* and stays on the page; the right one opens the Overview, with the account, role and **Sign out** at the bottom of the sidebar.
+2. **Auditor** — signed in as the auditor, `/dashboard/approvals`, `/dashboard/retention`, `/dashboard/governance` and `/dashboard/change-requests` open (HTTP 200) without write controls (no **Expire Stale Approvals**, **Generate dry-run report**, hold form, apply or release form). `/dashboard/admin/users` renders the 403 page naming `users.manage`.
+3. **CSRF** — a POST to `/dashboard/approvals/expire-stale` without the `_csrf` field or `X-CSRF-Token` header, from a signed-in admin session, answers `403` with `csrf_token_invalid`. Every form's page source has the hidden `_csrf` field.
+4. **(Manual) Re-authentication** — wait more than `DASHBOARD_REAUTH_MAX_AGE_SECONDS` (300) after signing in and press **Activate** on Judge Profiles: you land on `/dashboard/reauth`; after the password you return to the page and press it again.
+
+## 5.13 Scenario 13: Audit Chain (`v1.6.1`)
+
+1. `/dashboard/audit-chain` shows the entry count, head `seq` and head hash, the checkpoint list and recent entries.
+2. **Verify** → status `ok` with the checked range (`seq 1–N of N`).
+3. **Create checkpoint** (re-authentication) → a new `acp_…` row with status `signed` and the `key_id` of `config/audit_chain_key.pem` (status `unsigned` without a key).
+4. CLI: `docker compose exec -T api python -m app.jobs.audit_chain --verify` exits `0`.
+
+## 5.14 Scenario 14: Dual Control for a Legal Hold Release (`v1.6.1`)
+
+> Needs `DUAL_CONTROL_ACTIONS=legal_hold.release` and two admin accounts (two browser contexts). Without dual control the runner checks that the release ran at once.
+
+1. As the first admin, on `/dashboard/retention` (*Active* tab) enter a reason for the Scenario 11 hold and press **Request release \| 送出變更覆核** (re-authentication). The page shows *Change request chg_… submitted* with a link and the status `pending`; the hold is still active.
+2. On `/dashboard/change-requests` the first admin's own request has no **Approve** button (*Your request: another person must approve it*).
+3. As the second admin, **Approve & execute** the request: *chg_… approved and executed*; `GET /v1/change-requests/{id}` is `executed`, and the hold is under *Released* with `released_by` `user:<second admin>`.
+
+## 5.15 Scenario 15: Dashboard Purge Apply Refused in `plan` Mode (`v1.6.1`)
+
+1. As admin, open the Scenario 11 dry-run report on `/dashboard/retention`, type its `purge_id` in **Type the Purge ID to confirm** and press **Apply purge plan \| 執行清理** (re-authentication).
+2. The page shows `retention_apply_disabled`; `GET /v1/retention/plans/{purge_id}` is still `planned` with the same candidates. Nothing is deleted.
+3. **(Manual, throwaway database only)** with `AUDIT_RETENTION_PURGE_MODE=apply` the same form shows the receipt (runs purged, rows per table, skipped, failures, `receipt_digest`, `applied_by` `user:<name>`). Never on the live stack.
 
 ## 6. Browser QA Sign-Off Checklist
 
 Before signing off a release via manual browser testing, verify all items below:
 
-- [ ] All primary navigation tabs (`Overview`, `Runs`, `Approvals`, `Reviews`, `Benchmark`, `Judge Profiles`, `Worker`, `Observability`, `Governance`, `Control Plane`, `Costs`, `Admin FinOps`, `Operations`, `Retention`, `Playground`) return HTTP 200 with zero server tracebacks.
+- [ ] All primary navigation tabs (`Overview`, `Runs`, `Approvals`, `Reviews`, `Benchmark`, `Judge Profiles`, `Worker`, `Observability`, `Governance`, `Control Plane`, `Costs`, `Admin FinOps`, `Operations`, `Retention`, `Playground`, and since `v1.6.1` `Users`, `Change Requests`, `Audit Chain`: 21 views) return HTTP 200 with zero server tracebacks.
+- [ ] In session mode the runner reports 0 unexpected re-authentication redirects, and Scenarios 12–15 ran (an off-mode run lists them as skipped).
 - [ ] Browser Developer Tools (`F12` $\rightarrow$ **Console** & **Network**) show `0` unhandled JavaScript errors or broken asset requests (`404`/`500`).
 - [ ] No scientific notation artifacts (`0E-8` or `0E-12`) appear on `/dashboard/costs`, `/dashboard/runs/{run_id}`, `/dashboard/admin/finops/pricing`, or `/dashboard/admin/finops/budgets`.
 - [ ] Budget violation inline buttons (**Acknowledge**, **Resolve**, **Ignore**) transition violation state and persist across page reloads.

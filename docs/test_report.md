@@ -1,5 +1,44 @@
 # Test Execution & Verification Report
 
+## 2026-11-12 - v1.6.1 Enterprise Access & Audit Integrity Verification
+
+- **Version**: `v1.6.1` (branch `v1.6.1`, Alembic head `202611120003`, OpenAPI `1.6.1`, `evaluator_version` unchanged at `v1.5.9`)
+- **Scope of Changes** (phases P0–P8, commits `87603db` … `6ec691b` plus the release commit):
+  1. **P0 prompt-guard/2.0**: Unicode normalization for matching, modern Chinese rules (`zh_*`), `sensitive_term_mention`, `classical_style_task_mismatch`; escalation only.
+  2. **P1–P3 sign-in, roles, tenant scope** (migration `202611120003`, `app/services/access/`, `app/ui/security.py`): local accounts (scrypt), sessions, lockout, forced first password change, five roles incl. read-only `auditor` (also API), every Dashboard route declares its permission, `user:<username>` as actor.
+  3. **P4 CSRF, re-authentication, security headers**; **P5 audit chain** (`audit_chain_entries` / `audit_chain_checkpoints`, Ed25519 checkpoints, `--verify`); **P6 dual control** (`change_requests`, one enforcement point for API `202` and Dashboard); **P7 Dashboard retention apply / hold release** (session mode).
+  4. **P8**: E2E sign-in and Scenarios 2c, 12–15, version anchors, documentation, and one bug fix found by the headed E2E (below).
+- **UI / Dashboard Verification Endpoints**: `/dashboard/login`, `/dashboard/admin/users`, `/dashboard/change-requests`, `/dashboard/audit-chain`, `/dashboard/retention`, `/dashboard/runs/47ed22be-7cd7-4ff1-b4bf-478ee3d52b67`.
+
+### Stage 2 Release Gate (`python scripts/release_gate.py`, final code)
+- `scripts/bump_version.py --check` → 10 anchors at `1.6.1`; `python scripts/security_check.py` → OK; `ruff check app tests scripts` → `All checks passed!`; `lint-imports` → **4 kept, 0 broken**; `git diff --check` → clean.
+- `pytest -q -W error::DeprecationWarning` → **1249 passed** (498.69 s). Growth over `v1.6.0` (678): P0 60, P1–P7 504 (incl. contract tests that walk every route), P8 3 login-token tests + 4 release tests. The contract test refuses the `auditor` on all **64** non-GET Dashboard routes.
+- **CI dependency versions** (fresh venv from `requirements.txt` + `requirements-otel.txt`: FastAPI 0.162.5, Pydantic 2.14.3, Starlette 1.10.0, SQLAlchemy 2.1.8, pytest 9.2.0, pytest-asyncio 1.4.1.post1) → **1249 passed (552.74 s); one non-failing warning: Starlette 1.10 deprecates `httpx` with `starlette.testclient` (`StarletteDeprecationWarning`, not a `DeprecationWarning` subclass, so `-W error::DeprecationWarning` does not fail; follow-up before Starlette removes it)**.
+- `docker compose up -d --build` → `api`, `worker` running; `kafka`, `postgres`, `redis` healthy. `alembic upgrade head` / `alembic current` → `202611120003 (head)`.
+- `python scripts/browser_manual_test.py` (gate, headed) → exit 0 (123 s); repeated headless for the IDs below → exit 0. Session mode, signed in as `e2e-admin` / `e2e-admin2` (admin) and `e2e-auditor` (auditor), passwords only in the git-ignored `.env.e2e`. Scenarios 1–15 passed, **21/21** navigation tabs HTTP 200, **0** console errors / warnings, **0** page errors, **0** failed HTTP requests (≥ 400), **0** `0E-8`, **0** unexpected re-authentication redirects.
+- **First gate run failed at the browser step** (everything else passed, 1246 tests): the headed Chromium loaded `/dashboard/login` a second time in the background before the form was submitted; every rendering issued a new `rh_login_csrf` cookie, so the form on screen was rejected as expired (`403`, *The sign-in form expired*). Headless runs did not show it. Fix (`app/services/access/csrf.py` `login_token_from_cookie()`, `app/ui/routers/access.py`): a rendering reuses a still-valid cookie with at least 5 minutes left; the pair stays bound to the signed `HttpOnly` cookie. Second tabs had the same problem. Three tests added; the second gate run passed completely.
+- QA stack (`.env`, local only): `DASHBOARD_AUTH_MODE=session`, `DUAL_CONTROL_ACTIONS=legal_hold.release`, `AUDIT_CHAIN_SIGNING_KEY_FILE=config/audit_chain_key.pem` (generated locally, `config/*.pem` git-ignored, key id `f2e14c565c1ded0b`), `AUDIT_RETENTION_PURGE_MODE` default `plan`. Accounts were created with `python -m app.jobs.users create --password-env` and went through the forced first-sign-in password change on the real pages.
+
+### Live IDs (headless run on the final code)
+- **Scenario 2c (prompt-guard/2.0)**: `47ed22be-7cd7-4ff1-b4bf-478ee3d52b67` → `awaiting_approval`, risk 0.5, `zh_prompt_injection` + `zh_destructive_intent`; `f66ec77c-9800-4575-90a5-08f3b9f58fb3` → `awaiting_approval`, risk 0.2, `classical_style_task_mismatch`; `2626c0a5-0372-4fad-96e5-2db5a782b81d` → `awaiting_approval`, risk 0.2, only `sensitive_term_mention`. All show `guard_version` `prompt-guard/2.0`.
+- **Scenario 12**: wrong password → generic error; the auditor opens Approvals / Retention / Governance / Change Requests without write controls; `/dashboard/admin/users` → 403 `users.manage`; POST `/dashboard/approvals/expire-stale` without a token → `403 csrf_token_invalid`.
+- **Scenario 13**: 202 entries, head seq 202, verify `ok` (seq 1–202); checkpoint `acp_96c4dc13a82c4a90837be059c801a4c5` through seq 203, `signed`, key `f2e14c565c1ded0b`. Live genesis `ace_19acec900b54456bb491154a702950bb` records `ge:52;tb:0;ap:6` (52 governance events, 0 tombstones, 6 decided approvals written before the chain).
+- **Scenario 14 (dual control)**: `chg_7a04093205ef5c9fca2e8e4a` (`legal_hold.release` of `lh_bdccd4b63b8948569cfdbe3e8a060081`, tenant `e2e-hold-68ab49bd`) requested by `user:e2e-admin`, no Approve button for the requester, approved by `user:e2e-admin2` → `executed`, hold `released_by` `user:e2e-admin2`.
+- **Scenario 15**: Dashboard apply of `purge_80eab1a5672b4fa799ab10cbc9a54c4b` in `plan` mode → `retention_apply_disabled`; the plan stays `planned`.
+
+### Real Postgres checks (throwaway database `rh_v161_qa`, dropped afterwards)
+- Created inside the compose Postgres, migrated to `202611120003`; scripts ran inside the api container with `POSTGRES_DSN` pointing at it (they refuse any other database). The live `app` database was not modified. `DROP DATABASE rh_v161_qa` at the end (verified gone).
+- **Concurrent chain writes**: two sessions × 200 governance events (`asyncio.gather`) in 1.65 s → 401 entries (genesis + 400), `seq` contiguous 1–401, no duplicates, `verify` `ok` (401 checked). Commit latency including the chain append: **p50 6.65 ms, p95 10.82 ms**, max 40.47 ms.
+- **Dashboard apply (mode `apply`)**: a second app instance on port 8001 (inside the api container, `AUDIT_RETENTION_PURGE_MODE=apply`, session mode) driven through the real pages by `httpx`: sign-in as `pg-admin`, **Generate dry-run report** → 3 candidates; a wrong confirmation → `retention_confirm_mismatch`; the typed `purge_id` → `purge_fc62a8edd5ef4c4e8528a570268f96b2` `applied`, 3 runs purged, 0 skipped, 0 failures, `receipt_digest` `73297c1a1bd47610…`, `applied_by` `user:pg-admin`, receipt panel shown; `GET /v1/runs/run_pg_old_0` → `410`. Tombstone of `run_pg_old_0`: `chain_version` `rh-chain/1`, `prev_hash` `c522ad006339c3ce…`, `entry_hash` `6e5b4ad2ff7b46c2…`.
+- **Lockout**: six wrong passwords for `pg-lock`, then the right one is still refused (locked); governance event `access.lockout` id 403.
+- **CLI**: `python -m app.jobs.audit_chain --verify` → `ok`, 410 entries, exit **0**; `--checkpoint` → `acp_e23475dd27624c5497ca5413f7badafd` `signed` (Ed25519, key `f2e14c565c1ded0b`).
+- **Tamper drill**: `UPDATE governance_events SET reason = reason || ' (edited)'` on event 1 → `--verify` exit **1**, `status` `failed`, `hash_mismatch` on `governance_event` ref 1 (seq 2, field `payload_digest`).
+
+### Not verified / known limits
+- Re-authentication after the 5-minute window is covered by tests and by the runner's explicit `/dashboard/reauth` step, not by waiting in a real browser.
+- Postgres advisory lock for concurrent change-request creation is not exercised (SQLite tests only check the single-writer path).
+- Jaeger and real sandbox execution: unchanged from `v1.6.0` (not verified; Docker backend planned for `v1.6.2`).
+
 ## 2026-11-11 - v1.6.0 Runtime Foundations Verification
 
 - **Version**: `v1.6.0` (branch `v1.6.0`, Alembic head `202611120002`, OpenAPI `1.6.0`, `evaluator_version` unchanged at `v1.5.9`)

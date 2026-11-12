@@ -10,8 +10,8 @@ Only ``DASHBOARD_AUTH_MODE=session`` has accounts. In ``off`` mode the sign-in p
 user-management actions are refused (``403 dashboard_auth_off``), so nobody can create accounts without signing in.
 P3: the sign-in pages are ``public_route()``; the account pages need ``account.self`` and user management
 ``users.manage`` (admin, platform view).
-P4 (D24, D26): every POST here passes ``csrf_protect`` (router dependency); the sign-in form gets a fresh signed
-``rh_login_csrf`` cookie each time it is rendered. ``/dashboard/reauth`` re-checks the password
+P4 (D24, D26): every POST here passes ``csrf_protect`` (router dependency); the sign-in form gets a signed
+``rh_login_csrf`` cookie (reused while it has at least 5 minutes left, P8). ``/dashboard/reauth`` re-checks the password
 (``provider.reauthenticate()``; failures count towards the lockout), writes ``access.reauth`` and sends the user back
 to the page they came from, where they submit the action again (the original POST is never replayed). User
 management actions need a re-authentication within ``DASHBOARD_REAUTH_MAX_AGE_SECONDS`` (``users.manage`` is a
@@ -72,9 +72,15 @@ def _auth_off() -> HTMLResponse:
 
 
 def _login_page(request: Request, *, next_path: str, error: str = "", username: str = "", status_code: int = 200) -> HTMLResponse:
-    """Every rendering issues a fresh sign-in CSRF pair: the signed cookie and the matching hidden form token."""
+    """Renders the sign-in form with its CSRF pair: the signed cookie and the matching hidden form token. A still-valid
+    cookie is reused (P8: a second rendering must not invalidate the form already shown); otherwise a fresh pair."""
     settings = get_settings()
-    cookie_value, form_token = csrf.new_login_token(login_csrf_key(settings))
+    existing = request.cookies.get(csrf.LOGIN_COOKIE_NAME)
+    reused = csrf.login_token_from_cookie(existing, login_csrf_key(settings))
+    if reused is not None and existing:
+        cookie_value, form_token = existing, reused
+    else:
+        cookie_value, form_token = csrf.new_login_token(login_csrf_key(settings))
     request.state.login_csrf_token = form_token
     response = templates.TemplateResponse(
         request,

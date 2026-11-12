@@ -1,8 +1,8 @@
 # Project Roadmap: Evolutionary Milestones
 
-> **Roadmap Baseline**: `v1.6.0`
+> **Roadmap Baseline**: `v1.6.1`
 > **Status**: Active Open-Source Track (`v1.6.x` Verified Execution Series)
-> **Next Target**: `v1.6.1` (Enterprise Access & Audit Integrity)
+> **Next Target**: `v1.6.2` (Isolated Sandbox Runtime MVP)
 > **Re-baselined**: 2026-11-11, after `v1.6.0` (see [Re-baseline Notes](#re-baseline-notes-november-2026))
 
 This roadmap outlines the past development trajectory, the `v1.5.x` evaluation series, the `v1.6.x` runtime execution series, and long-term architectural milestones for the **RewardHacking** platform.
@@ -38,19 +38,28 @@ This roadmap outlines the past development trajectory, the `v1.5.x` evaluation s
 | `v1.5.10` | Completed | LLM-as-Judge Triage (Shadow) & Review Sampling | Pluggable trusted judge providers that only prioritize review work and never turn `review` into `pass`, plus quota-capped `sample_for_review` with a uniform random audit slice and triage precision@K measurement. |
 | `v1.5.11` | Completed | Real Local & Cloud Judges | Named judge profiles, backend compatibility (structured-output fallback, reasoning control, retries), background triage, profile cost attribution, tenant consent for external judges and multi-profile benchmarks; verified with a local model in LM Studio. |
 | `v1.5.12` | Completed | Judge Activation & Provider Adapters | Test-then-activate gate with configuration fingerprints (rule-based judge by default), Dashboard judge profile management with templates and an editing gate, key-variable allowlist and HTTPS / metadata hardening, native Anthropic adapter, fallback chains, circuit breakers and per-profile budgets. |
-| `v1.6.0` | **Current** | **Runtime Foundations** | W3C trace context with optional OTLP export, audit retention plan → apply purge with legal holds and hash-only tombstones (FinOps ledger report-only), FinOps package split with `import-linter` contracts, and the sandbox execution spec with a `simulated` backend and conformance suite. |
-| `v1.6.1` | **Next** | Enterprise Access & Audit Integrity | Dashboard sign-in with roles (including a read-only auditor), CSRF tokens and re-authentication, second-person approval for high-impact actions, a tamper-evident audit chain, and Dashboard retention apply / hold release. Phase P0 (implemented on the `v1.6.1` branch, not released): prompt-guard/2.0. |
-| `v1.6.2` | Planned (tentative number) | Isolated Sandbox Runtime MVP | Hardened Docker backend with a configurable OCI runtime (`runc` locally, `runsc`/gVisor on Linux), limited to low-risk tools behind a feature flag; before / after re-runs against the platform's own tests produce the first `platform_verified` evidence, with changed-line coverage and a shadow re-run contradiction rule. |
+| `v1.6.0` | Completed | Runtime Foundations | W3C trace context with optional OTLP export, audit retention plan → apply purge with legal holds and hash-only tombstones (FinOps ledger report-only), FinOps package split with `import-linter` contracts, and the sandbox execution spec with a `simulated` backend and conformance suite. |
+| `v1.6.1` | **Current** | **Enterprise Access & Audit Integrity** | Dashboard sign-in with roles (including a read-only auditor), CSRF tokens and re-authentication, second-person approval (change requests) for high-impact actions, a tamper-evident audit chain with signed checkpoints, Dashboard retention apply / hold release, and prompt-guard/2.0 (P0). |
+| `v1.6.2` | **Next** | Isolated Sandbox Runtime MVP | Hardened Docker backend with a configurable OCI runtime (`runc` locally, `runsc`/gVisor on Linux), limited to low-risk tools behind a feature flag; before / after re-runs against the platform's own tests produce the first `platform_verified` evidence, with changed-line coverage and a shadow re-run contradiction rule. |
 | `v1.6.3` | Planned (tentative number) | Detection Measurement & Trajectory Evidence | Public labeled corpora imports, trajectory detectors and trajectory-aware contrastive judging, a structured self-report and an escalation channel, a detector evasion-variant suite, root-cause labels and a monitoring-coverage metric. |
 | `v1.6.4` | Planned (tentative number) | Compliance Foundation, Approved Models & Multilingual Guard | One control catalog with versioned framework mappings (ISO/IEC 42001, NIST AI RMF, EU AI Act, then Taiwan / Japan / US packs), an opt-in approved-model list with vendor jurisdiction, locale PII redaction packs, data-subject requests, incident notification clocks, prompt-guard hardening and localization. |
 | `v1.6.5` | Planned (tentative number) | Enterprise Integration | OIDC single sign-on, SIEM export, notifications, a CI integration kit with merge checks, and an offline / on-prem install bundle with SBOM and signed images. |
 | `v1.6.6+` | Long-Term (tentative number) | Stronger Verification & Scale-Out | Hidden held-out tests, changed-line mutation testing, realistic honeypots and canaries, a pre-rollout propensity gate, reviewer-quality measurement, multi-language structural rules, judge ensembles, K8s Job and microVM backends, remote MCP transports, resampling, and stateful graph time-travel replay. |
 
-**Release numbers**: only the next release (`v1.6.1`) has a fixed number. Numbers after it are tentative and name the planned order of themes. If a patch or a re-ordered theme has to ship first, it takes the next free number and the later themes move back; other documents that cite a tentative number are corrected when that release is planned.
+**Release numbers**: only the next release (`v1.6.2`) has a fixed number. Numbers after it are tentative and name the planned order of themes. If a patch or a re-ordered theme has to ship first, it takes the next free number and the later themes move back; other documents that cite a tentative number are corrected when that release is planned.
 
 ---
 
-## Current Release: `v1.6.0` Runtime Foundations
+## Current Release: `v1.6.1` Enterprise Access & Audit Integrity
+
+The `v1.6.1` milestone ties every Dashboard action to a named person and makes the audit trail verifiable:
+- **Sign-In & Roles**: local accounts with sessions, lockout and forced first password change; `admin`, `tenant_admin`, `reviewer`, `operator` and the read-only `auditor`; tenant scope; every route declares its permission; actions recorded as `user:<username>`.
+- **CSRF & Re-Authentication**: tokens on every form, step-up re-authentication for high-impact actions, security headers.
+- **Dual Control**: change requests for retention apply, hold release, judge activation and protected-path relaxation, enforced in the service layer for the API and the Dashboard alike (off by default).
+- **Tamper-Evident Audit Chain**: a separate hash ledger joined in the same transaction, signed checkpoints and a verification command.
+- **Dashboard Retention Apply & Hold Release** (`session` mode only) and **prompt-guard/2.0** (P0).
+
+## Previous Release: `v1.6.0` Runtime Foundations
 
 The `v1.6.0` milestone prepares the platform to re-run agent work itself (Verified Execution); nothing is executed for real yet and evidence provenance is unchanged:
 - **Tracing**: W3C Trace Context on HTTP and Kafka, optional OpenTelemetry export with an attribute allowlist, GenAI judge spans, background span links, exemplars and a Jaeger compose profile.
@@ -58,7 +67,7 @@ The `v1.6.0` milestone prepares the platform to re-run agent work itself (Verifi
 - **Sandbox Execution Spec**: `ExecutionSpec` / `ExecutionResult`, isolation levels with a record-only policy, a deterministic `simulated` backend and a conformance suite every real backend must pass.
 - **Modularization**: FinOps package, per-domain routers and `import-linter` contracts (post-execution review cannot import Kafka publishing or token leases).
 
-## Previous Release: `v1.5.12` Judge Activation & Provider Adapters
+## Earlier Release: `v1.5.12` Judge Activation & Provider Adapters
 
 The `v1.5.12` milestone makes choosing a judge an explicit, tested operator decision:
 - **Activation Gate**: rule-based by default; an LLM profile is used only after a successful probe whose configuration fingerprint still matches (Dashboard profiles also need *Activate*; `EVALUATION_JUDGE_PROFILE` profiles are probed at startup). Configuration or key changes fall back to the rule-based judge until re-tested.
@@ -200,22 +209,22 @@ Re-running an agent's change means executing untrusted code. The change could de
 
 **Summary**: `v1.5.x` made the platform a skilled reviewer of evidence; `v1.6.x` makes it a proctor with its own answer key who re-runs the exam. The first catches cheating that leaves traces; the second catches cheating where the evidence itself is fake, the hardest and most dangerous form of reward hacking.
 
-### `v1.6.0` (Current): Runtime Foundations
+### `v1.6.0` (Completed): Runtime Foundations
 - **OpenTelemetry Export**: W3C `traceparent` propagation and OTLP span export across API, worker, judge and executor.
 - **Audit Retention Purge with Legal Hold**: Dry-run and scheduled purges driven by `audit_retention_days`, excluding open incidents, runs under review, and runs referenced by checkpoints or replay bundles. The FinOps ledger is never auto-purged and follows a separate `finops_ledger_retention_days` setting (default about seven years) that only reports due records.
 - **Modularization**: Split `app/services/finops.py` into domain submodules and continue moving endpoints out of `app/api/routes.py` into per-domain routers.
 - **`SandboxBackend` Interface**: Abstracts tool execution while keeping deterministic simulation as the default backend.
 
-### `v1.6.1` (Next): Enterprise Access & Audit Integrity
+### `v1.6.1` (Current): Enterprise Access & Audit Integrity
 Split out of the former `v1.6.1` scope: every Dashboard form is touched, and signed-in roles are the entry requirement for regulated customers.
-- **P0 Prompt-Guard 2.0 (implemented on the `v1.6.1` branch, not released)**: brought forward from `v1.6.4` after a review on 2026-11-11 found that prompt flags are the only pre-execution gate for harmful intent expressed in the prompt and carried out with tools the request may already use (constraint flags are declared by the requester; `write_patch` and `query_data` need no approval). Adds Unicode normalization for matching, modern Chinese rules (`zh_*`), the `sensitive_term_mention` tier and the `classical_style_task_mismatch` heuristic. Every signal can only escalate to approval. Still rule-based and evadable by paraphrase; expected misses are kept as tests.
+- **P0 Prompt-Guard 2.0 (released in `v1.6.1`)**: brought forward from `v1.6.4` after a review on 2026-11-11 found that prompt flags are the only pre-execution gate for harmful intent expressed in the prompt and carried out with tools the request may already use (constraint flags are declared by the requester; `write_patch` and `query_data` need no approval). Adds Unicode normalization for matching, modern Chinese rules (`zh_*`), the `sensitive_term_mention` tier and the `classical_style_task_mismatch` heuristic. Every signal can only escalate to approval. Still rule-based and evadable by paraphrase; expected misses are kept as tests.
 - **Dashboard Sign-In & Roles**: user sign-in with sessions replaces the single Basic Auth account. Roles: `admin`, `tenant_admin`, `reviewer`, `operator` and a new read-only `auditor`. The session layer is built so OIDC single sign-on (`v1.6.5`) plugs in without rework.
 - **CSRF & Re-Authentication**: CSRF tokens on every Dashboard form; high-impact actions ask the user to authenticate again.
 - **Second-Person Approval**: retention apply, legal-hold release, judge activation and protected-path policy changes can require approval by a second person (configurable per action).
 - **Tamper-Evident Audit Chain**: writes the hash-chain columns reserved on tombstones in `v1.6.0` (`prev_hash`, `entry_hash`, `chain_version`), extends the chain to governance events and review decisions, and adds signed daily checkpoints with a verification command.
 - **Unlocked from `v1.6.0`**: the Dashboard may apply retention plans and release legal holds (API-only in `v1.6.0`).
 
-### `v1.6.2` (tentative number): Isolated Sandbox Runtime MVP
+### `v1.6.2` (Next): Isolated Sandbox Runtime MVP
 - **Hardened Docker Backend**: Read-only root filesystem, no network by default, all capabilities dropped, non-root user, and pid/memory/CPU limits. The OCI runtime is configurable: `runc` for local Docker Desktop verification, `runsc` (gVisor) on Linux hosts without code changes. The backend must pass every case in `conformance.CASES` before it can be enabled. Images are digest-pinned and can come from an internal registry, so no outbound network is needed.
 - **Narrow Scope**: Only low-risk tools (for example `read_repo`, `run_tests`) and in-sandbox `stdio` MCP servers, behind a disabled-by-default feature flag.
 - **Platform-Verified Evidence**: Re-running tests inside the sandbox against the platform's pristine copy of the tests upgrades outcome evidence to `platform_verified`; dry-run replay can optionally re-execute inside the sandbox.

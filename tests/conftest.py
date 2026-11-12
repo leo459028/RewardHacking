@@ -24,6 +24,11 @@ os.environ.setdefault("EVALUATION_SAMPLE_RANDOM_RATE", "0")
 # DASHBOARD_AUTH_ENABLED=true locally). Tests for session mode set DASHBOARD_AUTH_MODE=session themselves, usually
 # through the ``signed_in`` fixture.
 os.environ["DASHBOARD_AUTH_MODE"] = "off"
+# v1.6.1 P8: the same for the other settings the E2E QA stack puts in .env (dual control for hold release, the audit
+# chain signing key). Environment variables win over .env, so the suite keeps the defaults; tests that need them set
+# them with monkeypatch.
+os.environ["DUAL_CONTROL_ACTIONS"] = ""
+os.environ["AUDIT_CHAIN_SIGNING_KEY_FILE"] = ""
 
 
 @pytest.fixture(autouse=True)

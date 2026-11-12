@@ -100,7 +100,7 @@
   {% if can("operations.manage", "operations") %}<form method="post" action="/dashboard/operations/release-gates" class="form-grid">
     {{ csrf_input() }}
     <label>Release Version
-      <input name="release_version" value="v1.6.0">
+      <input name="release_version" value="v1.6.1">
     </label>
     <label>Created By
       {% if dashboard_auth_mode() != "session" %}<input name="created_by" value="dashboard">{% else %}<span class="muted" data-testid="acting-as">Recorded as | 記錄為 <code>{{ dashboard_user(request).actor }}</code></span>{% endif %}

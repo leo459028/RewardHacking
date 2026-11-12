@@ -443,6 +443,39 @@ def test_login_token_from_another_rendering_or_without_cookie_is_refused(client,
     assert client.post(LOGIN, data={"username": who.username, "password": who.password, "_csrf": stolen}, follow_redirects=False).status_code == 403
 
 
+def test_rendering_the_login_page_again_keeps_the_form_on_screen_valid(client, signed_in):
+    # P8: a second rendering (another tab, a reload, a browser prefetch) must not invalidate the first form.
+    who = signed_in(role="operator")
+    client.cookies.clear()
+    first = _hidden_token(client.get(LOGIN).text)
+    second_page = client.get(LOGIN + "?next=%2Fdashboard")
+    assert _hidden_token(second_page.text) == first
+    response = client.post(LOGIN, data={"username": who.username, "password": who.password, "next": "/dashboard", "_csrf": first}, follow_redirects=False)
+    assert response.status_code == 303 and response.headers["location"] == "/dashboard"
+
+
+def test_login_cookie_close_to_expiry_is_replaced_on_the_next_rendering(client, signed_in):
+    signed_in(role="operator")
+    client.cookies.clear()
+    key = get_settings().dashboard_csrf_secret.get_secret_value()
+    old_cookie, old_token = csrf.new_login_token(key, now=time.time() - csrf.LOGIN_TOKEN_TTL_SECONDS + csrf.LOGIN_TOKEN_REUSE_MIN_SECONDS - 30)
+    client.cookies.set(csrf.LOGIN_COOKIE_NAME, old_cookie)
+    page = client.get(LOGIN)
+    assert _hidden_token(page.text) != old_token and page.headers["set-cookie"].startswith(csrf.LOGIN_COOKIE_NAME + "=")
+
+
+def test_login_token_from_cookie_checks_signature_and_remaining_lifetime():
+    cookie, token = csrf.new_login_token("k1")
+    assert csrf.login_token_from_cookie(cookie, "k1") == token
+    assert csrf.login_token_from_cookie(cookie, "other-key") is None
+    nonce, issued, _signature = cookie.split(".")
+    assert csrf.login_token_from_cookie(f"{nonce}.{issued}.{'0' * 64}", "k1") is None
+    assert csrf.login_token_from_cookie("garbage", "k1") is None and csrf.login_token_from_cookie(None, "k1") is None
+    late = time.time() + csrf.LOGIN_TOKEN_TTL_SECONDS - csrf.LOGIN_TOKEN_REUSE_MIN_SECONDS + 5
+    assert csrf.login_token_from_cookie(cookie, "k1", now=late) is None  # too little lifetime left to hand out again
+    assert csrf.verify_login_token(cookie, token, "k1", now=late)  # the form already shown still works until the TTL
+
+
 def test_expired_login_cookie_is_refused(client, signed_in):
     who = signed_in(role="operator")
     client.cookies.clear()
