@@ -21,13 +21,15 @@
         <td>{{ item.failure_reason }}</td>
         <td>{{ item.created_at }}</td>
         <td>
-          <form method="post" action="/dashboard/worker/dlq/{{ item.run_id }}/requeue" class="decision-form" style="display:inline-block;">
+          {% if can("worker.manage", "worker") %}<form method="post" action="/dashboard/worker/dlq/{{ item.run_id }}/requeue" class="decision-form" style="display:inline-block;">
+            {{ csrf_input() }}
             <button class="button secondary" type="submit">Requeue Run</button>
-          </form>
-          <form method="post" action="/dashboard/worker/dlq/{{ item.run_id }}/resolve" class="decision-form" style="display:inline-block;">
+          </form>{% endif %}
+          {% if can("worker.manage", "worker") %}<form method="post" action="/dashboard/worker/dlq/{{ item.run_id }}/resolve" class="decision-form" style="display:inline-block;">
+            {{ csrf_input() }}
             <input type="hidden" name="reason" value="Resolved from worker dashboard">
             <button class="button" type="submit">Resolve DLQ</button>
-          </form>
+          </form>{% endif %}
         </td>
       </tr>
     {% else %}

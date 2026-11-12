@@ -179,6 +179,13 @@
     .success { background: #ecfdf3; border: 1px solid #abefc6; border-radius: 8px; color: var(--ok); padding: 12px; margin-bottom: 12px; }
     .error { background: #fef3f2; border: 1px solid #fecdca; border-radius: 8px; color: var(--danger); padding: 12px; }
     .decision-form { display: grid; gap: 8px; min-width: 220px; }
+    .app-shell.bare { grid-template-columns: 1fr; }
+    .auth-card { margin: 8vh auto 0; max-width: 420px; }
+    .sidebar-user { border-top: 1px solid #344054; margin-top: 16px; padding-top: 12px; font-size: 13px; color: #cdd7d6; }
+    .sidebar-user strong { color: #ffffff; display: block; }
+    .sidebar-user form { margin-top: 8px; }
+    .sidebar-user .button { min-height: 30px; padding: 4px 10px; font-size: 13px; }
+    .auth-off-banner { background: #fffaeb; border: 1px solid #fedf89; border-radius: 8px; color: var(--warning); font-size: 13px; font-weight: 700; margin-bottom: 14px; padding: 8px 12px; }
     @media (max-width: 980px) {
       .app-shell { grid-template-columns: 1fr; }
       .sidebar { height: auto; position: static; }
@@ -188,29 +195,50 @@
   </style>
 </head>
 <body>
-  <div class="app-shell">
+  {% set principal_ = dashboard_user(request) if request is defined else none %}
+  <div class="app-shell{{ ' bare' if bare else '' }}">
+    {% if not bare %}
     <aside class="sidebar">
       <div class="brand">Reward Guardrail<span>Operational Dashboard</span></div>
       <nav class="nav">
-        <a class="{{ 'active' if active == 'dashboard' else '' }}" href="/dashboard">Overview</a>
-        <a class="{{ 'active' if active == 'runs' else '' }}" href="/dashboard/runs">Runs</a>
-        <a class="{{ 'active' if active == 'approvals' else '' }}" href="/dashboard/approvals">Approvals</a>
-        <a class="{{ 'active' if active == 'reviews' else '' }}" href="/dashboard/reviews">Reviews</a>
-        <a class="{{ 'active' if active == 'benchmark' else '' }}" href="/dashboard/benchmark">Benchmark</a>
-        <a class="{{ 'active' if active == 'judge-profiles' else '' }}" href="/dashboard/judge-profiles">Judge Profiles</a>
-        <a class="{{ 'active' if active == 'worker' else '' }}" href="/dashboard/worker">Worker</a>
-        <a class="{{ 'active' if active == 'observability' else '' }}" href="/dashboard/observability">Observability</a>
-        <a class="{{ 'active' if active == 'governance' else '' }}" href="/dashboard/governance">Governance</a>
-        <a class="{{ 'active' if active == 'control-plane' else '' }}" href="/dashboard/control-plane">Control Plane</a>
-        <a class="{{ 'active' if active == 'costs' else '' }}" href="/dashboard/costs">Costs</a>
-        <a class="{{ 'active' if active == 'admin-finops' else '' }}" href="/dashboard/admin/finops/pricing">Admin FinOps</a>
-        <a class="{{ 'active' if active == 'operations' else '' }}" href="/dashboard/operations">Operations</a>
-        <a class="{{ 'active' if active == 'retention' else '' }}" href="/dashboard/retention">Retention | 資料保留</a>
-        <a class="{{ 'active' if active == 'playground' else '' }}" href="/dashboard/playground">Playground</a>
+        {# v1.6.1 P3: links follow the permission table (D19 / D22); the server re-checks every request. #}
+        {% if can("dashboard.view", "overview") %}<a class="{{ 'active' if active == 'dashboard' else '' }}" href="/dashboard">Overview</a>{% endif %}
+        {% if can("dashboard.view", "runs") %}<a class="{{ 'active' if active == 'runs' else '' }}" href="/dashboard/runs">Runs</a>{% endif %}
+        {% if can("dashboard.view", "approvals") %}<a class="{{ 'active' if active == 'approvals' else '' }}" href="/dashboard/approvals">Approvals</a>{% endif %}
+        {% if can("dashboard.view", "reviews") %}<a class="{{ 'active' if active == 'reviews' else '' }}" href="/dashboard/reviews">Reviews</a>{% endif %}
+        {% if can("benchmark.view", "benchmark") %}<a class="{{ 'active' if active == 'benchmark' else '' }}" href="/dashboard/benchmark">Benchmark</a>{% endif %}
+        {% if can("judge.view", "judge_profiles") %}<a class="{{ 'active' if active == 'judge-profiles' else '' }}" href="/dashboard/judge-profiles">Judge Profiles</a>{% endif %}
+        {% if can("dashboard.view", "worker") %}<a class="{{ 'active' if active == 'worker' else '' }}" href="/dashboard/worker">Worker</a>{% endif %}
+        {% if can("dashboard.view", "observability") %}<a class="{{ 'active' if active == 'observability' else '' }}" href="/dashboard/observability">Observability</a>{% endif %}
+        {% if can("dashboard.view", "governance") %}<a class="{{ 'active' if active == 'governance' else '' }}" href="/dashboard/governance">Governance</a>{% endif %}
+        {% if can("dashboard.view", "control_plane") %}<a class="{{ 'active' if active == 'control-plane' else '' }}" href="/dashboard/control-plane">Control Plane</a>{% endif %}
+        {% if can("dashboard.view", "costs") %}<a class="{{ 'active' if active == 'costs' else '' }}" href="/dashboard/costs">Costs</a>{% endif %}
+        {% if can("dashboard.view", "pricing") %}<a class="{{ 'active' if active == 'admin-finops' else '' }}" href="/dashboard/admin/finops/pricing">Admin FinOps</a>
+        {% elif can("dashboard.view", "budgets") %}<a class="{{ 'active' if active == 'admin-finops' else '' }}" href="/dashboard/admin/finops/budgets">Budgets | 預算</a>{% endif %}
+        {% if can("dashboard.view", "operations") %}<a class="{{ 'active' if active == 'operations' else '' }}" href="/dashboard/operations">Operations</a>{% endif %}
+        {% if can("retention.view", "retention") %}<a class="{{ 'active' if active == 'retention' else '' }}" href="/dashboard/retention">Retention | 資料保留</a>{% endif %}
+        {% if can("dashboard.view", "change_requests") %}<a class="{{ 'active' if active == 'change-requests' else '' }}" href="/dashboard/change-requests">Change Requests | 變更覆核</a>{% endif %}
+        {% if can("audit_chain.read", "audit_chain") %}<a class="{{ 'active' if active == 'audit-chain' else '' }}" href="/dashboard/audit-chain">Audit Chain | 稽核鏈</a>{% endif %}
+        {% if can("runs.submit", "playground") %}<a class="{{ 'active' if active == 'playground' else '' }}" href="/dashboard/playground">Playground</a>{% endif %}
+        {% if principal_ and not principal_.synthetic and can("users.manage", "users") %}
+        <a class="{{ 'active' if active == 'users' else '' }}" href="/dashboard/admin/users">Users | 使用者</a>
+        {% endif %}
         <a href="/docs">OpenAPI</a>
       </nav>
+      {% if principal_ and not principal_.synthetic %}
+      <div class="sidebar-user" data-testid="sidebar-user">
+        <strong>{{ principal_.username }}</strong>
+        {{ principal_.role }}{% if principal_.tenant_id %} · {{ principal_.tenant_id }}{% endif %}
+        <div><a href="/dashboard/account">Account | 我的帳號</a></div>
+        <form method="post" action="/dashboard/logout">{{ csrf_input() }}<button class="button secondary" type="submit">Sign out | 登出</button></form>
+      </div>
+      {% endif %}
     </aside>
+    {% endif %}
     <main>
+      {% if not bare and principal_ and principal_.synthetic %}
+      <div class="auth-off-banner" data-testid="auth-off-banner">Dashboard sign-in is off (DASHBOARD_AUTH_MODE=off): local development only. | Dashboard 驗證關閉，僅供本機開發。</div>
+      {% endif %}
       {% block content %}{% endblock %}
     </main>
   </div>

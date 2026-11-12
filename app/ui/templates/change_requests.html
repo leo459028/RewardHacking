@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Change Requests | 變更覆核{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Change Requests</h1>
+    <div class="title-note">變更覆核（雙人覆核）</div>
+    <div class="muted">Dual control for high-impact changes (v1.6.1): a second, signed-in person approves the change and it executes at once. Not a run approval and not a post-execution review. | 高影響變更需要第二個人核准，核准後立即執行；不是執行前核准，也不是執行後審查。</div>
+  </div>
+</div>
+
+{% if message %}<div class="success" role="status" data-testid="change-request-message">{{ message }}</div>{% endif %}
+{% if error %}<div class="error" role="alert" data-testid="change-request-error">{{ error }}</div>{% endif %}
+{% if sign_in_off %}<div class="error" role="alert" data-testid="change-request-sign-in-off">Dashboard sign-in is off: change requests can be listed but only a signed-in user can approve or reject them (DASHBOARD_AUTH_MODE=session). | Dashboard 驗證關閉時無法核准或駁回。</div>{% endif %}
+
+<section class="panel" id="change-request-config">
+  <h2>Configuration <span class="heading-note">設定</span></h2>
+  <table>
+    <tbody>
+      <tr><th>DUAL_CONTROL_ACTIONS</th><td data-testid="change-request-enabled">{% for action in all_actions %}<span class="flag">{{ action }} · {{ 'on' if action in enabled_actions else 'off' }}</span>{% endfor %}</td></tr>
+      {% if unknown_actions %}<tr><th>Unknown names</th><td><span class="status failed">{{ unknown_actions | join(", ") }}</span> (ignored)</td></tr>{% endif %}
+      <tr><th>Request TTL</th><td>{{ ttl_hours }} h (retention.apply: the plan's own expiry if earlier) | 逾期時間</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="panel" id="change-request-list">
+  <h2>Requests <span class="heading-note">請求列表</span></h2>
+  <form method="get" action="/dashboard/change-requests" class="form-grid">
+    <label>Status | 狀態
+      <select name="status">
+        <option value="" {% if not status_filter %}selected{% endif %}>all</option>
+        {% for item in statuses %}<option value="{{ item }}" {% if status_filter == item %}selected{% endif %}>{{ item }}</option>{% endfor %}
+      </select>
+    </label>
+    <div class="checkline"><button class="button secondary" type="submit">Filter | 篩選</button></div>
+  </form>
+  <table data-testid="change-request-table">
+    <thead><tr><th>Change</th><th>Action</th><th>Target</th><th>Tenant</th><th>Status</th><th>Requested</th><th>Decided</th><th>Payload</th><th></th></tr></thead>
+    <tbody>
+    {% for item in items %}
+      <tr data-testid="change-request-row" data-change-id="{{ item.change_id }}">
+        <td><code>{{ item.change_id }}</code></td>
+        <td>{{ item.action_label }}<div class="muted"><code>{{ item.action }}</code> · needs {{ item.required_permission }}</div></td>
+        <td><code>{{ item.target_ref }}</code></td>
+        <td>{{ item.tenant_id or "platform" }}</td>
+        <td><span class="status {{ 'completed' if item.status == 'executed' else ('failed' if item.status in ['failed', 'rejected'] else 'pending') }}" data-testid="change-request-status">{{ item.status }}</span>
+          {% if item.error_code %}<div class="muted">{{ item.error_code }}</div>{% endif %}</td>
+        <td>{{ item.requested_by }}<div class="muted">{{ item.requested_at }}</div>{% if item.requested_reason %}<div class="muted">{{ item.requested_reason }}</div>{% endif %}<div class="muted">expires {{ item.expires_at }}</div></td>
+        <td>{{ item.decided_by or "-" }}<div class="muted">{{ item.decided_at or "" }}</div>{% if item.executed_at %}<div class="muted">executed {{ item.executed_at }}</div>{% endif %}</td>
+        <td><details><summary><code>{{ item.payload_digest[:12] }}…</code></summary><pre>{{ item.payload | json_pretty }}</pre>{% if item.execution %}<pre>{{ item.execution | json_pretty }}</pre>{% endif %}</details></td>
+        <td>
+          {% if item.can_decide %}
+          <form method="post" action="/dashboard/change-requests/{{ item.change_id }}/approve">
+            {{ csrf_input() }}
+            <input name="reason" placeholder="Reason (optional) | 理由" maxlength="2000">
+            <button class="button" type="submit" data-testid="change-request-approve">Approve &amp; execute | 核准並執行</button>
+          </form>
+          <form method="post" action="/dashboard/change-requests/{{ item.change_id }}/reject">
+            {{ csrf_input() }}
+            <input name="reason" placeholder="Reason | 理由" maxlength="2000">
+            <button class="button secondary" type="submit" data-testid="change-request-reject">Reject | 駁回</button>
+          </form>
+          {% elif item.own and item.status == 'pending' %}<div class="muted">Your request: another person must approve it. | 你的請求需由他人核准。</div>{% endif %}
+          {% if item.can_cancel %}
+          <form method="post" action="/dashboard/change-requests/{{ item.change_id }}/cancel">
+            {{ csrf_input() }}
+            <button class="button secondary" type="submit" data-testid="change-request-cancel">Cancel | 取消</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="9" class="muted">No change requests. | 尚無變更覆核。</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

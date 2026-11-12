@@ -72,7 +72,8 @@
 
 <section class="panel">
   <h2>Simple Edit</h2>
-  <form method="post" action="/dashboard/admin/finops/pricing/{{ item.pricing_id }}/edit" class="form-grid">
+  {% if can("pricing.manage", "pricing") %}<form method="post" action="/dashboard/admin/finops/pricing/{{ item.pricing_id }}/edit" class="form-grid">
+    {{ csrf_input() }}
     <label>Unit Price
       <input name="unit_price" value="{{ item.unit_price|decimal_plain }}">
     </label>
@@ -109,10 +110,11 @@
     <label>&nbsp;
       <button class="button" type="submit">Save</button>
     </label>
-  </form>
-  <form method="post" action="/dashboard/admin/finops/pricing/{{ item.pricing_id }}/disable" style="margin-top:12px;">
+  </form>{% endif %}
+  {% if can("pricing.manage", "pricing") %}<form method="post" action="/dashboard/admin/finops/pricing/{{ item.pricing_id }}/disable" style="margin-top:12px;">
+    {{ csrf_input() }}
     <button class="button danger" type="submit">Disable</button>
-  </form>
+  </form>{% endif %}
 </section>
 
 <section class="panel">

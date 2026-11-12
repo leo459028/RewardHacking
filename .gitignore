@@ -50,3 +50,6 @@ docs/handoff.md
 
 # Local judge profiles (v1.5.11); config/judge_profiles.example.yaml is the committed template
 config/judge_profiles.yaml
+
+# Audit chain signing keys (v1.6.1); never commit a private key
+config/*.pem

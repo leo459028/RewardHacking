@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
+from app.models.access import DashboardUser
 from app.models.agent_run import AgentRun
 from app.models.approval_event import ApprovalEvent
 from app.models.evaluation_review import EvaluationReview
@@ -17,7 +18,7 @@ from app.models.incident import Incident
 from app.models.operations import OperationsEvidence, ReleaseGateItem, ReleaseGateRun
 from app.models.tenant import TenantApiKey
 from app.models.worker_attempt import WorkerAttempt
-from app.services import retention
+from app.services import audit_chain, retention
 from app.services.finops import ensure_default_pricing
 from app.services.sandbox import health as sandbox_health
 
@@ -399,6 +400,123 @@ async def _retention_policy_check(session: AsyncSession, *, settings: Settings) 
     )
 
 
+async def _dashboard_auth_mode_check(session: AsyncSession, *, settings: Settings) -> OperationsCheck:
+    """v1.6.1 D9 / D14: Dashboard sign-in must be on in production; deprecated Basic Auth settings are flagged."""
+    mode = settings.dashboard_auth_mode
+    prod = (settings.app_env or "").strip().lower() == "prod"
+    admins = int(
+        await session.scalar(
+            select(func.count()).select_from(DashboardUser).where(DashboardUser.role == "admin", DashboardUser.status == "active")
+        )
+        or 0
+    )
+    problems: list[str] = []
+    if mode == "off":
+        status = "fail" if prod else "pass"
+        detail = "Dashboard sign-in is off (DASHBOARD_AUTH_MODE=off): no accounts, local development only."
+        if prod:
+            problems.append("auth_off_in_prod")
+    else:
+        status = "pass"
+        detail = f"Dashboard sign-in is on (session mode); {admins} active admin account(s)."
+        if admins == 0:
+            status = "warn"
+            problems.append("no_active_admin")
+            detail += " Create one with: python -m app.jobs.users create --role admin ..."
+    if settings.dashboard_legacy_credentials_set:
+        problems.append("legacy_basic_auth_settings")
+        detail += " DASHBOARD_USERNAME / DASHBOARD_PASSWORD are deprecated and ignored; remove them."
+        if status == "pass":
+            status = "warn"
+    return OperationsCheck(
+        check_key="dashboard_auth_mode",
+        status=status,
+        title="Dashboard sign-in",
+        detail=detail,
+        metadata={"mode": mode, "app_env": settings.app_env, "active_admins": admins, "problems": problems},
+    )
+
+
+AUDIT_CHAIN_TAIL_ENTRIES = 1000
+AUDIT_CHAIN_CHECKPOINT_MAX_AGE_HOURS = 48
+
+
+async def _audit_chain_integrity_check(session: AsyncSession, *, settings: Settings) -> OperationsCheck:
+    """v1.6.1 D33 / Q7: the chain must be on, recent entries must verify, and checkpoints must be signed and recent.
+
+    Outside ``APP_ENV=prod`` a missing signing key, a disabled chain or a stale checkpoint is an advisory warning (it
+    does not change the overall gate); in production it fails. A tail that does not verify fails everywhere."""
+    prod = (settings.app_env or "").strip().lower() == "prod"
+    current = await audit_chain.head(session)
+    head_seq = current.seq if current is not None else 0
+    tail = await audit_chain.verify(
+        session, settings, from_seq=max(1, head_seq - AUDIT_CHAIN_TAIL_ENTRIES + 1), max_entries=AUDIT_CHAIN_TAIL_ENTRIES
+    ) if head_seq else {"status": audit_chain.OK, "issues": {}, "checked_entries": 0}
+    status_info = await audit_chain.status(session, settings)
+    latest = await audit_chain.latest_checkpoint(session)
+    problems: list[str] = []
+    if not settings.audit_chain_enabled:
+        problems.append("chain_disabled")
+    if not status_info["signing"]["configured"]:
+        problems.append(status_info["signing"]["error"] or "no_signing_key")
+    if head_seq and latest is None:
+        problems.append("no_checkpoint")
+    elif latest is not None:
+        created = latest.created_at if latest.created_at.tzinfo else latest.created_at.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) - created > timedelta(hours=AUDIT_CHAIN_CHECKPOINT_MAX_AGE_HOURS):
+            problems.append("checkpoint_stale")
+        if latest.status != "signed":
+            problems.append("checkpoint_unsigned")
+    if tail["status"] != audit_chain.OK:
+        status, advisory = "fail", False
+        detail = f"The last {tail['checked_entries']} audit chain entries do not verify: {tail['issues']}. Run python -m app.jobs.audit_chain --verify."
+    elif problems:
+        status, advisory = ("fail", False) if prod else ("warn", True)
+        detail = f"Audit chain head seq {head_seq}; needs attention: {', '.join(problems)}."
+    else:
+        status, advisory = "pass", False
+        detail = f"Audit chain head seq {head_seq}; the last {tail['checked_entries']} entries verify; latest checkpoint is signed."
+    return OperationsCheck(
+        check_key="audit_chain_integrity",
+        status=status,
+        title="Audit chain integrity",
+        detail=detail,
+        metadata={"head_seq": head_seq, "problems": problems, "tail_issues": tail["issues"], "advisory": advisory,
+                  "signing_key_id": status_info["signing"]["key_id"], "app_env": settings.app_env},
+    )
+
+
+DUAL_CONTROL_REQUIRED_IN_PROD = ("retention.apply", "legal_hold.release")
+
+
+def _dual_control_configured_check(settings: Settings) -> OperationsCheck:
+    """v1.6.1 D38 / Q4: production should put purge apply and legal-hold release under dual control.
+
+    Missing actions warn in ``APP_ENV=prod``; elsewhere the warning is advisory (it does not change the overall gate,
+    like ``dashboard_auth_mode`` and ``audit_chain_integrity``). Unknown names in ``DUAL_CONTROL_ACTIONS`` also warn."""
+    from app.services.change_requests import configured_actions
+
+    prod = (settings.app_env or "").strip().lower() == "prod"
+    enabled, unknown = configured_actions(settings)
+    missing = [action for action in DUAL_CONTROL_REQUIRED_IN_PROD if action not in enabled]
+    if unknown:
+        status, advisory = "warn", False
+        detail = f"DUAL_CONTROL_ACTIONS has unknown names (ignored): {', '.join(unknown)}."
+    elif missing:
+        status, advisory = "warn", not prod
+        detail = f"Dual control is off for {', '.join(missing)}; one administrator or one admin API key can run them alone."
+    else:
+        status, advisory = "pass", False
+        detail = f"Dual control is on for {', '.join(sorted(enabled))}."
+    return OperationsCheck(
+        check_key="dual_control_configured",
+        status=status,
+        title="Dual control configured",
+        detail=detail,
+        metadata={"enabled": sorted(enabled), "missing": missing, "unknown": unknown, "advisory": advisory, "app_env": settings.app_env},
+    )
+
+
 def _sandbox_backend_health_check(settings: Settings) -> OperationsCheck:
     """v1.6.0 D24: the configured backend must load and pass the conformance smoke cases."""
     report = sandbox_health.status_report(settings)
@@ -550,6 +668,9 @@ async def compute_operations_readiness(
     checks = [
         await _retention_policy_check(session, settings=settings),
         _sandbox_backend_health_check(settings),
+        await _dashboard_auth_mode_check(session, settings=settings),
+        await _audit_chain_integrity_check(session, settings=settings),
+        _dual_control_configured_check(settings),
         OperationsCheck(
             check_key="stale_queued_runs",
             status="fail" if stale_queued else "pass",

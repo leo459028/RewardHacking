@@ -6,7 +6,7 @@
     <h1>Control Plane</h1>
     <div class="title-note">控制面骨架</div>
   </div>
-  <a class="button secondary" href="/dashboard/playground">Open Playground</a>
+  {% if can("runs.submit", "playground") %}<a class="button secondary" href="/dashboard/playground">Open Playground</a>{% endif %}
 </div>
 
 <section class="grid stats">
@@ -25,7 +25,8 @@
 <section class="detail-grid">
   <div class="panel">
     <h2>Register / Update Workflow <span class="heading-note">工作流動態註冊</span></h2>
-    <form method="post" action="/dashboard/control-plane/workflows" class="form-grid">
+    {% if can("control_plane.manage", "control_plane") %}<form method="post" action="/dashboard/control-plane/workflows" class="form-grid">
+      {{ csrf_input() }}
       <label>Workflow ID
         <input name="workflow_id" value="analysis-v157" required>
       </label>
@@ -56,11 +57,12 @@
       <label>&nbsp;
         <button class="button" type="submit">Save Workflow</button>
       </label>
-    </form>
+    </form>{% endif %}
   </div>
   <div class="panel">
     <h2>Register / Update Tool <span class="heading-note">工具動態註冊與限流配置</span></h2>
-    <form method="post" action="/dashboard/control-plane/tools" class="form-grid">
+    {% if can("control_plane.manage", "control_plane") %}<form method="post" action="/dashboard/control-plane/tools" class="form-grid">
+      {{ csrf_input() }}
       <label>Tool Name
         <input name="tool_name" value="qa_custom_tool" required>
       </label>
@@ -102,14 +104,15 @@
       <label>&nbsp;
         <button class="button" type="submit">Save Tool</button>
       </label>
-    </form>
+    </form>{% endif %}
   </div>
 </section>
 
 <section class="detail-grid">
   <div class="panel">
     <h2>Register / Update MCP Server <span class="heading-note">MCP 伺服器註冊與信任分級</span></h2>
-    <form method="post" action="/dashboard/control-plane/mcp-servers" class="form-grid">
+    {% if can("control_plane.manage", "control_plane") %}<form method="post" action="/dashboard/control-plane/mcp-servers" class="form-grid">
+      {{ csrf_input() }}
       <label>MCP Server ID
         <input name="mcp_server_id" value="mcp-qa-v157" required pattern="[a-zA-Z0-9._\-]{2,113}">
       </label>
@@ -149,7 +152,7 @@
       <label>&nbsp;
         <button class="button" type="submit">Save MCP Server</button>
       </label>
-    </form>
+    </form>{% endif %}
   </div>
   <div class="panel">
     <h2>Safe MCP Gateway Rules <span class="heading-note">閘道器規則摘要</span></h2>
@@ -186,15 +189,17 @@
         <td>
           <div class="inline-form">
             {% if mcp_open %}
-            <form method="post" action="/dashboard/control-plane/mcp-servers/{{ server.mcp_server_id }}/breaker/close">
+            {% if can("breakers.manage", "control_plane") %}<form method="post" action="/dashboard/control-plane/mcp-servers/{{ server.mcp_server_id }}/breaker/close">
+              {{ csrf_input() }}
               <input type="hidden" name="reason" value="Manual MCP reset from Control Plane portal">
               <button class="button secondary" type="submit">Reset MCP Breaker</button>
-            </form>
+            </form>{% endif %}
             {% else %}
-            <form method="post" action="/dashboard/control-plane/mcp-servers/{{ server.mcp_server_id }}/breaker/open">
+            {% if can("breakers.manage", "control_plane") %}<form method="post" action="/dashboard/control-plane/mcp-servers/{{ server.mcp_server_id }}/breaker/open">
+              {{ csrf_input() }}
               <input type="hidden" name="reason" value="Manual MCP trip from Control Plane portal">
               <button class="button danger" type="submit">Trip MCP Breaker</button>
-            </form>
+            </form>{% endif %}
             {% endif %}
           </div>
         </td>
@@ -257,15 +262,17 @@
         <td>{{ tool.status if tool.status is defined else tool.get("status") }}</td>
         <td>
           <div class="inline-form">
-            <form method="post" action="/dashboard/control-plane/tools/{{ t_name }}/breaker/open">
+            {% if can("breakers.manage", "control_plane") %}<form method="post" action="/dashboard/control-plane/tools/{{ t_name }}/breaker/open">
+              {{ csrf_input() }}
               <input type="hidden" name="reason" value="Manual trip from Control Plane portal">
               <button class="button danger" type="submit">Trip Breaker</button>
-            </form>
+            </form>{% endif %}
             {% if is_open %}
-            <form method="post" action="/dashboard/control-plane/tools/{{ t_name }}/breaker/close">
+            {% if can("breakers.manage", "control_plane") %}<form method="post" action="/dashboard/control-plane/tools/{{ t_name }}/breaker/close">
+              {{ csrf_input() }}
               <input type="hidden" name="reason" value="Manual reset from Control Plane portal">
               <button class="button secondary" type="submit">Reset Breaker</button>
-            </form>
+            </form>{% endif %}
             {% endif %}
           </div>
         </td>

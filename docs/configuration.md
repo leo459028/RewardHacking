@@ -35,9 +35,18 @@ Application configuration is loaded from environment variables and local `.env` 
 | `LLM_JUDGE_ENABLED` | `false` | Enables external LLM judge; uses deterministic rubrics if false |
 | `AUTH_ENABLED` | `false` | Enables mandatory `X-API-Key` authentication |
 | `API_KEYS` | `demo-key:default:admin` | Bootstrap fallback API keys (`key:tenant:role`) |
-| `DASHBOARD_AUTH_ENABLED` | `false` | Enables HTTP Basic Authentication for web dashboard |
-| `DASHBOARD_USERNAME` | `admin` | Dashboard operator username |
-| `DASHBOARD_PASSWORD` | `admin` | Dashboard operator password (MUST be rotated for production) |
+| `DASHBOARD_AUTH_ENABLED` | `false` | `v1.6.1`: only used to derive `DASHBOARD_AUTH_MODE` when that is unset (`true` → `session`, `false` → `off`). HTTP Basic Auth was removed |
+| `DASHBOARD_AUTH_MODE` | *(derived)* | `v1.6.1`: `off` (no sign-in; a synthetic `local-admin`; local development only, the operations check fails in `APP_ENV=prod`) or `session` (personal accounts and server-side sessions). Create the first admin with `python -m app.jobs.users create --username <name> --role admin --password-env <VAR>` |
+| `DASHBOARD_COOKIE_SECURE` | `auto` | `auto` sets the `Secure` attribute on the `rh_session` cookie unless `APP_ENV=dev`; `true` / `false` force it |
+| `DASHBOARD_SESSION_IDLE_MINUTES` | `30` | A session ends after this much inactivity |
+| `DASHBOARD_SESSION_MAX_HOURS` | `8` | A session ends this long after sign-in, active or not |
+| `DASHBOARD_REAUTH_MAX_AGE_SECONDS` | `300` | High-risk Dashboard actions (`STEP_UP_PERMISSIONS`) need a sign-in or password re-entry this recent; otherwise they redirect to `/dashboard/reauth` and do not run |
+| `DASHBOARD_CSRF_SECRET` | *(empty)* | `v1.6.1`: signs the short-lived sign-in form cookie `rh_login_csrf`. Empty uses a random per-process key; set the same value on every API replica that serves the Dashboard. Signed-in forms use a per-session secret instead |
+| `DASHBOARD_LOGIN_MAX_FAILURES` | `5` | Consecutive wrong passwords that lock an account |
+| `DASHBOARD_LOGIN_LOCKOUT_MINUTES` | `15` | Lock duration; during a lock even the right password is refused |
+| `DASHBOARD_PASSWORD_MIN_LENGTH` | `12` | Minimum password length (cannot be set below 12). Passwords may not equal the username or appear on the built-in common-password list; no character-class rules |
+| `DASHBOARD_PASSWORD_SCRYPT_N` / `_R` / `_P` | `32768` / `8` / `3` | scrypt cost (an OWASP Password Storage Cheat Sheet equivalent option, about 32 MiB per hash). `N` must be a power of 2. Hashes with a lower cost are upgraded at the next successful sign-in |
+| `DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD` | `admin` / `admin` | **Deprecated in `v1.6.1` and ignored** (Basic Auth was removed); the operations check `dashboard_auth_mode` warns while they differ from the defaults |
 | `QUOTA_ENABLED` | `true` | Enables Redis rate limiting and high-risk quotas |
 | `TENANT_REQUEST_LIMIT_PER_MINUTE` | `60` | Default sliding-window request quota per tenant |
 | `TENANT_HIGH_RISK_LIMIT_PER_HOUR` | `10` | Default hourly ceiling for high-risk requests per tenant |
@@ -46,6 +55,13 @@ Application configuration is loaded from environment variables and local `.env` 
 | `AUDIT_RETENTION_PURGE_BATCH_SIZE` | `500` | Maximum candidate runs per plan |
 | `AUDIT_RETENTION_PLAN_TTL_MINUTES` | `60` | A plan must be applied within this many minutes |
 | `FINOPS_LEDGER_RETENTION_DAYS` | `2555` | Age reported by `GET /v1/retention/finops-ledger-report`; the ledger is never deleted |
+| `AUDIT_CHAIN_ENABLED` | `true` | `v1.6.1`: append every governance event, review / approval decision, tombstone and checkpoint to the tamper-evident `audit_chain_entries` ledger in the same transaction. When `false` nothing is chained and verification later reports those rows as `unchained_record` |
+| `AUDIT_CHAIN_SIGNING_KEY_FILE` | *(empty)* | Ed25519 private key (unencrypted PEM file) used to sign checkpoints. Keep it apart from the database; empty = checkpoints are `unsigned` (operations check warns, fails in `APP_ENV=prod`) |
+| `AUDIT_CHAIN_SIGNING_KEY` | *(empty)* | The same key as a PEM string (secret); used only when `AUDIT_CHAIN_SIGNING_KEY_FILE` is empty |
+| `AUDIT_CHAIN_PUBLIC_KEYS_FILE` | *(empty)* | PEM file with the public keys accepted when verifying (keep old keys after a rotation); the current signing key is always accepted |
+| `DUAL_CONTROL_ACTIONS` | *(empty)* | `v1.6.1`: comma list of actions that need a second, signed-in person (Change Requests): `retention.apply`, `legal_hold.release`, `judge.activate`, `evaluation_policy.protected_paths` (relaxations only). Empty = every action runs at once (pre-`v1.6.1` behaviour). Unknown names are ignored and warned about by `dual_control_configured`, which also warns in `APP_ENV=prod` while `retention.apply` or `legal_hold.release` is missing |
+| `DUAL_CONTROL_REQUEST_TTL_HOURS` | `24` | Hours a pending change request stays approvable (`retention.apply` also stops at the plan's own expiry) |
+| `AUDIT_CHAIN_VERIFY_MAX_ENTRIES` | `5000` | Entries checked per online verification call (API / Dashboard); the CLI has no limit |
 | `SANDBOX_BACKEND` | `simulated` | `v1.6.0`: sandbox backend; `simulated` is the only option (nothing is executed). Unknown values fail closed |
 | `SANDBOX_HIGH_RISK_THRESHOLD` | *(unset)* | Risk score at or above which `SANDBOX_MIN_ISOLATION_HIGH_RISK` is required; unset or empty uses `DEFAULT_RISK_THRESHOLD` |
 | `SANDBOX_MIN_ISOLATION_DEFAULT` | `container` | Required isolation for other runs (`process`, `container`, `gvisor`, `microvm`); record-only in `v1.6.0` |
@@ -123,7 +139,7 @@ Application configuration is loaded from environment variables and local `.env` 
 | `EVALUATION_JUDGE_KEY_ENV_ALLOWLIST` | *(empty)* | Comma-separated exact variable names allowed as `api_key_env` besides `*_API_KEY` |
 | `EVALUATION_JUDGE_BREAKER_FAILURE_THRESHOLD` | `3` | Consecutive judge timeouts / errors that open a profile's circuit breaker |
 | `EVALUATION_JUDGE_BREAKER_TTL_SECONDS` | `300` | How long a judge breaker stays open before the next call retries (half-open) |
-| `EVALUATION_JUDGE_DASHBOARD_EDITING` | `auto` | `auto`: Dashboard may edit judge profiles only with `DASHBOARD_AUTH_ENABLED=true` and non-default credentials; `off`: read-only; `insecure_dev`: always editable (local development only, red warning) |
+| `EVALUATION_JUDGE_DASHBOARD_EDITING` | `auto` | `auto`: Dashboard may edit judge profiles only with Dashboard sign-in on (`DASHBOARD_AUTH_MODE=session`, `v1.6.1`); `off`: read-only; `insecure_dev`: always editable while sign-in is off (local development only, red warning), ignored in `session` mode |
 | `TOOL_BREAKER_FAILURE_THRESHOLD` | `3` | Consecutive worker execution failures (`1`–`100`) before a tool's circuit breaker automatically trips to `open` |
 | `TOOL_BREAKER_TTL_SECONDS` | `300` | Default TTL in seconds (`30`–`86400`) for an open tool circuit breaker in Redis |
 
@@ -144,14 +160,14 @@ Application configuration is loaded from environment variables and local `.env` 
 ## Production Security Recommendations
 
 1. **Disable Bootstrap Keys**: Set `AUTH_ENABLED=true` and provision hashed API keys in the PostgreSQL database via `/v1/tenants/{tenant_id}/api-keys`. Remove fallback `API_KEYS` from production environment files.
-2. **Dashboard Security**: Set `DASHBOARD_AUTH_ENABLED=true` and supply high-entropy credentials via enterprise secret managers.
+2. **Dashboard Security**: Set `DASHBOARD_AUTH_MODE=session`, create personal accounts with `python -m app.jobs.users` (first admin) and `/dashboard/admin/users`, and serve the Dashboard over HTTPS so the `Secure` session cookie is sent.
 3. **Fail-Closed Thresholds**: Ensure `RELEASE_GATE_FAIL_ON_BOOTSTRAP_KEYS_IN_PROD=true` in `APP_ENV=prod`.
 
 ## Judge Profiles (`v1.5.11`, activation since `v1.5.12`)
 
 Either copy `config/judge_profiles.example.yaml` to `config/judge_profiles.yaml` and set `EVALUATION_JUDGE_PROFILE` (the API probes it at startup and uses it only if the probe succeeds), or create the profile on `/dashboard/judge-profiles` from a template, **Test** it and **Activate** it. Without either, the rule-based judge is used. Fields and semantics: [`docs/evaluation.md`](evaluation.md) §13 and §15.
 
-- **Dashboard editing**: enable Dashboard Basic Auth with your own credentials (`DASHBOARD_AUTH_ENABLED=true`, non-default `DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD`), or set `EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev` on a local machine. Keys are never typed into the page: export them as environment variables named `*_API_KEY` and reference the name.
+- **Dashboard editing**: turn on Dashboard sign-in (`DASHBOARD_AUTH_MODE=session`), or set `EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev` on a local machine. Keys are never typed into the page: export them as environment variables named `*_API_KEY` and reference the name.
 - **Templates**: LM Studio (`http://host.docker.internal:1234/v1`, use the port LM Studio shows), Ollama (`:11434/v1`), OpenAI (`OPENAI_API_KEY`), Gemini (`GEMINI_API_KEY`), DeepSeek (`DEEPSEEK_API_KEY`) and Anthropic (native, `ANTHROPIC_API_KEY`, `max_output_tokens: 4000`). Local templates default to `execution: background` and `pricing_provider: qa_local`; cloud templates to `external: true` and `max_retries: 2`. Model names are examples.
 
 - **LM Studio (local)**: load the model, start the server (Developer tab) and use the port shown under *API Usage*. From the containers use `http://host.docker.internal:<port>/v1` (do not use the `169.254.x.x` address LM Studio may show; link-local addresses are treated as external). For reasoning models (for example Qwen3.5) give reasoning room with `max_output_tokens` ≈ 2000 and a longer `timeout_seconds` (better judgement, ~2.3x slower); set `reasoning_effort: none` only for a fast, weaker profile (`local-small-fast` in the example). Use `execution: background` for slow CPU inference and create zero-cost pricing with **Zero-cost pricing** on `/dashboard/benchmark#judge-profiles`.

@@ -17,7 +17,7 @@ RewardHacking provides deep observability across API gateways, background worker
 | `agent_requests_total` | Counter | `status` | Agent task submissions partitioned by status (`queued`, `awaiting_approval`, `denied`) |
 | `agent_policy_risk_score` | Histogram | None | Distribution of computed policy risk scores (0.0 to 1.0) |
 | `agent_policy_decisions_total` | Counter | `status` | Decisions categorized by policy outcome |
-| `agent_prompt_guard_flags_total`| Counter | `flag` | Trigger counts for prompt injection & Classical Chinese guard flags |
+| `agent_prompt_guard_flags_total`| Counter | `flag` | Trigger counts for prompt-guard flags (English patterns, `classical_*`, `zh_*`, `sensitive_term_mention`, `classical_style_task_mismatch`) |
 | `agent_control_plane_steps_total`| Counter | `step_type`, `status` | Pre-execution steps generated during planning |
 | `agent_worker_jobs_total` | Counter | `status` | Worker task executions partitioned by outcome (`completed`, `failed`) |
 | `agent_worker_duration_seconds` | Histogram | None | Execution duration for bounded tool workers |
@@ -53,6 +53,11 @@ RewardHacking provides deep observability across API gateways, background worker
 | `agent_evaluation_judge_latency_seconds` | Histogram | `provider` | Judge primary-provider latency (observed for network providers) |
 | `agent_evaluation_judge_tokens_total` | Counter | `provider`, `direction` | Judge tokens (`input`, `output`) |
 | `agent_evaluation_review_sampling_total` | Counter | `slice`, `decision`, `reason` | Sampling decisions for rule-passed runs (`threshold` / `random` / `none`; `sampled` / `skipped` / `not_selected`; skip reason or `none`) |
+| `dashboard_logins_total` | Counter | `result` | `v1.6.1` Dashboard sign-in attempts: `success`, `unknown_user`, `wrong_password`, `lockout`, `locked`, `disabled` (internal detail; the sign-in page always shows one generic message) |
+| `audit_chain_entries_total` | Counter | `entry_type` | `v1.6.1` audit chain entries appended (`genesis`, `governance_event`, `review_decision`, `approval_decision`, `tombstone`, `checkpoint`) |
+| `change_requests_total` | Counter | `action`, `status` | `v1.6.1` change request transitions (`created`, `approved`, `rejected`, `executed`, `failed`, `expired`, `cancelled`) per action; each one is also a `change_request.<status>` governance event |
+| `audit_chain_verify_failures_total` | Counter | `kind` | `v1.6.1` verification findings that fail the check (`hash_mismatch`, `chain_break`, `missing_source`, `unchained_record`, `checkpoint_signature_invalid`), from the CLI, API, Dashboard and the operations check |
+| `dashboard_access_denied_total` | Counter | `reason` | `v1.6.1` requests refused by the Dashboard access layer (`sign_in_required`, `password_change_required`, `missing_permission`, `tenant_scope`, `platform_view`, `permission_undeclared`, `csrf_token_invalid`, `reauth_required`, `reauth_failed`). Permission and signed-in CSRF refusals also write an `access.denied` governance event (at most one per session and permission per minute; CSRF uses the permission `csrf`); a refused sign-in form (`csrf_token_invalid` without a session) and re-authentication redirects write none |
 | `agent_evaluation_triage_precision_at_k` | Gauge | `ranking`, `k` | Latest benchmark triage precision@K (`rule_only`, `judge_only`, `combined`; `5`, `10`, `20`, `budget_0.01`, `budget_0.05`, `budget_0.10`) |
 
 ---

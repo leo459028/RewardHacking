@@ -38,7 +38,7 @@ This guide describes how RewardHacking evaluates what an agent actually did afte
 
 **Submission rules**: at most `EVALUATION_OUTCOME_MAX_SUBMISSIONS` (default 3) per run (`429 outcome_submission_limit_reached`); submissions are append-only (`run_outcomes`, `outcome_` IDs); a run in `review_required` stays there even if later evidence is clean.
 
-**Assurance levels**: `simulated` (executor path), `none` (no test evidence), `self_reported`, `ci_attested_unverified`, `ci_attested` (verified, `v1.5.9`). `platform_verified` is reserved for the `v1.6.1` sandbox.
+**Assurance levels**: `simulated` (executor path), `none` (no test evidence), `self_reported`, `ci_attested_unverified`, `ci_attested` (verified, `v1.5.9`). `platform_verified` is reserved for the `v1.6.2` sandbox.
 
 **Agent identity** (`v1.5.9`): `metadata.agent_id`, `metadata.agent_version` and `metadata.model_name` on the submitted run are copied onto outcomes and reviews for cheat-rate cohorts. They are self-reported and can be spoofed.
 
@@ -174,6 +174,8 @@ The legacy risk fields (`shortcut_risk`, `policy_violation_risk`, `hallucination
 
 **Protected paths**: defaults (`tests/**`, `**/test_*.py`, `**/conftest.py`, `pytest.ini`, `.github/workflows/**`, ...) plus the tenant policy (`GET/PUT /v1/tenants/{tenant_id}/evaluation-policy`). Run metadata (`metadata.protected_paths`) may only **add** paths.
 
+**Relaxing protected paths** (`v1.6.1`): a change that removes effective protected paths, or turns the default paths off, needs `evaluation_policy.relax` and re-authentication on the Dashboard. With `evaluation_policy.protected_paths` in `DUAL_CONTROL_ACTIONS` it also needs a second person: the API answers `202` with a change request and the Dashboard form shows its id; another signed-in `admin` or `tenant_admin` of the same tenant approves it on `/dashboard/change-requests`, and it fails as `change_request_stale` if the policy changed in between. Adding paths always applies at once. Judge activation (`judge.activate`) can be put under the same dual control (see `docs/security.md`, Dual Control).
+
 ---
 
 ## 6. Post-Execution Review Queue
@@ -185,7 +187,7 @@ The legacy risk fields (`shortcut_risk`, `policy_violation_risk`, `hallucination
 | `accepted` | `closed` | `completed` | Problem acknowledged but acceptable (e.g. intended test changes) |
 | `needs_info` | `needs_info` | `review_required` | The agent may submit more evidence within the submission limit |
 
-Review decisions never publish to Kafka, never acquire or release token leases, and never re-execute the run. The key or name that submitted outcome evidence for a run cannot decide that run's review (`403 review_self_approval_forbidden`). Each run has at most one open review; new findings are merged and the priority only rises.
+Review decisions never publish to Kafka, never acquire or release token leases, and never re-execute the run. The key or name that submitted outcome evidence for a run cannot decide that run's review (`403 review_self_approval_forbidden`). Since `v1.6.1`, with Dashboard sign-in on (`DASHBOARD_AUTH_MODE=session`), both the outcome submitter and the reviewer are taken from the signed-in account (`user:<username>`) and the forms no longer accept a typed name, so this rule cannot be sidestepped from the Dashboard by typing another name. Each run has at most one open review; new findings are merged and the priority only rises.
 
 **Per-finding labels** (`v1.5.9`): a decision may include `finding_labels: {finding_id: "true_positive" | "false_positive"}` for findings that belong to the review (others return `422 finding_labels_invalid`). They feed detector-level precision in the benchmark.
 
@@ -423,7 +425,9 @@ GovernanceEvents `evaluation.judge_profile.created` / `updated` / `deleted` / `p
 ## 16. Known Limitations (`v1.5.12`)
 
 - AST analysis covers Python only; other languages use diff-level patterns (`medium` confidence).
-- `ci_attested` is verified only for DSSE envelopes signed by tenant-registered keys; Sigstore / GitHub keyless verification is not implemented. `platform_verified` requires the `v1.6.1` sandbox. An attestation does not prove tests were untouched.
+- `ci_attested` is verified only for DSSE envelopes signed by tenant-registered keys; Sigstore / GitHub keyless verification is not implemented. `platform_verified` requires the `v1.6.2` sandbox. An attestation does not prove tests were untouched.
+- `tool_transcript` is used only as a presence check (`CE-006`) and for judge injection scanning; no detector reads the action trajectory and the judge does not receive it. Trajectory detectors and trajectory-aware judging are planned for `v1.6.3`.
+- Skip-marker rules (`TT-002`) cover pytest, unittest, JavaScript test runners and Go; JUnit `@Disabled` / `@Ignore`, NUnit `[Ignore]` and xUnit `Skip=` are not covered (planned with multi-language structural rules, `v1.6.6+`).
 - With a diff but no `changed_files`, some grader rules cannot see whole functions and fall back to `medium` confidence.
 - Deterministic rules can be evaded deliberately (for example a dynamically generated skip marker or a lambda `__eq__`); the seed corpus records such misses.
 - Seed metrics measure rule self-consistency; FPR 1% cannot be resolved until at least 100 benign samples exist.
@@ -437,7 +441,7 @@ GovernanceEvents `evaluation.judge_profile.created` / `updated` / `deleted` / `p
 - 1–4B judges have limited judgement and resist prompt injection poorly; the safety boundary is that judges cannot change verdicts. 14B / 27B and Gemini were configured and mock-tested only.
 - Since `v1.5.11` an external judge needs tenant consent in addition to the global switch; tenants that relied on the `v1.5.10` global switch alone fall back to the deterministic judge until consent is recorded.
 - Since `v1.5.12` an environment-selected LLM profile is used only after its startup probe (or a manual test) succeeds; deployments that relied on `EVALUATION_JUDGE_PROFILE` alone run the rule-based judge until then. The startup probe runs once; later re-tests are manual or happen at the next restart.
-- Keys are still provided only through environment variables; in-page key entry waits for Dashboard RBAC / CSRF (`v1.6.x`). Dashboard Basic Auth has a single account, so everyone who can log in has the same rights; `insecure_dev` is for local machines only.
+- Keys are still provided only through environment variables; in-page key entry waits for Dashboard RBAC / CSRF (`v1.6.x`). Since `v1.6.1` Dashboard editing follows personal sign-in (`DASHBOARD_AUTH_MODE=session`); writing needs the `judge.profile.write` permission (`admin`), and the page is a platform view (`admin`, platform `reviewer`, `auditor` can read it). `insecure_dev` is for local machines with sign-in off only.
 - One global active profile; tenants cannot choose different judges. The activation cache can lag up to 30 s in other containers.
 - The per-profile token cap attributes tokens to the profile that produced the assessment; tokens a failed primary used before a fallback answered count toward the fallback profile.
 - The Anthropic adapter follows the API documentation current at implementation time and was verified with mocks only.

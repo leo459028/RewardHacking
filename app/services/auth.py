@@ -58,7 +58,9 @@ def require_role(auth_context: AuthContext, *roles: str) -> None:
         return
     if auth_context.role == "super_admin" and "admin" in roles:
         return
-    if auth_context.role in {"reviewer", "tenant_admin", "finops_admin"} and "viewer" in roles:
+    # v1.6.1 D21: ``auditor`` is a read-only key role and is treated as ``viewer`` (audit-chain endpoints add it
+    # explicitly in P5); it never satisfies a write endpoint.
+    if auth_context.role in {"reviewer", "tenant_admin", "finops_admin", "auditor"} and "viewer" in roles:
         return
     if auth_context.role not in roles:
         raise auth_error(403, "insufficient_role", "API key role is not allowed for this operation.")

@@ -24,6 +24,7 @@ from app.models.worker_attempt import WorkerAttempt
 from app.observability.metrics import INCIDENTS_TOTAL
 from app.schemas.agent import AgentRequest
 from app.schemas.audit import ApprovalDecisionRequest
+from app.services import audit_chain
 from app.services.control_plane import get_execution_plan_for_run, sync_execution_plan_on_approval
 from app.services.governance_audit import persist_governance_event as persist_governance_event
 from app.services.orchestrator import OrchestrationResult
@@ -726,15 +727,15 @@ async def apply_approval_decision(
         }
     )
     summary["approval"] = approval
-    session.add(
-        ApprovalEvent(
-            run_id=run.run_id,
-            status=decision.decision,
-            reviewer=decision.reviewer,
-            reason=decision.reason,
-            expired=bool(approval.get("expired", False)),
-        )
+    approval_event = ApprovalEvent(
+        run_id=run.run_id,
+        status=decision.decision,
+        reviewer=decision.reviewer,
+        reason=decision.reason,
+        expired=bool(approval.get("expired", False)),
     )
+    session.add(approval_event)
+    audit_chain.track(session, audit_chain.APPROVAL_DECISION, approval_event)  # v1.6.1 D30 / Q8
 
     events = list(summary.get("event_timeline", []))
     events.append(
@@ -842,6 +843,7 @@ async def expire_stale_approvals(session: AsyncSession) -> list[str]:
         event.status = "expired"
         if not event.reviewer:
             event.reviewer = "system_ttl_sweeper"
+        audit_chain.track(session, audit_chain.APPROVAL_DECISION, event)  # v1.6.1: the TTL expiry is a decision too
         run = await get_run(session, event.run_id)
         if run is not None and run.status == "awaiting_approval":
             reason = "Approval TTL expired without reviewer decision."
@@ -986,14 +988,19 @@ async def resolve_dlq_run(
     return attempts
 
 
-async def dashboard_summary(session: AsyncSession) -> DashboardSummary:
-    total_runs = await session.scalar(select(func.count()).select_from(AgentRun)) or 0
-    average_risk_score = await session.scalar(select(func.avg(AgentRun.risk_score))) or 0.0
+async def dashboard_summary(session: AsyncSession, *, tenant_id: str | None = None) -> DashboardSummary:
+    """Overview counts; ``tenant_id`` limits them to one tenant (v1.6.1 D22, tenant-bound Dashboard users)."""
+
+    def scoped(stmt):
+        return stmt.where(AgentRun.tenant_id == tenant_id) if tenant_id else stmt
+
+    total_runs = await session.scalar(scoped(select(func.count()).select_from(AgentRun))) or 0
+    average_risk_score = await session.scalar(scoped(select(func.avg(AgentRun.risk_score)))) or 0.0
 
     async def count_status(status: str) -> int:
         return (
             await session.scalar(
-                select(func.count()).select_from(AgentRun).where(AgentRun.status == status)
+                scoped(select(func.count()).select_from(AgentRun).where(AgentRun.status == status))
             )
             or 0
         )
@@ -1008,7 +1015,7 @@ async def dashboard_summary(session: AsyncSession) -> DashboardSummary:
         awaiting_approval=await count_status("awaiting_approval"),
         failed=await count_status("failed"),
         average_risk_score=round(float(average_risk_score), 3),
-        recent_incidents=await list_incidents(session, limit=5),
+        recent_incidents=await list_incidents(session, tenant_id=tenant_id, limit=5),
     )
 
 

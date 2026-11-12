@@ -15,17 +15,15 @@ Safety rules (see ``docs/plan`` D9-D16):
 
 from __future__ import annotations
 
-import hashlib
-import json
 import uuid
-from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.core import tracing
+from app.core.digests import canonical_json, sha256_hex
 from app.core.config import Settings
 from app.models.agent_run import AgentRun
 from app.models.approval_event import ApprovalEvent
@@ -131,25 +129,7 @@ def _iso(value: datetime | None) -> str | None:
     return value.astimezone(timezone.utc).isoformat() if value else None
 
 
-def _json_default(value: Any) -> Any:
-    if isinstance(value, datetime):
-        return _iso(value)
-    if isinstance(value, date):
-        return value.isoformat()
-    if isinstance(value, Decimal):
-        return format(value, "f")
-    if isinstance(value, (bytes, bytearray)):
-        return hashlib.sha256(bytes(value)).hexdigest()
-    return str(value)
-
-
-def canonical_json(payload: Any) -> str:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=_json_default)
-
-
-def sha256_hex(payload: Any) -> str:
-    raw = payload if isinstance(payload, str) else canonical_json(payload)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+# canonical_json() / sha256_hex() moved to app.core.digests in v1.6.1 (plan D29); re-exported here.
 
 
 def row_digest(row: Any) -> str:
@@ -684,6 +664,10 @@ def tombstone_summary(tombstone: RetentionTombstone) -> dict[str, Any]:
         "record_counts": dict(tombstone.record_counts or {}),
         "content_digest": tombstone.content_digest,
         "policy_version": (tombstone.policy_snapshot or {}).get("policy_version", ""),
+        # v1.6.1 P5 (feature eight): written back by the audit chain in the purge transaction
+        "chain_version": tombstone.chain_version or "",
+        "prev_hash": tombstone.prev_hash,
+        "entry_hash": tombstone.entry_hash,
     }
 
 

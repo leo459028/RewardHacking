@@ -1,6 +1,6 @@
 [project]
 name = "reward-hacking-guardrail"
-version = "1.6.0"
+version = "1.6.1"
 description = "Production-grade runtime guardrails, human-in-the-loop governance, and FinOps for autonomous AI agents"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -48,7 +48,7 @@ root_packages = ["app"]
 include_external_packages = false
 
 [[tool.importlinter.contracts]]
-name = "Post-execution review never publishes to Kafka, re-dispatches runs or touches token leases (AGENTS.md 2.3)"
+name = "Post-execution review and change requests never publish to Kafka, re-dispatch runs or touch token leases (AGENTS.md 2.3, v1.6.1 D43)"
 type = "forbidden"
 source_modules = [
     "app.services.review_queue",
@@ -56,6 +56,7 @@ source_modules = [
     "app.services.evaluation",
     "app.services.judge_triage",
     "app.services.review_sampling",
+    "app.services.change_requests",
 ]
 forbidden_modules = [
     "app.services.events",

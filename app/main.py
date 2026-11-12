@@ -4,9 +4,11 @@ from time import perf_counter
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
+from app.api.routers.audit_chain import router as audit_chain_router
 from app.api.routers.benchmark import router as benchmark_router
+from app.api.routers.change_requests import router as change_requests_router
 from app.api.routers.evaluations import router as evaluations_router
 from app.api.routers.finops import router as finops_router
 from app.api.routers.operations import router as operations_router
@@ -18,16 +20,30 @@ from app.core import trace_context, tracing
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.infra.postgres import close_engine, init_engine
-from app.services import judge_activation
+from app.services import audit_chain, change_requests, judge_activation
 from app.services.retention import RetentionError
 from app.services.evaluation.judges.profiles import load_profiles
 from app.observability.metrics import HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_TOTAL
+from app.ui.routers.access import router as access_ui_router
+from app.ui.routers.audit_chain import router as audit_chain_ui_router
 from app.ui.routers.benchmark import router as benchmark_ui_router
+from app.ui.routers.change_requests import router as change_requests_ui_router
 from app.ui.routers.judges import router as judges_ui_router
 from app.ui.routers.operations import router as operations_ui_router
 from app.ui.routers.retention import router as retention_ui_router
 from app.ui.routers.reviews import router as reviews_ui_router
 from app.ui.routes import router as ui_router
+from app.ui.security import (
+    ACCOUNT_PATH,
+    DashboardForbidden,
+    DashboardSignInRequired,
+    LoginCsrfInvalid,
+    PasswordChangeRequired,
+    StepUpRequired,
+    login_redirect_url,
+    principal_of,
+    reauth_redirect_url,
+)
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -49,10 +65,33 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="1.6.0",
+    version="1.6.1",
     description="Guardrail service for preventing reward hacking in agent systems.",
     lifespan=lifespan,
 )
+
+
+# v1.6.1 D27: response headers for every /dashboard response (the /v1 API is unchanged).
+DASHBOARD_SECURITY_HEADERS = {
+    "Cache-Control": "no-store",
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    "Referrer-Policy": "same-origin",
+    "X-Content-Type-Options": "nosniff",
+}
+
+
+def _is_dashboard_path(path: str) -> bool:
+    return path == "/dashboard" or path.startswith("/dashboard/")
+
+
+@app.middleware("http")
+async def dashboard_security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    if _is_dashboard_path(request.url.path):
+        for name, value in DASHBOARD_SECURITY_HEADERS.items():
+            response.headers[name] = value
+    return response
 
 
 @app.middleware("http")
@@ -145,6 +184,83 @@ async def retention_exception_handler(request: Request, exc: RetentionError):
     return JSONResponse(status_code=exc.status_code, content={"error": error})
 
 
+@app.exception_handler(audit_chain.AuditChainError)
+async def audit_chain_exception_handler(request: Request, exc: audit_chain.AuditChainError):
+    """v1.6.1 P5: refused audit-chain operations keep the shared ``{"error": {"code"}}`` shape."""
+    return JSONResponse(status_code=exc.status_code, content={"error": {"code": exc.code, "message": exc.message}})
+
+
+@app.exception_handler(change_requests.ChangeRequestError)
+async def change_request_exception_handler(request: Request, exc: change_requests.ChangeRequestError):
+    """v1.6.1 P6: refused change-request operations keep the shared ``{"error": {"code"}}`` shape."""
+    error = {"code": exc.code, "message": exc.message}
+    if exc.details:
+        error["details"] = jsonable_encoder(exc.details)
+    return JSONResponse(status_code=exc.status_code, content={"error": error})
+
+
+@app.exception_handler(DashboardSignInRequired)
+async def dashboard_sign_in_required_handler(request: Request, exc: DashboardSignInRequired):
+    """v1.6.1 feature five: pages redirect to the sign-in page; any other method gets 401 and nothing runs."""
+    if request.method in {"GET", "HEAD"}:
+        return RedirectResponse(login_redirect_url(exc.next_path), status_code=303)
+    return JSONResponse(
+        status_code=401,
+        content={"error": {"code": "dashboard_sign_in_required", "message": "Sign in to the Dashboard first."}},
+    )
+
+
+@app.exception_handler(PasswordChangeRequired)
+async def password_change_required_handler(request: Request, exc: PasswordChangeRequired):
+    """v1.6.1 D13: until the password is changed, only the account page and sign-out are reachable."""
+    if request.method in {"GET", "HEAD"}:
+        return RedirectResponse(f"{ACCOUNT_PATH}?must_change=1", status_code=303)
+    return JSONResponse(
+        status_code=403,
+        content={"error": {"code": "password_change_required", "message": "Change your password first."}},
+    )
+
+
+@app.exception_handler(LoginCsrfInvalid)
+async def login_csrf_invalid_handler(request: Request, exc: LoginCsrfInvalid):
+    """v1.6.1 D24: the sign-in form came without a valid token; show it again (403) with a fresh one."""
+    from app.ui.routers.access import expired_login_form
+
+    return expired_login_form(request, exc.next_path)
+
+
+@app.exception_handler(StepUpRequired)
+async def step_up_required_handler(request: Request, exc: StepUpRequired):
+    """v1.6.1 D26: send the user to re-authenticate; the action did not run and is not replayed afterwards."""
+    return RedirectResponse(reauth_redirect_url(exc.next_path), status_code=303)
+
+
+@app.exception_handler(DashboardForbidden)
+async def dashboard_forbidden_handler(request: Request, exc: DashboardForbidden):
+    """v1.6.1 P3 (feature six): GET / HEAD render the 403 page naming the permission; other methods get a 403 JSON
+    error. The handler ran nothing: the refusal is raised before the route body or before its first write."""
+    if request.method in {"GET", "HEAD"}:
+        from app.ui.routes import templates
+
+        return templates.TemplateResponse(
+            request,
+            "forbidden.html",
+            {"permission": exc.permission, "reason": exc.reason, "principal": principal_of(request), "active": ""},
+            status_code=403,
+        )
+    return JSONResponse(
+        status_code=403,
+        content={
+            "error": {
+                "code": exc.code,
+                "message": "This Dashboard action is not allowed for your account.",
+                "permission": exc.permission,
+                "reason": exc.reason,
+            }
+        },
+    )
+
+
 @app.exception_handler(RunPurgedError)
 async def run_purged_exception_handler(request: Request, exc: RunPurgedError):
     """v1.6.0 D17: a purged run answers 410 with its hash-only tombstone summary."""
@@ -177,9 +293,14 @@ app.include_router(benchmark_router)
 app.include_router(operations_router)
 app.include_router(retention_router)
 app.include_router(sandbox_router)
+app.include_router(audit_chain_router)
+app.include_router(change_requests_router)
+app.include_router(access_ui_router)
 app.include_router(ui_router)
 app.include_router(reviews_ui_router)
 app.include_router(benchmark_ui_router)
 app.include_router(judges_ui_router)
 app.include_router(operations_ui_router)
 app.include_router(retention_ui_router)
+app.include_router(audit_chain_ui_router)
+app.include_router(change_requests_ui_router)

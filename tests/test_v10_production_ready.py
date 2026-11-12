@@ -54,6 +54,47 @@ def reset_v10_settings(monkeypatch, **env):
     get_settings.cache_clear()
 
 
+def _seed_dashboard_admin(session_factory) -> None:
+    import asyncio
+    import secrets
+
+    from app.services.access import users
+
+    async def scenario():
+        async with session_factory() as session:
+            await users.create_user(
+                session, get_settings(), username="gate-admin", password="pw-" + secrets.token_hex(8), role="admin", actor="test"
+            )
+            await session.commit()
+
+    asyncio.run(scenario())
+
+
+def _use_audit_chain_key(monkeypatch) -> None:
+    """v1.6.1 D33 / Q7: production needs signed audit chain checkpoints (key generated at run time)."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    pem = ed25519.Ed25519PrivateKey.generate().private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    )
+    monkeypatch.setenv("AUDIT_CHAIN_SIGNING_KEY", pem.decode("ascii"))
+    get_settings.cache_clear()
+
+
+def _signed_checkpoint(session_factory) -> None:
+    import asyncio
+
+    from app.services import audit_chain
+
+    async def scenario():
+        async with session_factory() as session:
+            result = await audit_chain.create_checkpoint(session, get_settings(), actor="test")
+            assert result.created and result.checkpoint.status == "signed"
+
+    asyncio.run(scenario())
+
+
 def _create_active_tenant_key(client: TestClient) -> None:
     tenant = client.post(
         "/v1/tenants",
@@ -133,13 +174,21 @@ def test_prod_readiness_passes_with_fresh_safety_regression_evidence(
         AUTH_ENABLED="false",
         API_KEYS="",
         QUOTA_ENABLED="false",
+        # v1.6.1 D9: a production gate also needs Dashboard sign-in with an active admin account.
+        DASHBOARD_AUTH_MODE="session",
+        DASHBOARD_PASSWORD_SCRYPT_N="16",
+        # v1.6.1 D38 (Q4): production should put purge apply and legal-hold release under dual control.
+        DUAL_CONTROL_ACTIONS="retention.apply,legal_hold.release",
     )
+    _use_audit_chain_key(monkeypatch)
+    _seed_dashboard_admin(session_factory)
 
     with v10_client(session_factory) as client:
         _create_active_tenant_key(client)
         _post_evidence(client, "backup_restore_drill")
         _post_evidence(client, "secret_rotation")
         _post_evidence(client, "safety_regression")
+        _signed_checkpoint(session_factory)
 
         readiness = client.get("/v1/operations/readiness")
         gate = client.post(

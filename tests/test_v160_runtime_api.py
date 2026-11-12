@@ -319,16 +319,16 @@ def test_v160_new_and_moved_paths_are_served_by_domain_routers():
 
 
 def test_v160_release_version_anchors():
-    """Exact v1.6.0 anchors (earlier release tests only check the series)."""
+    """Exact anchors moved to the latest release test (``tests/test_v161_release.py``); this keeps the 1.6.x series."""
     from pathlib import Path
 
     from app.services.finops import FINOPS_CALCULATION_VERSION
 
     root = Path(__file__).resolve().parents[1]
-    assert app.version == "1.6.0" and FINOPS_CALCULATION_VERSION == "v1.6.0"
-    assert 'version = "1.6.0"' in (root / "pyproject.toml").read_text(encoding="utf-8")
-    assert "(v1.6.0)" in (root / "scripts" / "security_check.py").read_text(encoding="utf-8")
-    assert 'value="v1.6.0"' in (root / "app" / "ui" / "templates" / "operations.html").read_text(encoding="utf-8")
-    assert 'release_version", "v1.6.0"' in (root / "app" / "ui" / "routers" / "operations.py").read_text(encoding="utf-8")
+    assert app.version.startswith("1.6.") and FINOPS_CALCULATION_VERSION.startswith("v1.6.")
+    assert 'version = "1.6.' in (root / "pyproject.toml").read_text(encoding="utf-8")
+    assert "(v1.6." in (root / "scripts" / "security_check.py").read_text(encoding="utf-8")
+    assert 'value="v1.6.' in (root / "app" / "ui" / "templates" / "operations.html").read_text(encoding="utf-8")
+    assert 'release_version", "v1.6.' in (root / "app" / "ui" / "routers" / "operations.py").read_text(encoding="utf-8")
     browser = (root / "scripts" / "browser_manual_test.py").read_text(encoding="utf-8")
-    assert 'assert release_ver == "v1.6.0"' in browser and "Scenario 11 (v1.6.0)" in browser
+    assert 'assert release_ver == "v1.6.' in browser and "Scenario 11 (v1.6.0)" in browser

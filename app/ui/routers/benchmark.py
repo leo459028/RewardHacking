@@ -1,7 +1,8 @@
 """v1.5.9 Dashboard: labeled benchmark, detector measurement, honeypot probes, cheat rates and CI attestation keys.
 
-All signals shown here are monitor-only. The dashboard is an admin surface (Basic Auth), so it
-shows honeypot provenance that the operator API role never sees.
+All signals shown here are monitor-only. Like the API, the page is open to admin, tenant_admin and reviewer (plus the
+read-only auditor, v1.6.1 D21) and not to operator, because it shows honeypot provenance. It is a platform view in
+v1.6.1 (cross-tenant runs, honeypot results and cheat rates), so tenant-bound users use the API instead.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from app.core.config import get_settings
 from app.infra.postgres import get_session
 from app.schemas.benchmark import HoneypotLaunchRequest
 from app.services import benchmark as bench
+from app.services import change_requests
 from app.services import honeypot as hp
 from app.services.attestation_keys import (
     AttestationKeyServiceError,
@@ -37,11 +39,12 @@ from app.services.judge_background import pending_summary, sweep_pending_triage
 from app.services.evaluation.judges.profiles import resolve_active_profile
 from app.services.judge_profiles_admin import JudgeProfileAdminError, ensure_zero_cost_pricing, probe_profile, profiles_view
 from app.services.orchestrator import AgentOrchestrator
-from app.services.review_queue import get_evaluation_policy, policy_to_dict, upsert_evaluation_policy
+from app.services.review_queue import get_evaluation_policy, policy_to_dict
 from app.services.run_state import RunStateStore
 from app.ui.routes import dashboard_auth, templates
+from app.ui.security import actor_for, csrf_protect, ensure_tenant_access, needs, principal_of
 
-router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth)])
+router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth), Depends(csrf_protect)])
 CURVE_WIDTH = 320
 CURVE_HEIGHT = 160
 DASHBOARD_ADMIN = AuthContext(enabled=False)
@@ -69,7 +72,7 @@ def audit_curve_points(curve: list[dict[str, Any]]) -> dict[str, Any]:
     return {"points": " ".join(f"{x:.1f},{y:.1f}" for x, y in coords), "dots": dots, "max_budget": max_budget}
 
 
-@router.get("/dashboard/benchmark", response_class=HTMLResponse)
+@router.get("/dashboard/benchmark", response_class=HTMLResponse, dependencies=needs("benchmark.view", view="benchmark"))
 async def dashboard_benchmark(request: Request, session: AsyncSession = Depends(get_session)):
     params = request.query_params
     settings = get_settings()
@@ -163,7 +166,7 @@ def _bounded_int(value: object, *, default: int, low: int, high: int) -> int:
     return max(low, min(high, int(text))) if text.isdigit() else default
 
 
-@router.post("/dashboard/benchmark/runs", response_class=HTMLResponse)
+@router.post("/dashboard/benchmark/runs", response_class=HTMLResponse, dependencies=needs("benchmark.manage", view="benchmark"))
 async def dashboard_benchmark_run(request: Request, session: AsyncSession = Depends(get_session)):
     form = await request.form()
     tenant_id = str(form.get("tenant_id", "default")).strip() or "default"
@@ -177,7 +180,7 @@ async def dashboard_benchmark_run(request: Request, session: AsyncSession = Depe
             corpora=corpora,
             split=split if split in {"all", "dev", "holdout"} else "all",
             exclude_accepted_behavior=str(form.get("exclude_accepted_behavior", "")).lower() in {"on", "true", "1"},
-            created_by=str(form.get("created_by", "dashboard-admin")).strip() or "dashboard-admin",
+            created_by=actor_for(request, str(form.get("created_by", "dashboard-admin")).strip() or "dashboard-admin"),
             judge_provider=str(form.get("judge_provider", "none") or "none"),
             max_judge_samples=_bounded_int(form.get("max_judge_samples"), default=100, low=1, high=5000),
             judge_profiles=[str(item) for item in form.getlist("judge_profiles") if str(item).strip()] or None,
@@ -191,17 +194,22 @@ async def dashboard_benchmark_run(request: Request, session: AsyncSession = Depe
     return _redirect(f"/dashboard/benchmark?tenant_id={quote(tenant_id)}&run={run.benchmark_run_id}", message=message, anchor="benchmark-runs")
 
 
-@router.post("/dashboard/reviews/{review_id}/export-benchmark", response_class=HTMLResponse)
+@router.post("/dashboard/reviews/{review_id}/export-benchmark", response_class=HTMLResponse, dependencies=needs("benchmark.manage"))
 async def dashboard_review_export(request: Request, review_id: str, session: AsyncSession = Depends(get_session)):
+    from app.services.review_queue import get_review
+
     form = await request.form()
     scope = str(form.get("scope", "tenant") or "tenant")
+    target = await get_review(session, review_id)
+    if target is not None:
+        await ensure_tenant_access(request, session, target.tenant_id, permission="benchmark.manage")
     try:
         sample = await bench.export_review(
             session,
             review_id=review_id,
             scope=scope,
-            allow_global=True,
-            actor=str(form.get("exported_by", "dashboard-admin")).strip() or "dashboard-admin",
+            allow_global=principal_of(request).is_platform,  # D22: tenant-bound users export to their tenant only
+            actor=actor_for(request, str(form.get("exported_by", "dashboard-admin")).strip() or "dashboard-admin"),
         )
     except bench.BenchmarkError as exc:
         suffix = f" ({exc.extra['sample_id']})" if exc.extra.get("sample_id") else ""
@@ -209,7 +217,7 @@ async def dashboard_review_export(request: Request, review_id: str, session: Asy
     return _redirect(f"/dashboard/reviews/{review_id}", message=f"Exported to benchmark as {sample.sample_id} ({sample.label}, {sample.corpus}).")
 
 
-@router.post("/dashboard/honeypots/launch", response_class=HTMLResponse)
+@router.post("/dashboard/honeypots/launch", response_class=HTMLResponse, dependencies=needs("benchmark.manage", view="benchmark"))
 async def dashboard_honeypot_launch(
     request: Request,
     orchestrator: AgentOrchestrator = Depends(get_orchestrator),
@@ -232,7 +240,7 @@ async def dashboard_honeypot_launch(
             agent_id=str(form.get("agent_id", "")).strip(),
             agent_version=str(form.get("agent_version", "")).strip(),
             model_name=str(form.get("model_name", "")).strip(),
-            launched_by=str(form.get("launched_by", "dashboard-admin")).strip() or "dashboard-admin",
+            launched_by=actor_for(request, str(form.get("launched_by", "dashboard-admin")).strip() or "dashboard-admin"),
         )
         result = await post_honeypot_launch(
             probe_id,
@@ -256,7 +264,7 @@ async def dashboard_honeypot_launch(
     return _redirect(f"/dashboard/benchmark?tenant_id={quote(tenant_id)}&launched={result['run_id']}", message=message, anchor="honeypots")
 
 
-@router.get("/dashboard/honeypots/{probe_id}/package", response_class=HTMLResponse)
+@router.get("/dashboard/honeypots/{probe_id}/package", response_class=HTMLResponse, dependencies=needs("honeypots.package", view="benchmark"))
 async def dashboard_honeypot_package(request: Request, probe_id: str, session: AsyncSession = Depends(get_session)):
     probe = await hp.get_probe(session, probe_id)
     if probe is None:
@@ -268,7 +276,7 @@ async def dashboard_honeypot_package(request: Request, probe_id: str, session: A
     )
 
 
-@router.post("/dashboard/benchmark/imports/inspect", response_class=HTMLResponse)
+@router.post("/dashboard/benchmark/imports/inspect", response_class=HTMLResponse, dependencies=needs("benchmark.import", view="benchmark"))
 async def dashboard_inspect_import(request: Request, session: AsyncSession = Depends(get_session)):
     from app.services.inspect_import import import_inspect_log
 
@@ -286,7 +294,7 @@ async def dashboard_inspect_import(request: Request, session: AsyncSession = Dep
             score_threshold=float(str(form.get("score_threshold", "1") or "1")),
             hacking_category=str(form.get("hacking_category", "special_casing") or "special_casing"),
             dry_run=dry_run,
-            actor="dashboard-admin",
+            actor=actor_for(request, "dashboard-admin"),
         )
     except bench.BenchmarkError as exc:
         return _redirect(target, error=f"Inspect import rejected: {exc.detail}", anchor="inspect-import")
@@ -301,7 +309,7 @@ async def dashboard_inspect_import(request: Request, session: AsyncSession = Dep
     return _redirect(target, message=message, anchor="inspect-import")
 
 
-@router.post("/dashboard/benchmark/attestation-keys", response_class=HTMLResponse)
+@router.post("/dashboard/benchmark/attestation-keys", response_class=HTMLResponse, dependencies=needs("benchmark.manage", view="benchmark"))
 async def dashboard_attestation_key_create(request: Request, session: AsyncSession = Depends(get_session)):
     form = await request.form()
     tenant_id = str(form.get("tenant_id", "default")).strip() or "default"
@@ -315,20 +323,20 @@ async def dashboard_attestation_key_create(request: Request, session: AsyncSessi
             algorithm=str(form.get("algorithm", "ed25519") or "ed25519"),
             public_key_pem=str(form.get("public_key_pem", "")),
             allowed_subjects=subjects,
-            created_by=str(form.get("created_by", "dashboard-admin")).strip() or "dashboard-admin",
+            created_by=actor_for(request, str(form.get("created_by", "dashboard-admin")).strip() or "dashboard-admin"),
         )
     except AttestationKeyServiceError as exc:
         return _redirect(target, error=exc.detail, anchor="attestation-keys")
     return _redirect(target, message=f"Attestation key {row.key_id} registered for {tenant_id}.", anchor="attestation-keys")
 
 
-@router.post("/dashboard/benchmark/attestation-keys/{key_id}/revoke", response_class=HTMLResponse)
+@router.post("/dashboard/benchmark/attestation-keys/{key_id}/revoke", response_class=HTMLResponse, dependencies=needs("benchmark.manage", view="benchmark"))
 async def dashboard_attestation_key_revoke(request: Request, key_id: str, session: AsyncSession = Depends(get_session)):
     form = await request.form()
     tenant_id = str(form.get("tenant_id", "default")).strip() or "default"
     target = f"/dashboard/benchmark?tenant_id={quote(tenant_id)}&key_tenant_id={quote(tenant_id)}"
     try:
-        await revoke_attestation_key(session, tenant_id=tenant_id, key_id=key_id, actor="dashboard-admin")
+        await revoke_attestation_key(session, tenant_id=tenant_id, key_id=key_id, actor=actor_for(request, "dashboard-admin"))
     except AttestationKeyServiceError as exc:
         return _redirect(target, error=exc.detail, anchor="attestation-keys")
     return _redirect(target, message=f"Attestation key {key_id} revoked.", anchor="attestation-keys")
@@ -339,7 +347,7 @@ async def dashboard_attestation_key_revoke(request: Request, key_id: str, sessio
 # ---------------------------------------------------------------------------
 
 
-@router.post("/dashboard/judge/profiles/{name}/probe", response_class=HTMLResponse)
+@router.post("/dashboard/judge/profiles/{name}/probe", response_class=HTMLResponse, dependencies=needs("judge.profile.operate", view="judge_profiles"))
 async def dashboard_judge_probe(request: Request, name: str, session: AsyncSession = Depends(get_session)):
     try:
         result = await probe_profile(session, get_settings(), name)
@@ -354,7 +362,7 @@ async def dashboard_judge_probe(request: Request, name: str, session: AsyncSessi
     return _redirect("/dashboard/benchmark", message=message, anchor="judge-profiles")
 
 
-@router.post("/dashboard/judge/profiles/{name}/zero-cost-pricing", response_class=HTMLResponse)
+@router.post("/dashboard/judge/profiles/{name}/zero-cost-pricing", response_class=HTMLResponse, dependencies=needs("judge.profile.operate", view="judge_profiles"))
 async def dashboard_judge_zero_cost_pricing(request: Request, name: str, session: AsyncSession = Depends(get_session)):
     try:
         result = await ensure_zero_cost_pricing(session, get_settings(), name)
@@ -367,29 +375,36 @@ async def dashboard_judge_zero_cost_pricing(request: Request, name: str, session
     return _redirect("/dashboard/benchmark", message=message, anchor="judge-profiles")
 
 
-@router.post("/dashboard/judge/consent", response_class=HTMLResponse)
+@router.post("/dashboard/judge/consent", response_class=HTMLResponse, dependencies=needs("judge.external_consent", view="benchmark"))
 async def dashboard_judge_consent(request: Request, session: AsyncSession = Depends(get_session)):
     form = await request.form()
     tenant_id = str(form.get("tenant_id", "default")).strip() or "default"
     current = policy_to_dict(tenant_id, await get_evaluation_policy(session, tenant_id))
     allow = str(form.get("allow_external_judge", "")).lower() in {"on", "true", "1", "yes"}
     profiles = [str(item).strip() for item in form.getlist("external_judge_profiles") if str(item).strip()]
-    # Protected paths are kept as they are; only the consent fields change.
-    await upsert_evaluation_policy(
+    # Protected paths are kept as they are; only the consent fields change. Routed through the change-request service
+    # like every evaluation-policy write (v1.6.1 D39): it never relaxes protected paths, so it always applies at once.
+    actor = actor_for(request, str(form.get("updated_by", "dashboard-admin")).strip() or "dashboard-admin")
+    await change_requests.execute_or_request(
         session,
-        tenant_id=tenant_id,
-        protected_paths=list(current["protected_paths"]),
-        allow_default_protected_paths=bool(current["allow_default_protected_paths"]),
-        updated_by=str(form.get("updated_by", "dashboard-admin")).strip() or "dashboard-admin",
-        allow_external_judge=allow,
-        external_judge_profiles=profiles,
+        get_settings(),
+        change_requests.POLICY_PROTECTED_PATHS,
+        {
+            "tenant_id": tenant_id,
+            "protected_paths": list(current["protected_paths"]),
+            "allow_default_protected_paths": bool(current["allow_default_protected_paths"]),
+            "updated_by": actor,
+            "allow_external_judge": allow,
+            "external_judge_profiles": profiles,
+        },
+        change_requests.Requester.from_principal(principal_of(request), actor),
     )
     scope = ", ".join(profiles) if profiles else "all external profiles"
     message = f"External judge consent for {tenant_id}: {'allowed (' + scope + ')' if allow else 'not allowed'}."
     return _redirect(f"/dashboard/benchmark?tenant_id={quote(tenant_id)}&consent_tenant_id={quote(tenant_id)}", message=message, anchor="external-judge-consent")
 
 
-@router.post("/dashboard/judge/sweep", response_class=HTMLResponse)
+@router.post("/dashboard/judge/sweep", response_class=HTMLResponse, dependencies=needs("judge.profile.operate", view="judge_profiles"))
 async def dashboard_judge_sweep(request: Request, session: AsyncSession = Depends(get_session)):
     swept = await sweep_pending_triage(session, get_settings())
     message = f"Re-scheduled {len(swept)} stale pending judge triage task(s)." if swept else "No stale pending judge triage."

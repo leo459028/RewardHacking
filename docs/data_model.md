@@ -105,6 +105,46 @@ Probes: `name`, `description` (operator-only), `task_type`, `prompt`, `goal`, `p
 ### `TenantAttestationKey` (`tenant_attestation_keys`, `attk_` IDs)
 `tenant_id`, `name`, `algorithm` (`ed25519` | `ecdsa-p256-sha256`), `public_key_pem`, `key_fingerprint` (sha256 of DER SubjectPublicKeyInfo), `allowed_subjects`, `status` (`active` | `revoked`), `created_by`, `revoked_at`.
 
+## Enterprise Access & Audit Integrity (`v1.6.1`, Alembic `202611120003`)
+
+All five tables are created by one revision. `v1.6.1` P1 adds the tables and the access services; sign-in uses the
+user and session tables from P2, change requests from P6 and the audit chain from P5.
+
+### `DashboardUser` (`dashboard_users`, `usr_` IDs)
+A personal Dashboard account: `username` (lower-case, unique), `display_name`, `password_hash`
+(`scrypt$<n>$<r>$<p>$<salt>$<hash>`, standard-library scrypt; the cost is stored with each hash), `role`
+(`admin` | `tenant_admin` | `reviewer` | `operator` | `auditor`), `tenant_id` (NULL = platform user; required for
+`tenant_admin`, not allowed for `admin`), `status` (`active` | `disabled`), `auth_source` (`local`; reserved for
+OIDC), `external_subject` (reserved for OIDC; unique together with `auth_source`), `failed_attempts`, `locked_until`,
+`must_change_password`, `password_changed_at`, `last_login_at`, `created_by`, `created_at`, `updated_at`.
+
+### `DashboardSession` (`dashboard_sessions`, `ses_` IDs)
+One sign-in: `session_hash` (SHA-256 of the `rh_session` cookie token; the token itself is never stored), `user_id`,
+`auth_method`, `csrf_secret` (per-session CSRF key, used from P4), `created_at`, `last_seen_at` (written at most every
+60 seconds), `expires_at` (absolute timeout), `reauth_at` (last password entry), `revoked_at`, `revoked_reason`
+(`logout`, `idle_timeout`, `absolute_timeout`, `password_changed`, `role_changed`, `user_disabled`, ...),
+`user_agent_hash`.
+
+### `ChangeRequest` (`change_requests`, `chg_` IDs)
+A dual-control request (P6): `action`, `target_ref`, `tenant_id`, `payload` (JSON, no secrets), `payload_digest`,
+`status` (`pending` | `approved` | `rejected` | `executed` | `failed` | `expired` | `cancelled`), `requested_by`,
+`requested_reason`, `requested_at`, `decided_by`, `decision_reason`, `decided_at`, `expires_at`, `executed_at`,
+`result` (JSON: `requester` (actor, kind, role, tenant, Dashboard user id) plus `execution` summary or `error`), `error_code`.
+Index `(action, target_ref, status)`. Written only by `app/services/change_requests.py`; rules in
+[`security.md`](security.md#dual-control-change-requests-v161).
+
+### `AuditChainEntry` (`audit_chain_entries`, `ace_` IDs)
+The hash ledger (P5): `seq` (primary key assigned by the writer, part of the hash), `entry_id`, `entry_type`,
+`ref_table`, `ref_id`, `tenant_id`, `run_id`, `payload_digest`, `prev_hash`, `entry_hash` (unique), `chain_version`,
+`created_at`. Hashes and identifiers only. Retention purges never delete this table. Written by `app/services/audit_chain.py` in
+the source transaction (P5); entry types, payload fields and the hash definition are in
+[`security.md`](security.md#tamper-evident-audit-chain-v161).
+
+### `AuditChainCheckpoint` (`audit_chain_checkpoints`, `acp_` IDs)
+A statement of the chain head (P5): `through_seq`, `head_hash`, `entry_count`, `period_start`, `period_end`,
+`prev_checkpoint_hash`, `checkpoint_hash`, `algorithm` (`ed25519`), `key_id`, `signature` (base64), `status`
+(`signed` | `unsigned`), `created_by`, `created_at`.
+
 ## Audit Retention (`v1.6.0`, Alembic `202611120002`)
 
 ### `LegalHold` (`legal_holds`, `lh_` IDs)
@@ -114,7 +154,7 @@ Probes: `name`, `description` (operator-only), `task_type`, `prompt`, `goal`, `p
 A plan and, after apply, its receipt: `status` (`planned` | `applied` | `partial` | `expired`), `plan_digest` (sha256 of cutoff, settings snapshot and sorted candidate ids), `cutoff_at`, `expires_at`, `settings_snapshot`, `candidate_run_ids`, `excluded_summary` (reason → count and up to five example run ids), `estimated_counts`, `scan_summary`, `created_by`, `applied_by`, `applied_at`, `applied_counts`, `skipped_at_apply` (run id and reasons), `failures` (run id and error type), `receipt_digest` (sha256 of the tombstone digests). No run content is stored.
 
 ### `RetentionTombstone` (`retention_tombstones`, `tomb_` IDs)
-One per purged run (`run_id` unique): `tenant_id`, `purge_id`, `purged_at`, `run_created_at`, `final_status`, `record_counts` (rows deleted per table), `content_digest` (sha256 of the sorted `(table, primary key, sha256(canonical row))` list: hashes only), `policy_snapshot`. **Reserved, unused in `v1.6.0`**: `chain_version` (empty string), `prev_hash` and `entry_hash` (NULL) for a later tamper-evident hash chain; no tamper-evidence guarantee yet.
+One per purged run (`run_id` unique): `tenant_id`, `purge_id`, `purged_at`, `run_created_at`, `final_status`, `record_counts` (rows deleted per table), `content_digest` (sha256 of the sorted `(table, primary key, sha256(canonical row))` list: hashes only), `policy_snapshot`. `chain_version`, `prev_hash` and `entry_hash`: empty / NULL in `v1.6.0`; since `v1.6.1` written in the purge transaction from the tombstone's audit chain entry (`rh-chain/1`). Tombstones written before the chain existed keep the empty values.
 
 A purge deletes the run's `agent_runs`, `approval_events`, `worker_attempts`, `tool_executions`, `evaluation_results`, `run_outcomes`, `evaluation_reviews`, low / medium `incidents`, `execution_plans`, `execution_plan_steps`, eligible `run_checkpoints` / `replay_attempts`, run-scoped `governance_events`, non-benchmark `judge_assessments`, `review_sampling_decisions` and its Redis state keys. It never deletes the FinOps ledger (`usage_events`, `cost_events`, `budget_violations`), `benchmark_*`, `honeypot_*`, `judge_profile_*`, governance events without a `run_id`, operations tables, tenants or keys.
 

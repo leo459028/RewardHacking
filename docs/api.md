@@ -10,7 +10,7 @@ All REST API endpoints are exposed under the `/v1` route prefix. The service ret
 
 ## Authentication & Headers
 
-- **`X-API-Key`**: API key header when `AUTH_ENABLED=true`. Maps the request to an authorized tenant and RBAC role (`viewer`, `operator`, `admin`, `finops_admin`).
+- **`X-API-Key`**: API key header when `AUTH_ENABLED=true`. Maps the request to an authorized tenant and RBAC role (`viewer`, `operator`, `admin`, `finops_admin`, `reviewer`, `tenant_admin`, and since `v1.6.1` the read-only `auditor`, which is accepted wherever `viewer` is and never on write endpoints; `POST /v1/tenants/{tenant_id}/api-keys` accepts `role: "auditor"`).
 - **`X-Trace-Id`**: Distributed trace identifier. If provided in the request header, it is echoed unchanged and bound to the execution plan and audit events; otherwise the server returns `trace_<32 hex>`, the W3C trace id with a prefix.
 - **`traceparent` / `tracestate`** (`v1.6.0`): W3C Trace Context. A valid incoming `traceparent` is continued; every response carries `traceparent`. See [`observability.md`](observability.md).
 
@@ -145,7 +145,7 @@ The tombstone is tenant-scoped like the run (another tenant's key gets `403 tena
 | `POST` | `/v1/tenants` | Provisions a new tenant | `admin` |
 | `GET` | `/v1/tenants/{tenant_id}/api-keys`| Lists hashed API keys for a tenant | `admin` |
 | `POST` | `/v1/tenants/{tenant_id}/api-keys`| Generates new API key (plaintext returned once) | `admin` |
-| `GET` | `/v1/governance/events` | Queries tenant policy and quota event log | `viewer`, `operator`, `admin` |
+| `GET` | `/v1/governance/events` | Queries tenant policy and quota event log (role enforced since `v1.6.1`; before, any valid key could read it) | `viewer`, `operator`, `admin` (and the roles treated as `viewer`) |
 
 ---
 
@@ -182,6 +182,51 @@ The service enforces every rule; refused operations return `{"error": {"code": .
 | `POST` | `/v1/legal-holds/{hold_id}/release` | Body `release_reason` (required) | `admin` |
 
 Exclusion reason codes (fixed): `legal_hold`, `run_not_terminal`, `dlq_unresolved`, `review_open`, `unexported_label`, `benchmark_reference`, `high_severity_incident`, `checkpoint_reference`, `replay_reference`, `honeypot_measurement`. `skipped_at_apply` may also contain `recent_activity` and `run_missing`.
+
+### Audit Chain (`v1.6.1`)
+
+Read-only; responses carry hashes and identifiers only (`signal_usage: "monitor_only"`). Checkpoints are written by
+`python -m app.jobs.audit_chain --checkpoint` or the Dashboard, not by the API.
+
+| Method | Path | Description | Access Role |
+| --- | --- | --- | --- |
+| `GET` | `/v1/audit-chain/status` | Head `seq` and hash, entry counts by type, genesis (legacy maximum ids), latest checkpoint, signing key id, online limit | `admin`, `auditor` |
+| `GET` | `/v1/audit-chain/entries` | Entries (`from_seq` ascending, else newest first; `entry_type`, `run_id`, `limit` ≤ 500) | `admin`, `auditor` |
+| `GET` | `/v1/audit-chain/checkpoints` | Checkpoints, newest first (`limit` ≤ 500) | `admin`, `auditor` |
+| `POST` | `/v1/audit-chain/verify` | Optional body `{"from_seq": N, "to_seq": M}`; verifies at most `AUDIT_CHAIN_VERIFY_MAX_ENTRIES` entries (`truncated`, `next_from_seq` to continue); writes nothing. Returns `status` (`ok` / `failed`), `issues` by kind, `details` (first 50), `info` (`legacy_unchained`, `explained_by_tombstone`, `superseded`, `unsigned_checkpoints`) and `reverse_check` (`done` only when one call covers the whole chain) | `admin`, `auditor` |
+
+The `410 run_purged` tombstone summary now includes `chain_version`, `prev_hash` and `entry_hash`.
+
+### Change Requests (`v1.6.1`)
+
+Dual control is off by default. While an action is listed in `DUAL_CONTROL_ACTIONS`, its endpoint stores a change
+request instead of acting and answers **`202`** `{"status": "pending_second_approval", "created": true|false,
+"change_request": {...}}` (`created: false` = the identical pending request already existed):
+
+| Action | Endpoint |
+| :--- | :--- |
+| `retention.apply` | `POST /v1/retention/plans/{purge_id}/apply` |
+| `legal_hold.release` | `POST /v1/legal-holds/{hold_id}/release` |
+| `judge.activate` | `POST /v1/evaluations/judge/profiles/{name}/activate` (body also carries `signal_usage`) |
+| `evaluation_policy.protected_paths` | `PUT /v1/tenants/{tenant_id}/evaluation-policy`, only when it removes effective protected paths or turns the defaults off |
+
+Without dual control these endpoints answer exactly as before. Requests are approved or rejected only by a signed-in
+Dashboard user on `/dashboard/change-requests`; **the API has no approve endpoint**, so an API key can never be the
+second person.
+
+| Method | Path | Description | Roles |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/v1/change-requests` | Change requests, newest first (`status`, `action`, `tenant_id`, `limit` ≤ 500). Admin keys see all; other keys only their tenant's | `viewer`, `operator`, `admin` (and roles treated as viewer) |
+| `GET` | `/v1/change-requests/{change_id}` | One request: `action`, `target_ref`, `tenant_id`, `payload`, `payload_digest`, `status`, `requested_by` / `_at` / `_reason`, `decided_by` / `_at`, `decision_reason`, `expires_at`, `executed_at`, `execution`, `error`, `error_code` | same |
+| `POST` | `/v1/change-requests/{change_id}/cancel` | Optional body `{"reason": "..."}`; only the requester (same key) can cancel a `pending` request | `tenant_admin`, `admin` |
+
+Error codes (`{"error": {"code": ...}}`): `change_request_not_found` (404), `change_request_pending_exists` (409, with
+`details.change_id`), `change_request_not_pending` / `change_request_expired` (409), `change_request_cancel_forbidden`
+(403). Dashboard decisions can also return `change_request_sign_in_required`, `change_request_self_approval_forbidden`,
+`change_request_forbidden` (with `details.permission`), `change_request_tenant_forbidden` and
+`change_request_reauth_required` (403). A request that fails at approval keeps `status: failed` with `error_code`
+(`change_request_stale` or the action's own code). Status values: `pending`, `approved` (transient), `rejected`,
+`executed`, `failed`, `expired`, `cancelled`.
 
 ### Safe MCP Gateway (`v1.5.7`)
 

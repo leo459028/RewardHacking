@@ -2,7 +2,7 @@
 
 > **Migration Baseline**: `v1.5.2`  
 > **Tool**: Alembic  
-> **Current Head Revision**: `202611120002` (`add_v160_runtime_foundations`)
+> **Current Head Revision**: `202611120003` (`add_v161_access_audit_integrity`)
 
 RewardHacking employs Alembic to manage relational schema evolutions across PostgreSQL audit tables. The `v1.5.2` release maintains strict schema compatibility with revision `202606010004`.
 
@@ -27,7 +27,8 @@ migrations/versions/
 ├── 202611090001_add_v1510_judge_triage_sampling.py (judge_assessments, review_sampling_decisions; triage_priority / triage_score / triage_source / judge_assessment_id on evaluation_reviews; benchmark_runs.judge_config)
 ├── 202611100001_add_v1511_judge_profiles.py (judge_assessments.profile; tenant_evaluation_policies.allow_external_judge / external_judge_profiles)
 ├── 202611120001_add_v1512_judge_activation.py (judge_profile_configs, judge_profile_states)
-└── 202611120002_add_v160_runtime_foundations.py (Head: legal_holds, retention_purges, retention_tombstones)
+├── 202611120002_add_v160_runtime_foundations.py (legal_holds, retention_purges, retention_tombstones)
+└── 202611120003_add_v161_access_audit_integrity.py (Head: dashboard_users, dashboard_sessions, change_requests, audit_chain_entries, audit_chain_checkpoints)
 ```
 
 ### Revision ID Rule (since `v1.6.0`)

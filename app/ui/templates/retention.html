@@ -11,6 +11,14 @@
 
 {% if message %}<div class="success" role="status">{{ message }}</div>{% endif %}
 {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+{% if change_request %}
+<div class="success" role="status" id="retention-change-request">
+  Change request | 變更覆核:
+  <a href="/dashboard/change-requests?status={{ change_request.status }}" id="change-request-link">{{ change_request.change_id }}</a>
+  · {{ change_request.action }} · <span class="status {{ change_request.status }}" id="change-request-status">{{ change_request.status }}</span>
+  · requested by {{ change_request.requested_by }} · expires {{ change_request.expires_at }}
+</div>
+{% endif %}
 
 <section class="grid stats" id="retention-policy">
   <div class="stat"><div class="stat-label">Retention Days</div><div class="stat-value">{{ policy.retention_days }}</div></div>
@@ -26,9 +34,10 @@
 
 <section class="panel" id="retention-plan">
   <h2>Dry-run Report <span class="heading-note">清理計畫（只讀，不會刪除）</span></h2>
-  <form method="post" action="/dashboard/retention/plans">
+  {% if can("retention.plan", "retention") %}<form method="post" action="/dashboard/retention/plans">
+    {{ csrf_input() }}
     <button class="button" type="submit" id="create-plan">Generate dry-run report | 產生 dry-run 報告</button>
-  </form>
+  </form>{% endif %}
   {% if plan %}
   <table>
     <tbody>
@@ -71,11 +80,48 @@
     {% endfor %}
     </tbody>
   </table>
-  <h3>Apply <span class="heading-note">執行清理只能透過 API（需要 admin）</span></h3>
-  <p class="muted" id="apply-api-only">Applying a plan is API-only in this release (Dashboard RBAC / CSRF arrive in v1.6.1) and needs <code>AUDIT_RETENTION_PURGE_MODE=apply</code>.</p>
+  {% if plan.status in ("applied", "partial") %}
+  <h3>Receipt <span class="heading-note">清理收據</span></h3>
+  <table id="apply-receipt">
+    <tbody>
+      <tr><th>Applied By</th><td id="receipt-applied-by">{{ plan.applied_by or "-" }}</td></tr>
+      <tr><th>Applied At</th><td>{{ plan.applied_at or "-" }}</td></tr>
+      <tr><th>Runs Purged</th><td id="receipt-runs">{{ plan.applied_counts.get("runs", 0) }}</td></tr>
+      <tr><th>Rows Deleted</th><td>{% for table, count in plan.applied_counts.items() %}{{ table }} {{ count }}{% if not loop.last %}, {% endif %}{% else %}-{% endfor %}</td></tr>
+      <tr><th>Skipped</th><td id="receipt-skipped">{{ plan.skipped_at_apply|length }}</td></tr>
+      <tr><th>Failures</th><td id="receipt-failures">{{ plan.failures|length }}</td></tr>
+      <tr><th>Receipt Digest</th><td><code id="receipt-digest">{{ plan.receipt_digest or "-" }}</code></td></tr>
+    </tbody>
+  </table>
+  {% elif plan.status != "planned" %}
+  <p class="muted" id="plan-not-applicable">This report is {{ plan.status }} and cannot be applied; generate a new dry-run report. | 此報告已無法執行，請重新產生。</p>
+  {% elif signed_in %}
+  <h3>Apply <span class="heading-note">執行清理（需要 admin、再驗證，並輸入 Purge ID 確認）</span></h3>
+  {% if can_apply %}
+  <p class="muted">Deletes the candidate runs listed above. Only possible when <code>AUDIT_RETENTION_PURGE_MODE=apply</code> (now <code>{{ policy.purge_mode }}</code>); otherwise the service refuses and nothing is deleted.{% if dual_apply %} Dual control is on: this submits a change request that a second admin must approve. | 已啟用雙人覆核：送出後需要第二位 admin 核准。{% endif %}</p>
+  <form method="post" action="/dashboard/retention/plans/{{ plan.purge_id }}/apply" class="form-grid" id="apply-form">
+    {{ csrf_input() }}
+    <input type="hidden" name="plan_digest" value="{{ plan.plan_digest }}">
+    <label>Type the Purge ID to confirm | 輸入 Purge ID 確認
+      <input name="confirm_purge_id" required maxlength="64" autocomplete="off" placeholder="{{ plan.purge_id }}">
+    </label>
+    {% if dual_apply %}<label>Reason (optional)
+      <input name="reason" maxlength="2000">
+    </label>{% endif %}
+    <label>&nbsp;
+      <button class="button danger" type="submit" id="apply-submit">{% if dual_apply %}Submit change request | 送出變更覆核{% else %}Apply purge plan | 執行清理{% endif %}</button>
+    </label>
+  </form>
+  {% else %}
+  <p class="muted" id="apply-needs-permission">Applying a plan needs the <code>retention.apply</code> permission (admin). | 需要 admin。</p>
+  {% endif %}
+  {% else %}
+  <h3>Apply <span class="heading-note">Dashboard 驗證關閉時，執行清理只能透過 API（需要 admin）</span></h3>
+  <p class="muted" id="apply-api-only">Dashboard sign-in is off, so applying a plan is API-only here (sign-in mode <code>session</code> shows a form). It needs <code>AUDIT_RETENTION_PURGE_MODE=apply</code>.</p>
   <pre>curl -X POST -H "X-API-Key: $ADMIN_KEY" -H "Content-Type: application/json" \
   -d '{"plan_digest": "{{ plan.plan_digest }}", "confirm": true}' \
   http://localhost:8000/v1/retention/plans/{{ plan.purge_id }}/apply</pre>
+  {% endif %}
   {% else %}
   <p class="muted">No dry-run report yet.</p>
   {% endif %}
@@ -98,7 +144,11 @@
         <td>{{ hold.reason }}</td>
         <td><span class="status {{ 'awaiting_approval' if hold.status == 'active' else 'completed' }}">{{ hold.status }}</span></td>
         <td>{{ hold.created_at }} · {{ hold.created_by }}</td>
-        <td class="muted">{% if hold.status == "active" %}Use the API (admin required) | 請用 API 解除（需要 admin）{% else %}{{ hold.released_at }} · {{ hold.release_reason }}{% endif %}</td>
+        <td class="muted">{% if hold.status != "active" %}{{ hold.released_at }} · {{ hold.released_by }} · {{ hold.release_reason }}{% elif can_release %}<form method="post" action="/dashboard/retention/holds/{{ hold.hold_id }}/release" class="inline-form release-form">
+          {{ csrf_input() }}
+          <input name="release_reason" required maxlength="2000" placeholder="Release reason | 解除理由" aria-label="Release reason">
+          <button class="button secondary" type="submit">{% if dual_release %}Request release | 送出變更覆核{% else %}Release | 解除{% endif %}</button>
+        </form>{% elif signed_in %}Needs legal_hold.release (admin) | 需要 admin{% else %}Use the API (admin required) | 請用 API 解除（需要 admin）{% endif %}</td>
       </tr>
     {% else %}
       <tr><td colspan="7" class="muted">No {{ hold_tab }} legal holds.</td></tr>
@@ -106,7 +156,8 @@
     </tbody>
   </table>
   <h3>Create Legal Hold <span class="heading-note">建立 legal hold</span></h3>
-  <form method="post" action="/dashboard/retention/holds" class="form-grid" id="hold-form">
+  {% if can("legal_hold.create", "retention") %}<form method="post" action="/dashboard/retention/holds" class="form-grid" id="hold-form">
+    {{ csrf_input() }}
     <label>Scope
       <select name="scope_type">
         <option value="tenant">tenant</option>
@@ -122,7 +173,7 @@
     <label>&nbsp;
       <button class="button" type="submit">Create Hold</button>
     </label>
-  </form>
+  </form>{% endif %}
 </section>
 
 <section class="panel" id="purge-receipts">

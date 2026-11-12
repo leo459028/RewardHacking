@@ -22,11 +22,14 @@ from app.services.evaluation.evidence import EvidenceError
 from app.services.evaluation.taxonomy import CATEGORIES
 from app.services.judge_triage import default_order, effective_priority, list_assessments, triage_review
 from app.services.outcomes import list_outcomes, preview_evaluation, refresh_review_queue_gauge, submit_outcome
-from app.services.review_queue import ReviewError, decide_review, get_review, list_reviews, upsert_evaluation_policy
+from app.services import change_requests
+from app.services.review_queue import ReviewError, decide_review, get_review, list_reviews, policy_relaxes
 from app.services.review_sampling import sampling_summary
+from app.ui.routers.change_requests import pending_message
 from app.ui.routes import dashboard_auth, templates
+from app.ui.security import actor_for, csrf_protect, ensure_permission, ensure_tenant_access, needs, principal_of, scoped_tenant
 
-router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth)])
+router = APIRouter(tags=["dashboard"], dependencies=[Depends(dashboard_auth), Depends(csrf_protect)])
 
 REVIEW_LABELS = ("confirmed_hacking", "false_positive", "accepted", "needs_info")
 
@@ -84,7 +87,7 @@ async def _render_reviews(
     status = params.get("status", "active")
     priority = params.get("priority", "")
     category = params.get("category", "")
-    tenant_id = params.get("tenant_id", "")
+    tenant_id = await scoped_tenant(request, session, params.get("tenant_id", "")) or ""
     order = params.get("order", "")
     order = order if order in {"rule", "triage"} else default_order(settings)
     reviews = await list_reviews(
@@ -96,7 +99,8 @@ async def _render_reviews(
         limit=200,
         order=order,
     )
-    depth = await refresh_review_queue_gauge(session)
+    own_tenant = None if principal_of(request).is_platform else tenant_id
+    depth = await refresh_review_queue_gauge(session, tenant_id=own_tenant)
     sampling = await sampling_summary(session, settings, tenant_id=tenant_id or None, window_days=7)
     return templates.TemplateResponse(
         request,
@@ -120,20 +124,21 @@ async def _render_reviews(
     )
 
 
-@router.get("/dashboard/reviews", response_class=HTMLResponse)
+@router.get("/dashboard/reviews", response_class=HTMLResponse, dependencies=needs("dashboard.view", view="reviews"))
 async def dashboard_reviews(request: Request, session: AsyncSession = Depends(get_session)):
     return await _render_reviews(request, session)
 
 
-@router.post("/dashboard/reviews/preview", response_class=HTMLResponse)
+@router.post("/dashboard/reviews/preview", response_class=HTMLResponse, dependencies=needs("evaluations.preview", view="reviews"))
 async def dashboard_reviews_preview(request: Request, session: AsyncSession = Depends(get_session)):
     form = await request.form()
     preview_input = {key: str(form.get(key, "")) for key in form.keys()}
+    preview_tenant = await scoped_tenant(request, session, str(form.get("tenant_id", "")), permission="evaluations.preview")
     try:
         payload = EvaluationPreviewRequest(
             task_type=str(form.get("task_type", "code_fix") or "code_fix"),
             goal=str(form.get("goal", "")),
-            tenant_id=str(form.get("tenant_id", "")).strip() or None,
+            tenant_id=preview_tenant,
             **_evidence_from_form(form),
         )
         evaluation = await preview_evaluation(session, payload=payload, tenant_id=payload.tenant_id or "default", settings=get_settings())
@@ -143,11 +148,14 @@ async def dashboard_reviews_preview(request: Request, session: AsyncSession = De
     return await _render_reviews(request, session, preview=evaluation, preview_input=preview_input)
 
 
-@router.get("/dashboard/reviews/{review_id}", response_class=HTMLResponse)
+@router.get("/dashboard/reviews/{review_id}", response_class=HTMLResponse, dependencies=needs("dashboard.view", view="review_detail"))
 async def dashboard_review_detail(request: Request, review_id: str, session: AsyncSession = Depends(get_session)):
     review = await get_review(session, review_id)
     if review is None:
+        if not principal_of(request).is_platform:
+            await ensure_tenant_access(request, session, None)  # no existence oracle for tenant-bound users
         raise HTTPException(status_code=404, detail="Review not found.")
+    await ensure_tenant_access(request, session, review.tenant_id)
     run = await get_run(session, review.run_id)
     outcomes = await list_outcomes(session, review.run_id)
     assessments = await list_assessments(session, review_id=review_id)
@@ -169,13 +177,17 @@ async def dashboard_review_detail(request: Request, review_id: str, session: Asy
     )
 
 
-@router.post("/dashboard/reviews/{review_id}/decision", response_class=HTMLResponse)
+@router.post("/dashboard/reviews/{review_id}/decision", response_class=HTMLResponse, dependencies=needs("reviews.decide"))
 async def dashboard_review_decision(request: Request, review_id: str, session: AsyncSession = Depends(get_session)):
     form = await request.form()
+    target = await get_review(session, review_id)
+    if target is not None:
+        await ensure_tenant_access(request, session, target.tenant_id, permission="reviews.decide")
     try:
         decision = ReviewDecisionRequest(
             label=str(form.get("label", "")),
-            reviewer=str(form.get("reviewer", "")).strip() or "dashboard-reviewer",
+            # D23: in session mode the reviewer is the signed-in user; a forged form field is ignored.
+            reviewer=actor_for(request, str(form.get("reviewer", "")).strip() or "dashboard-reviewer"),
             reason=str(form.get("reason", "")),
             label_categories=[str(item) for item in form.getlist("label_categories") if str(item).strip()],
             finding_labels={
@@ -198,12 +210,13 @@ async def dashboard_review_decision(request: Request, review_id: str, session: A
     return RedirectResponse(f"/dashboard/reviews/{review_id}?message={quote(message)}", status_code=303)
 
 
-@router.post("/dashboard/reviews/{review_id}/judge-assessments", response_class=HTMLResponse)
+@router.post("/dashboard/reviews/{review_id}/judge-assessments", response_class=HTMLResponse, dependencies=needs("reviews.retriage"))
 async def dashboard_review_reassess(request: Request, review_id: str, session: AsyncSession = Depends(get_session)):
     """v1.5.10: re-run advisory judge triage (deduplicated by evidence digest and judge version)."""
     review = await get_review(session, review_id)
     if review is None:
         raise HTTPException(status_code=404, detail="Review not found.")
+    await ensure_tenant_access(request, session, review.tenant_id, permission="reviews.retriage")
     settings = get_settings()
     if settings.evaluation_judge_mode == "off":
         return RedirectResponse(f"/dashboard/reviews/{review_id}?error={quote('Judge mode is off.')}#judge-assessments", status_code=303)
@@ -218,14 +231,17 @@ async def dashboard_review_reassess(request: Request, review_id: str, session: A
     return RedirectResponse(f"/dashboard/reviews/{review_id}?message={quote(message)}#judge-assessments", status_code=303)
 
 
-@router.post("/dashboard/runs/{run_id}/outcome", response_class=HTMLResponse)
+@router.post("/dashboard/runs/{run_id}/outcome", response_class=HTMLResponse, dependencies=needs("outcomes.submit"))
 async def dashboard_run_outcome(request: Request, run_id: str, session: AsyncSession = Depends(get_session)):
     form = await request.form()
     run = await get_run(session, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
+    await ensure_tenant_access(request, session, run.tenant_id, permission="outcomes.submit")
+    # D23: the submitter is the signed-in user in session mode, so review_queue's self-review rule applies to it.
+    submitted_by = actor_for(request, str(form.get("submitted_by", "")).strip())
     try:
-        payload = OutcomeSubmitRequest(submitted_by=str(form.get("submitted_by", "")).strip(), **_evidence_from_form(form))
+        payload = OutcomeSubmitRequest(submitted_by=submitted_by, **_evidence_from_form(form))
         outcome, evaluation, review, run = await submit_outcome(session, run=run, payload=payload, settings=get_settings())
     except EvidenceError as exc:
         return RedirectResponse(f"/dashboard/runs/{run_id}?error={quote(exc.detail)}", status_code=303)
@@ -238,21 +254,34 @@ async def dashboard_run_outcome(request: Request, run_id: str, session: AsyncSes
     return RedirectResponse(f"/dashboard/runs/{run_id}?message={quote(message)}#outcome-evidence", status_code=303)
 
 
-@router.post("/dashboard/governance/evaluation-policy", response_class=HTMLResponse)
+@router.post("/dashboard/governance/evaluation-policy", response_class=HTMLResponse, dependencies=needs("evaluation_policy.write"))
 async def dashboard_evaluation_policy(request: Request, session: AsyncSession = Depends(get_session)):
     form = await request.form()
-    tenant_id = str(form.get("tenant_id", "default")).strip() or "default"
+    tenant_id = await scoped_tenant(request, session, str(form.get("tenant_id", "")), permission="evaluation_policy.write") or "default"
     raw = str(form.get("protected_paths", ""))
     paths = [item.strip() for chunk in raw.splitlines() for item in chunk.split(",") if item.strip()]
     allow_defaults = str(form.get("allow_default_protected_paths", "")).lower() in {"on", "true", "1", "yes"}
-    await upsert_evaluation_policy(
-        session,
-        tenant_id=tenant_id,
-        protected_paths=paths,
-        allow_default_protected_paths=allow_defaults,
-        updated_by=str(form.get("updated_by", "dashboard-admin")).strip() or "dashboard-admin",
-    )
-    message = f"Evaluation policy saved for {tenant_id} ({len(paths)} custom protected path(s))."
+    if await policy_relaxes(session, tenant_id=tenant_id, protected_paths=paths, allow_default_protected_paths=allow_defaults):
+        # v1.6.1 feature seven: fewer protected paths needs evaluation_policy.relax and a recent re-authentication.
+        await ensure_permission(request, session, "evaluation_policy.relax")
+    actor = actor_for(request, str(form.get("updated_by", "dashboard-admin")).strip() or "dashboard-admin")
+    # v1.6.1 D39 / D42: a relaxation becomes a change request while ``evaluation_policy.protected_paths`` is in
+    # DUAL_CONTROL_ACTIONS; adding paths applies at once.
+    try:
+        outcome = await change_requests.execute_or_request(
+            session,
+            get_settings(),
+            change_requests.POLICY_PROTECTED_PATHS,
+            {"tenant_id": tenant_id, "protected_paths": paths, "allow_default_protected_paths": allow_defaults, "updated_by": actor},
+            change_requests.Requester.from_principal(principal_of(request), actor),
+        )
+    except change_requests.ChangeRequestError as exc:
+        message = f"{exc.code}: {exc.message}"
+        return RedirectResponse(f"/dashboard/governance?tenant_id={quote(tenant_id)}&message={quote(message)}#evaluation-policy", status_code=303)
+    if outcome.pending:
+        message = pending_message(outcome)
+    else:
+        message = f"Evaluation policy saved for {tenant_id} ({len(paths)} custom protected path(s))."
     return RedirectResponse(f"/dashboard/governance?tenant_id={quote(tenant_id)}&message={quote(message)}#evaluation-policy", status_code=303)
 
 

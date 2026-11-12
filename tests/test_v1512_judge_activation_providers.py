@@ -1224,13 +1224,15 @@ def test_profile_writes_need_the_admin_role(client, monkeypatch):
 
 
 def test_dashboard_editing_gate_modes():
-    assert dashboard_editing(_settings())["allowed"] is False  # auto + Basic Auth off
-    assert dashboard_editing(_settings(dashboard_auth_enabled=True))["allowed"] is False  # default admin/admin
-    custom = dashboard_editing(_settings(dashboard_auth_enabled=True, dashboard_username="ops", dashboard_password="s3cret-pass"))
-    assert custom == {"allowed": True, "mode": "auto", "warning": False, "reason": ""}
-    assert dashboard_editing(_settings(evaluation_judge_dashboard_editing="off", dashboard_auth_enabled=True, dashboard_password="x"))["allowed"] is False
+    # v1.6.1 D45: ``auto`` follows Dashboard sign-in (session mode), not Basic Auth credentials.
+    assert dashboard_editing(_settings())["allowed"] is False  # auto + sign-in off
+    assert dashboard_editing(_settings(dashboard_auth_mode="session")) == {"allowed": True, "mode": "auto", "warning": False, "reason": ""}
+    assert dashboard_editing(_settings(dashboard_auth_enabled=True, dashboard_auth_mode=""))["allowed"] is True  # derived session
+    assert dashboard_editing(_settings(evaluation_judge_dashboard_editing="off", dashboard_auth_mode="session"))["allowed"] is False
     dev = dashboard_editing(_settings(evaluation_judge_dashboard_editing="insecure_dev"))
     assert dev["allowed"] is True and dev["warning"] is True
+    ignored = dashboard_editing(_settings(evaluation_judge_dashboard_editing="insecure_dev", dashboard_auth_mode="session"))
+    assert ignored["allowed"] is True and ignored["warning"] is False and "ignored" in ignored["reason"]
 
 
 # ---------------------------------------------------------------------------
@@ -1274,7 +1276,7 @@ def test_judge_profiles_page_defaults_to_rules_and_is_read_only(client, monkeypa
     _use_env(monkeypatch)
     html = client.get(PAGE).text
     assert 'id="judge-in-use-profile">default<' in html or 'id="judge-in-use-profile">deterministic<' in html
-    assert "rule-based default" in html and 'id="judge-read-only"' in html and "Basic Auth is off" in html
+    assert "rule-based default" in html and 'id="judge-read-only"' in html and "sign-in is off" in html
     assert 'id="judge-profile-form"' not in html and 'id="judge-deactivate"' not in html
     assert 'href="/dashboard/judge-profiles">Judge Profiles</a>' in html  # navigation entry
     blocked = _post(client, PAGE, LM_FORM)

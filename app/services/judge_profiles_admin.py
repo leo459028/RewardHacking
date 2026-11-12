@@ -224,25 +224,27 @@ STATUS_LABELS = ("draft", "invalid", "active", "breaker_open", "needs_reprobe", 
 
 
 def dashboard_editing(settings: Settings) -> dict[str, Any]:
-    """D16: may the Dashboard write judge profiles? ``auto`` needs Basic Auth on with non-default credentials."""
+    """May the Dashboard write judge profiles? (v1.5.12 D16, changed in v1.6.1 D45)
+
+    ``auto`` allows editing only with Dashboard sign-in (``DASHBOARD_AUTH_MODE=session``); who may write is then the
+    ``judge.profile.write`` permission (applied in P3). ``insecure_dev`` only means something in ``off`` mode and is
+    ignored (treated as ``auto``) in ``session`` mode.
+    """
     mode = settings.evaluation_judge_dashboard_editing
+    signed_in = settings.dashboard_auth_mode == "session"
     if mode == "off":
         return {"allowed": False, "mode": mode, "warning": False, "reason": "EVALUATION_JUDGE_DASHBOARD_EDITING=off."}
-    if mode == "insecure_dev":
+    if mode == "insecure_dev" and not signed_in:
         return {
             "allowed": True,
             "mode": mode,
             "warning": True,
             "reason": "insecure_dev: anyone who can open the Dashboard can change judge profiles. Local development only.",
         }
-    default_credentials = settings.dashboard_username == "admin" and settings.dashboard_password == "admin"
-    if not settings.dashboard_auth_enabled:
-        reason = "Dashboard Basic Auth is off (DASHBOARD_AUTH_ENABLED=false)."
-    elif default_credentials:
-        reason = "Dashboard Basic Auth still uses the default admin/admin credentials."
-    else:
-        return {"allowed": True, "mode": mode, "warning": False, "reason": ""}
-    return {"allowed": False, "mode": mode, "warning": False, "reason": reason}
+    if not signed_in:
+        return {"allowed": False, "mode": mode, "warning": False, "reason": "Dashboard sign-in is off (DASHBOARD_AUTH_MODE=off)."}
+    reason = "insecure_dev is ignored while Dashboard sign-in is on." if mode == "insecure_dev" else ""
+    return {"allowed": True, "mode": mode, "warning": False, "reason": reason}
 
 
 def _clean_config(raw: dict[str, Any]) -> dict[str, Any]:

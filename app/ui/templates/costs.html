@@ -91,11 +91,12 @@
         <td><span class="status {{ lease.status }}">{{ lease.status }}</span></td>
         <td>{{ lease.expires_at or "-" }}</td>
         <td>
-          <form method="post" action="/dashboard/costs/leases/{{ lease.run_id }}/release">
+          {% if can("finops.manage") %}<form method="post" action="/dashboard/costs/leases/{{ lease.run_id }}/release">
+            {{ csrf_input() }}
             <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
             <input type="hidden" name="reason" value="Manual operator lease release from Costs portal">
             <button class="button secondary" type="submit">Release Lease</button>
-          </form>
+          </form>{% endif %}
         </td>
       </tr>
     {% else %}
@@ -165,7 +166,8 @@
 
 <section class="panel">
   <h2>Record Cost Adjustment <span class="heading-note">財務手動調帳與沖銷</span></h2>
-  <form method="post" action="/dashboard/costs/adjustments" class="form-grid">
+  {% if can("finops.manage") %}<form method="post" action="/dashboard/costs/adjustments" class="form-grid">
+    {{ csrf_input() }}
     <label>Tenant ID
       <input name="tenant_id" value="{{ tenant_id }}">
     </label>
@@ -199,7 +201,7 @@
     <label>&nbsp;
       <button class="button" type="submit">Record Adjustment</button>
     </label>
-  </form>
+  </form>{% endif %}
 </section>
 
 <section class="detail-grid">
@@ -260,22 +262,25 @@
         <td>
           <div class="inline-form">
             {% if item.resolution_status == "open" %}
-            <form method="post" action="/dashboard/costs/violations/{{ item.violation_id }}/acknowledge">
+            {% if can("finops.acknowledge") %}<form method="post" action="/dashboard/costs/violations/{{ item.violation_id }}/acknowledge">
+              {{ csrf_input() }}
               <input type="hidden" name="notes" value="Acknowledged from Costs Dashboard">
               <button class="button secondary" type="submit">Acknowledge</button>
-            </form>
+            </form>{% endif %}
             {% endif %}
             {% if item.resolution_status in ["open", "acknowledged"] %}
-            <form method="post" action="/dashboard/costs/violations/{{ item.violation_id }}/resolve">
+            {% if can("finops.manage") %}<form method="post" action="/dashboard/costs/violations/{{ item.violation_id }}/resolve">
+              {{ csrf_input() }}
               <input type="hidden" name="resolution_status" value="resolved">
               <input type="hidden" name="notes" value="Resolved from Costs Dashboard">
               <button class="button" type="submit">Resolve</button>
-            </form>
-            <form method="post" action="/dashboard/costs/violations/{{ item.violation_id }}/resolve">
+            </form>{% endif %}
+            {% if can("finops.manage") %}<form method="post" action="/dashboard/costs/violations/{{ item.violation_id }}/resolve">
+              {{ csrf_input() }}
               <input type="hidden" name="resolution_status" value="ignored">
               <input type="hidden" name="notes" value="Ignored from Costs Dashboard">
               <button class="button danger" type="submit">Ignore</button>
-            </form>
+            </form>{% endif %}
             {% endif %}
           </div>
         </td>

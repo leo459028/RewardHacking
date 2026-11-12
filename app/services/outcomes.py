@@ -80,19 +80,23 @@ def record_finding_metrics(evaluation: EvaluationResult) -> None:
         ).inc()
 
 
-async def refresh_review_queue_gauge(session: AsyncSession) -> dict[str, int]:
-    rows = (
-        await session.execute(
-            select(EvaluationReview.priority, func.count())
-            .where(EvaluationReview.status.in_(("open", "needs_info")))
-            .group_by(EvaluationReview.priority)
-        )
-    ).all()
+async def refresh_review_queue_gauge(session: AsyncSession, *, tenant_id: str | None = None) -> dict[str, int]:
+    """Open review counts by priority. With ``tenant_id`` (v1.6.1 D22) only that tenant is counted and the global
+    gauge is left alone."""
+    stmt = (
+        select(EvaluationReview.priority, func.count())
+        .where(EvaluationReview.status.in_(("open", "needs_info")))
+        .group_by(EvaluationReview.priority)
+    )
+    if tenant_id:
+        stmt = stmt.where(EvaluationReview.tenant_id == tenant_id)
+    rows = (await session.execute(stmt)).all()
     depth = {priority: 0 for priority in ("P0", "P1", "P2", "P3")}
     for priority, count in rows:
         depth[str(priority)] = int(count)
-    for priority, count in depth.items():
-        EVALUATION_REVIEW_QUEUE_DEPTH.labels(priority=priority).set(count)
+    if not tenant_id:
+        for priority, count in depth.items():
+            EVALUATION_REVIEW_QUEUE_DEPTH.labels(priority=priority).set(count)
     return depth
 
 

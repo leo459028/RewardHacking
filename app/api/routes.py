@@ -715,6 +715,7 @@ async def post_tenant_api_key(
         "finops_admin",
         "tenant_admin",
         "reviewer",
+        "auditor",  # v1.6.1 D21: read-only key role
         "end_user",
     }
     if payload.role not in allowed_roles:
@@ -1623,6 +1624,7 @@ async def get_governance_events(
     auth_context: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
+    require_role(auth_context, "viewer", "operator", "admin")  # v1.6.1 D21 (Gap 16)
     tenant_id = _query_tenant(tenant_id, auth_context)
     return await list_governance_events(
         session,

@@ -23,6 +23,7 @@ from app.models.governance_event import GovernanceEvent
 from app.models.incident import Incident
 from app.observability.metrics import INCIDENTS_TOTAL
 from app.schemas.evaluation import ReviewDecisionRequest
+from app.services import audit_chain
 from app.services.cheat_rates import agent_identity
 from app.services.evaluation.evidence import DEFAULT_PROTECTED_PATHS, effective_protected_paths, normalize_path
 from app.services.evaluation.taxonomy import SEVERITY_RANK, higher_priority
@@ -231,6 +232,7 @@ async def decide_review(
     review.reason = decision.reason
     review.decided_at = now
     review.status = "needs_info" if decision.label == "needs_info" else "closed"
+    audit_chain.track(session, audit_chain.REVIEW_DECISION, review)  # v1.6.1 D30: chained in this transaction
 
     run = await session.scalar(select(AgentRun).where(AgentRun.run_id == review.run_id))
     if run is not None:
@@ -328,6 +330,20 @@ def policy_to_dict(tenant_id: str, policy: TenantEvaluationPolicy | None) -> dic
         "effective_protected_paths": effective_protected_paths(tenant_paths=paths, allow_defaults=allow_defaults, request_paths=None),
         "updated_by": policy.updated_by if policy is not None else "",
     }
+
+
+async def policy_relaxes(
+    session: AsyncSession, *, tenant_id: str, protected_paths: list[str], allow_default_protected_paths: bool
+) -> bool:
+    """v1.6.1 feature seven: does this change remove any path from the tenant's effective protected set?
+
+    Removing a custom path or turning the default paths off is a relaxation (a step-up action on the Dashboard; dual
+    control from P6). Adding paths only tightens."""
+    policy = await get_evaluation_policy(session, tenant_id)
+    before = set(policy_to_dict(tenant_id, policy)["effective_protected_paths"])
+    cleaned = [normalize_path(item) for item in protected_paths if normalize_path(item)]
+    after = set(effective_protected_paths(tenant_paths=cleaned, allow_defaults=bool(allow_default_protected_paths), request_paths=None))
+    return bool(before - after)
 
 
 async def upsert_evaluation_policy(

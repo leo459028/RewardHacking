@@ -42,7 +42,7 @@ class AgentOrchestrator:
         disabled_tools: list[str] | None,
         mcp_context: object | None = None,
     ) -> tuple[AgentRequest, PolicyDecision, PromptAnalysis]:
-        analysis = analyze_prompt(request.prompt)
+        analysis = analyze_prompt(request.prompt, task_type=request.task_type)
         cleaned_request = request.model_copy(update={"prompt": analysis.cleaned_prompt})
         if mcp_context is not None:
             policy = self.policy_engine.evaluate(

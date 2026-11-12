@@ -7,7 +7,7 @@
     <div class="title-note">防護總覽</div>
     <div class="muted">總覽 runs、risk score、policy flags 與 incidents。</div>
   </div>
-  <a class="button" href="/dashboard/playground">New Test Run</a>
+  {% if can("runs.submit", "playground") %}<a class="button" href="/dashboard/playground">New Test Run</a>{% endif %}
 </div>
 
 <section class="grid stats">

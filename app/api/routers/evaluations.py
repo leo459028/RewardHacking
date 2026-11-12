@@ -12,10 +12,12 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.common import run_missing
+from app.api.routers.change_requests import api_requester
 from app.core.config import get_settings
 from app.infra.postgres import get_session
 from app.observability.metrics import EVALUATION_REVIEWS_TOTAL
 from app.schemas.audit import EvaluationRecord
+from app.services import change_requests
 from app.schemas.evaluation import (
     EvaluationPolicyRecord,
     EvaluationPolicyUpdateRequest,
@@ -59,14 +61,12 @@ from app.services.review_queue import (
     get_review,
     list_reviews,
     policy_to_dict,
-    upsert_evaluation_policy,
 )
 from app.services.review_sampling import decision_to_dict, list_decisions, sampling_summary
 from app.services.judge_background import pending_summary, sweep_pending_triage
 from app.services.evaluation.judges.templates import list_templates
 from app.services.judge_profiles_admin import (
     JudgeProfileAdminError,
-    activate_profile,
     create_profile,
     deactivate_profiles,
     delete_profile,
@@ -280,16 +280,25 @@ async def put_tenant_evaluation_policy(
 ):
     require_role(auth_context, "tenant_admin", "admin")
     tenant_id = _scoped_tenant(tenant_id, auth_context) or tenant_id
-    policy = await upsert_evaluation_policy(
+    # v1.6.1 D39 / D42: removing protected paths (or turning the defaults off) stores a change request and answers
+    # 202 while ``evaluation_policy.protected_paths`` is in DUAL_CONTROL_ACTIONS; adding paths applies at once.
+    outcome = await change_requests.execute_or_request(
         session,
-        tenant_id=tenant_id,
-        protected_paths=payload.protected_paths,
-        allow_default_protected_paths=payload.allow_default_protected_paths,
-        updated_by=payload.updated_by,
-        allow_external_judge=payload.allow_external_judge,
-        external_judge_profiles=payload.external_judge_profiles,
+        get_settings(),
+        change_requests.POLICY_PROTECTED_PATHS,
+        {
+            "tenant_id": tenant_id,
+            "protected_paths": list(payload.protected_paths),
+            "allow_default_protected_paths": payload.allow_default_protected_paths,
+            "updated_by": payload.updated_by,
+            "allow_external_judge": payload.allow_external_judge,
+            "external_judge_profiles": payload.external_judge_profiles,
+        },
+        api_requester(auth_context),
     )
-    return policy_to_dict(tenant_id, policy)
+    if outcome.pending:
+        return JSONResponse(status_code=202, content=change_requests.pending_response(outcome))
+    return policy_to_dict(tenant_id, outcome.result)
 
 
 # ---------------------------------------------------------------------------
@@ -552,10 +561,20 @@ async def post_judge_profile_activate(
 ):
     require_role(auth_context, "admin")
     try:
-        result = await activate_profile(session, get_settings(), name, actor=_profile_actor(auth_context))
+        # v1.6.1 D39: with ``judge.activate`` in DUAL_CONTROL_ACTIONS this stores a change request (202).
+        outcome = await change_requests.execute_or_request(
+            session,
+            get_settings(),
+            change_requests.JUDGE_ACTIVATE,
+            {"profile": name},
+            api_requester(auth_context),
+            direct_actor=_profile_actor(auth_context),
+        )
     except JudgeProfileAdminError as exc:
         raise _profile_admin_error(exc) from exc
-    return {**result, "signal_usage": "monitor_only"}
+    if outcome.pending:
+        return JSONResponse(status_code=202, content={**change_requests.pending_response(outcome), "signal_usage": "monitor_only"})
+    return {**outcome.result, "signal_usage": "monitor_only"}
 
 
 @router.post("/evaluations/judge/deactivate")

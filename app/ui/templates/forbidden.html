@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Access denied | 沒有權限 - Reward Guardrail{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Access denied<span class="heading-note">沒有權限</span></h1>
+  </div>
+</div>
+
+<section class="panel" data-testid="forbidden">
+  {% if reason == "tenant_scope" %}
+  <p>This page belongs to another tenant or asks for a tenant outside your account. Nothing from it is shown. | 這個頁面屬於其他租戶，或要求的租戶不在你的帳號範圍內；內容不會顯示。</p>
+  {% elif reason == "platform_view" %}
+  <p>This is a platform view. Accounts bound to a tenant cannot open it. | 這是平台層視圖，綁定租戶的帳號不能開啟。</p>
+  {% elif reason == "permission_undeclared" %}
+  <p>This route declares no permission, so it is refused by default. | 這條路由沒有宣告權限，預設拒絕。</p>
+  {% else %}
+  <p>Your role does not have the permission this page needs. | 你的角色沒有這個頁面需要的權限。</p>
+  {% endif %}
+  <table>
+    <tr><th>Required permission | 需要的權限</th><td><code data-testid="forbidden-permission">{{ permission }}</code></td></tr>
+    <tr><th>Reason | 原因</th><td><code data-testid="forbidden-reason">{{ reason }}</code></td></tr>
+    {% if principal %}
+    <tr><th>Your account | 你的帳號</th><td>{{ principal.username }} ({{ principal.role }}{% if principal.tenant_id %} · {{ principal.tenant_id }}{% endif %})</td></tr>
+    {% endif %}
+  </table>
+  <p><a href="/dashboard">Back to the Dashboard | 回到 Dashboard</a></p>
+</section>
+{% endblock %}

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Confirm it's you | 再次驗證 - Reward Guardrail{% endblock %}
+{% block content %}
+<section class="auth-card panel" data-testid="reauth">
+  <h1>Confirm it's you<span class="heading-note">再次驗證身分</span></h1>
+  <p class="muted">This action needs a recent sign-in. Enter your password, then submit the action again on the page you came from; nothing was executed yet. | 這個動作需要最近驗證過身分。請輸入密碼，回到原頁面後再送出一次；原動作尚未執行。</p>
+  {% if error %}<div class="error" role="alert" data-testid="reauth-error">{{ error }}</div>{% endif %}
+  <form method="post" action="/dashboard/reauth" class="grid">
+    {{ csrf_input() }}
+    <input type="hidden" name="next" value="{{ next_path }}">
+    <label>Username | 帳號
+      <input name="username" autocomplete="username" value="{{ principal.username }}" readonly>
+    </label>
+    <label>Password | 密碼
+      <input name="password" type="password" autocomplete="current-password" required autofocus>
+    </label>
+    <button class="button" type="submit">Confirm | 確認</button>
+  </form>
+  <p><a href="{{ next_path }}">Cancel | 取消</a></p>
+</section>
+{% endblock %}

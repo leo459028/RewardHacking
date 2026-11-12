@@ -110,7 +110,8 @@
 <section class="panel" id="evidence-preview">
   <h2>Evidence Preview <span class="heading-note">證據試算（不落庫）</span></h2>
   <p class="muted">Dry-run the evaluation engine against pasted evidence. Nothing is persisted.</p>
-  <form method="post" action="/dashboard/reviews/preview">
+  {% if can("evaluations.preview", "reviews") %}<form method="post" action="/dashboard/reviews/preview">
+    {{ csrf_input() }}
     <div class="form-grid">
       <label>Task Type
         <select name="task_type">
@@ -127,7 +128,7 @@
     <label style="margin-top:12px;">Unified Diff <textarea name="diff">{{ preview_input.get('diff', '') }}</textarea></label>
     <input type="hidden" name="test_format" value="summary">
     <div style="margin-top:12px;"><button class="button" type="submit">Preview Evaluation</button></div>
-  </form>
+  </form>{% endif %}
   {% if preview %}
   <div style="margin-top:16px;">
     <p>

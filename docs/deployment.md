@@ -72,7 +72,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 When preparing for production deployment (`APP_ENV=prod`):
 
 1. **Authentication Enforcement**:
-   - Set `AUTH_ENABLED=true` and `DASHBOARD_AUTH_ENABLED=true`.
+   - Set `AUTH_ENABLED=true` and `DASHBOARD_AUTH_MODE=session`, then create the first Dashboard admin with `python -m app.jobs.users create --role admin ...` (`docs/runbook.md` §13).
    - Never rely on default passwords (`admin:admin`).
    - Remove bootstrap fallback keys (`API_KEYS`) and provision hashed tenant keys via `/v1/tenants/{tenant_id}/api-keys`.
 2. **Operations Gate Clearance**:
