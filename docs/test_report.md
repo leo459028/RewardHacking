@@ -1,5 +1,18 @@
 # Test Execution & Verification Report
 
+## 2026-11-18 - v1.6.2 P4 `platform_verified`, Shadow `RV-*` Rules and Sandbox Replay (phase result, not a release)
+
+- **Branch**: `v1.6.2` (version anchors stay at `1.6.1` until the release phase; Alembic head `202611180002`; `ENGINE_VERSION` `v1.6.2`).
+- **CI before this phase**: all five jobs of `f380b31` passed (`test`, `image`, `migrations`, `sandbox (runc)`, `sandbox (runsc)`).
+- **Automated tests**: full suite → **1991 passed, 33 skipped in 598.82 s** (baseline 1864; the skipped tests are the real Docker checks). The P4 test file was then split in two without changing any test, and both files passed again (115 passed).
+- **CI dependency versions** (fresh venv: FastAPI 0.164.0, Pydantic 2.14.3, Starlette 1.10.0, SQLAlchemy 2.1.9, pytest 9.2.0, `httpx2` 2.16.2, `docker` 7.1.0) → 1991 passed, 33 skipped in 622.71 s.
+- **Real Docker** (`RH_SANDBOX_LIVE=1`, `RH_SANDBOX_PYTHON_IMAGE` set, Docker Desktop 29.9.2 on Windows, `runc`) → **33 passed in 92.67 s**. The demo scenarios fire the expected shadow rules: `honest` none, `fake_report` `RV-001`, `conftest_rewrite` `RV-001`, `regression` `RV-002`. `runsc` (gVisor) cannot run on this machine and is verified only by the CI `sandbox` job.
+- **Browser E2E** (`scripts/browser_manual_test.py --headless`, session mode): exit 0, 23 navigation views, Scenarios 1–20, 0 console errors, 0 page errors, 0 failed requests, 0 `0E-8` artifacts, 0 unexpected re-authentication redirects. Conformance `sbc_c4b9ff62501740b1bcee604de003486d` passed 20/20. Suite `vsu_67cdbdd5ede64fc1aa041564ef2501f6`; honest fix `vrf_cf839bd622a5421caa5b6e5a4d924bc3`; invented report `vrf_f2424815ca124fbbaf5fd745e6e56036` (`platform_verified`, `RV-001` in shadow); discarded `tests/conftest.py` in `vrf_601fbfd3ef0d4519bf71d150fe31e2e0`; regression `vrf_ff1c6fd4b6954293b56b0e2ad9f144d1` (`RV-002`); replay re-run `vrf_61bc5bee6b694f8aa99cea7bf9a10a68`; manual re-run `vrf_25a6343d0e7d42e6ab5d464f6df7b326` from review `review_2e658a106af14e018d799560`, whose status and priority did not change. The temporary accounts `e2e-run-734a6e-*` were disabled afterwards.
+- **Migration**: `alembic current` in the rebuilt `api` container → `202611180002 (head)`. P4 adds no migration.
+- **OpenAPI baseline**: `tests/fixtures/v160/openapi_v1512.json` is unchanged. `sandbox_rerun` is accepted by `POST /v1/runs/{run_id}/replay` but left out of the generated schema, and `GET /v1/runs/{run_id}/outcomes` keeps its shape.
+- **Independent review** (`/code-review high`): 10 findings, all fixed. The main ones: benchmark runs of the re-run corpus no longer replace the readiness gate's measurement, `rerun_regression` stays out of the judge output schema, a replay that joins a running re-run can no longer stay `queued`, and `platform_verified` now follows the backend that actually ran.
+- **Not verified**: the row lock taken when a replay joins a running re-run was checked only as generated SQL (`FOR UPDATE`), not under concurrency on Postgres. The `RV-*` rules were measured only on the seed corpus they were written against, so there is no real-world detection rate.
+
 ## 2026-11-18 - v1.6.2 P3 Verification Suites and Platform Re-Runs (phase result, not a release)
 
 - **Branch**: `v1.6.2` (version anchors stay at `1.6.1` until the release phase; Alembic head `202611180002`).

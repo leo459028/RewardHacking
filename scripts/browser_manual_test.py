@@ -1326,6 +1326,7 @@ def run_manual_test_suite(
 
         # Scenario 17 (v1.6.2): verification suites. Unique names keep repeated runs independent of earlier data.
         sandbox_ready = "execution_disabled" not in sandbox_status["gate"]["reasons"]
+        platform_run_id = ""
         page.goto(f"{base_url}/dashboard/verification")
         assert "Platform Verification" in page.content()
         if not sandbox_ready:
@@ -1402,6 +1403,71 @@ def run_manual_test_suite(
                 f"invented report {invented['verification_id']}: fail_to_fail 3"
             )
 
+            # Scenario 18.1 (v1.6.2 P4): the Run Detail block, its assurance level and what that level does not prove.
+            def _rule_ids(item: dict) -> set[str]:
+                assert {finding["mode"] for finding in item["findings"]} <= {"shadow"}, item["findings"]
+                return {finding["rule_id"] for finding in item["findings"]}
+
+            def _wait_for_verification(run_id: str, verification_id: str) -> dict:
+                for _ in range(90):
+                    item = page.request.get(f"{base_url}/v1/verifications/{verification_id}").json()
+                    if item["status"] not in ("queued", "running"):
+                        return item
+                    page.wait_for_timeout(2000)
+                raise AssertionError(f"re-run {verification_id} of {run_id} did not finish within 180 s")
+
+            assert (honest["assurance_level"], _rule_ids(honest)) == ("platform_verified", set()), honest
+            assert invented["assurance_level"] == "platform_verified" and "RV-001" in _rule_ids(invented), invented
+            platform_run_id = invented["run_id"]
+            page.goto(f"{base_url}/dashboard/runs/{platform_run_id}")
+            block = page.locator('[data-testid="platform-verification"]')
+            note = block.locator('[data-testid="platform-verification-note"]').inner_text()
+            assert "not tamper-proof" in note and "也不是防竄改證明" in note, note
+            assert block.locator('[data-testid="platform-assurance"]').inner_text().strip() == "platform_verified"
+            assert block.locator('[data-testid="platform-f2f"]').inner_text().strip() == "3"
+            assert "RV-001" in block.locator('[data-testid="platform-findings"]').inner_text()
+            assert "0E-8" not in page.content()
+            print(f"[Scenario 18.1] Run Detail of {platform_run_id}: platform_verified, RV-001 in shadow, the note says what the level does not prove")
+
+            # Scenario 19 (v1.6.2 P4): a rewritten conftest is discarded and a regression is reported.
+            rewritten = _rerun_scenario("conftest_rewrite")
+            assert rewritten["discarded_test_changes"] == [{"path": "tests/conftest.py", "reason": "test_config"}], rewritten
+            assert rewritten["classification"]["counts"]["fail_to_fail"] == 3 and "RV-001" in _rule_ids(rewritten), rewritten
+            regressed = _rerun_scenario("regression")
+            assert regressed["classification"]["counts"]["pass_to_fail"] == 1 and "RV-002" in _rule_ids(regressed), regressed
+            page.goto(f"{base_url}/dashboard/runs/{rewritten['run_id']}")
+            assert "tests/conftest.py" in page.locator('[data-testid="platform-discarded"]').inner_text()
+            print(f"[Scenario 19] {rewritten['verification_id']} discarded tests/conftest.py; {regressed['verification_id']} reported RV-002")
+
+            # Scenario 20 (v1.6.2 P4): a dry-run replay re-runs the tests, and a reviewer asks for a re-run from Review Detail.
+            replay_run_id = honest["run_id"]
+            page.goto(f"{base_url}/dashboard/runs/{replay_run_id}")
+            page.check('[data-testid="replay-sandbox-rerun"]')
+            page.click('[data-testid="replay-submit"]')
+            page.wait_for_load_state("networkidle")
+            assert "replay_queued" in page.content(), page.url
+            replay_id = page.locator('[data-testid="replay-attempt-verification"]').last.inner_text().strip()
+            replayed = _wait_for_verification(replay_run_id, replay_id)
+            assert (replayed["trigger"], replayed["status"], replayed["assurance_level"]) == ("replay", "completed", "platform_verified"), replayed
+            page.goto(f"{base_url}/dashboard/runs/{replay_run_id}")
+            assert page.locator('[data-testid="replay-attempt-status"]').last.inner_text().strip() == "completed"
+            print(f"[Scenario 20] Replay of {replay_run_id} re-ran the tests as {replay_id} and finished")
+
+            reviews = page.request.get(f"{base_url}/v1/reviews", params={"run_id": rewritten["run_id"]}).json()
+            assert reviews, f"the conftest rewrite of {rewritten['run_id']} opened no review"
+            review_id = reviews[0]["review_id"]
+            page.goto(f"{base_url}/dashboard/reviews/{review_id}")
+            assert "也不是防竄改證明" in page.locator('[data-testid="platform-verification-note"]').inner_text()
+            page.click('[data-testid="platform-request-rerun"]')
+            page.wait_for_load_state("networkidle")
+            assert f"/dashboard/reviews/{review_id}" in page.url and "verification_queued" in page.content(), page.url
+            newest = page.request.get(f"{base_url}/v1/runs/{rewritten['run_id']}/verifications").json()["verifications"][0]
+            manual = _wait_for_verification(rewritten["run_id"], newest["verification_id"])
+            assert (manual["trigger"], manual["status"]) == ("manual", "completed"), manual
+            review_after = page.request.get(f"{base_url}/v1/reviews/{review_id}").json()
+            assert (review_after["status"], review_after["priority"]) == (reviews[0]["status"], reviews[0]["priority"]), review_after
+            print(f"[Scenario 20.1] Review {review_id}: manual re-run {manual['verification_id']} finished; the review status and priority did not change")
+
             step_up("/dashboard/verification")
             page.goto(f"{base_url}/dashboard/verification?tenant_id={verify_tenant}")
             page.locator(f'[data-testid="verification-suite-row"][data-suite-id="{suite_id}"] [data-testid="verification-suite-disable"]').click()
@@ -1422,8 +1488,12 @@ def run_manual_test_suite(
             assert auditor_page.locator('[data-testid="verification-upload-form"]').count() == 0
             refused = auditor_page.request.post(f"{base_url}/dashboard/verification/request", form={"run_id": "run_x"}, max_redirects=0)
             assert refused.status == 403, refused.status
+            if platform_run_id:
+                auditor_page.goto(f"{base_url}/dashboard/runs/{platform_run_id}")
+                assert auditor_page.locator('[data-testid="platform-verification"]').count() == 1
+                assert auditor_page.locator('[data-testid="platform-request-rerun"]').count() == 0
             auditor_context.close()
-            print("[Scenario 17.2] Auditor reads /dashboard/verification without forms; POST -> 403")
+            print("[Scenario 17.2] Auditor reads /dashboard/verification and the Run Detail block without forms; POST -> 403")
 
         page.goto(f"{base_url}/dashboard/observability")
         obs_html = page.content()

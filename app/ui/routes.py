@@ -78,10 +78,10 @@ from app.services.control_plane import (
     list_workflow_definitions,
     persist_execution_plan,
 )
+from app.services.verification import panel as verification_panel
 from app.services.checkpoint import (
     list_replay_attempts,
     list_run_checkpoints,
-    persist_replay_attempt,
     persist_run_checkpoint,
     resume_run_from_checkpoint,
 )
@@ -102,7 +102,6 @@ from app.services.finops import (
     list_pricing_items,
     list_tenant_token_leases,
     record_checkpoint_usage,
-    record_replay_usage,
     record_submit_usage,
     release_run_budget_lease,
     render_cost_ledger_csv,
@@ -281,6 +280,7 @@ async def dashboard_run_detail(
     run_reviews = await list_reviews(session, run_id=run_id, limit=20)
     executor_eval = dict((run.evaluation_summary or {}).get("evaluation_event", {}).get("payload", {}) or {})
     latest_outcome = outcomes[-1] if outcomes else None
+    platform = await verification_panel.for_run(session, get_settings(), run)
     trace_id = (execution_plan.trace_id if execution_plan else "") or (run.request_payload or {}).get("metadata", {}).get("trace_id", "")
     legal_holds = [retention.hold_to_dict(hold) for hold in await retention.active_holds_for_run(session, run.run_id, run.tenant_id)]
     return templates.TemplateResponse(
@@ -306,6 +306,8 @@ async def dashboard_run_detail(
             "trace_id": trace_id,
             "trace_ui_url": tracing.trace_ui_url(get_settings(), trace_id),
             "legal_holds": legal_holds,
+            "platform": platform if verification_panel.visible_to(principal_of(request)) else None,
+            "sandbox_rerun_ready": platform["replay_ready"],
             "active": "runs",
         },
     )
@@ -1363,35 +1365,6 @@ async def dashboard_admin_finops_pricing_disable(
 ):
     await disable_pricing_item(session, pricing_id, updated_by=actor_for(request, "dashboard"))
     return RedirectResponse(f"/dashboard/admin/finops/pricing/{pricing_id}", status_code=303)
-
-
-@router.post("/dashboard/runs/{run_id}/replay", response_class=HTMLResponse, dependencies=needs("runs.replay"))
-async def dashboard_run_replay(
-    request: Request,
-    run_id: str,
-    session: AsyncSession = Depends(get_session),
-):
-    run = await get_run(session, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Run not found.")
-    await ensure_tenant_access(request, session, run.tenant_id, permission="runs.replay")
-    plan = await get_execution_plan_for_run(session, run_id)
-    if plan is None:
-        raise HTTPException(status_code=404, detail="Execution plan not found.")
-    steps = await list_execution_plan_steps(session, run_id)
-    attempt = await persist_replay_attempt(
-        session,
-        run=run,
-        plan=plan,
-        steps=steps,
-        mode="dry_run",
-        created_by=actor_for(request, "dashboard-operator"),
-    )
-    await record_replay_usage(session, run=run, plan=plan, attempt=attempt)
-    return HTMLResponse(
-        f'<meta http-equiv="refresh" content="0; url=/dashboard/runs/{run_id}">'
-        f'<a href="/dashboard/runs/{run_id}">Back to run detail</a>'
-    )
 
 
 @router.post("/dashboard/runs/{run_id}/resume", response_class=HTMLResponse, dependencies=needs("runs.resume"))

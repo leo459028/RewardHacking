@@ -25,6 +25,7 @@ from app.services.outcomes import list_outcomes, preview_evaluation, refresh_rev
 from app.services import change_requests
 from app.services.review_queue import ReviewError, decide_review, get_review, list_reviews, policy_relaxes
 from app.services.review_sampling import sampling_summary
+from app.services.verification import panel as verification_panel
 from app.ui.routers.change_requests import pending_message
 from app.ui.routes import dashboard_auth, templates
 from app.ui.security import actor_for, csrf_protect, ensure_permission, ensure_tenant_access, needs, principal_of, scoped_tenant
@@ -159,6 +160,7 @@ async def dashboard_review_detail(request: Request, review_id: str, session: Asy
     run = await get_run(session, review.run_id)
     outcomes = await list_outcomes(session, review.run_id)
     assessments = await list_assessments(session, review_id=review_id)
+    show_platform = run is not None and verification_panel.visible_to(principal_of(request))
     return templates.TemplateResponse(
         request,
         "review_detail.html",
@@ -167,6 +169,7 @@ async def dashboard_review_detail(request: Request, review_id: str, session: Asy
             "run": run,
             "outcomes": outcomes,
             "assessments": assessments,
+            "platform": await verification_panel.for_run(session, get_settings(), run) if show_platform else None,
             "judge_mode": get_settings().evaluation_judge_mode,
             "labels": REVIEW_LABELS,
             "categories": sorted(CATEGORIES.keys()),

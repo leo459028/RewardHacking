@@ -171,6 +171,9 @@
   {% include "_findings.html" %}
 </section>
 
+{% set platform_return = "run" %}
+{% include "_platform_verification.html" %}
+
 {% if run.status in ["completed", "review_required"] %}
 <section class="panel" id="submit-outcome">
   <h2>Submit Outcome Evidence <span class="heading-note">提交產出證據（agent 自行回報＝self_reported）</span></h2>
@@ -269,7 +272,8 @@
   <div class="form-grid" style="margin-bottom: 12px;">
     {% if can("runs.replay") %}<form method="post" action="/dashboard/runs/{{ run.run_id }}/replay" class="decision-form">
       {{ csrf_input() }}
-      <button class="button secondary" type="submit">Trigger Dry-Run Replay</button>
+      {% if sandbox_rerun_ready %}<label><input type="checkbox" name="sandbox_rerun" value="1" data-testid="replay-sandbox-rerun"> Re-run tests in sandbox | 在 sandbox 重跑測試</label>{% endif %}
+      <button class="button secondary" type="submit" data-testid="replay-submit">Trigger Dry-Run Replay</button>
     </form>{% endif %}
     {% if can("runs.resume") %}<form method="post" action="/dashboard/runs/{{ run.run_id }}/resume" class="decision-form">
       {{ csrf_input() }}
@@ -296,17 +300,19 @@
   </table>
   <h3>Replay Attempts</h3>
   <table>
-    <thead><tr><th>Replay</th><th>Mode</th><th>Status</th><th>Created By</th></tr></thead>
+    <thead><tr><th>Replay</th><th>Mode</th><th>Status</th><th>Sandbox re-run | 沙箱重跑</th><th>Created By</th></tr></thead>
     <tbody>
     {% for attempt in replay_attempts %}
-      <tr>
+      {% set verification_id = (attempt.result_payload or {}).get("verification_id") %}
+      <tr data-testid="replay-attempt">
         <td>{{ attempt.replay_id }}</td>
         <td>{{ attempt.mode }}</td>
-        <td><span class="status {{ attempt.status }}">{{ attempt.status }}</span></td>
+        <td><span class="status {{ attempt.status }}" data-testid="replay-attempt-status">{{ attempt.status }}</span></td>
+        <td>{% if verification_id and platform %}<a href="/dashboard/verification/runs/{{ verification_id }}" data-testid="replay-attempt-verification"><code>{{ verification_id }}</code></a>{% elif verification_id %}<code>{{ verification_id }}</code>{% else %}-{% endif %}</td>
         <td>{{ attempt.created_by }}</td>
       </tr>
     {% else %}
-      <tr><td colspan="4" class="muted">No replay attempts recorded.</td></tr>
+      <tr><td colspan="5" class="muted">No replay attempts recorded.</td></tr>
     {% endfor %}
     </tbody>
   </table>

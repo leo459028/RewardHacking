@@ -61,6 +61,9 @@
   {% include "_findings.html" %}
 </section>
 
+{% set platform_return = "review" %}
+{% include "_platform_verification.html" %}
+
 {% if review.status in ["open", "needs_info"] %}
 <section class="panel" id="review-decision">
   <h2>Review Decision <span class="heading-note">審查決定（不會重新執行 run）</span></h2>

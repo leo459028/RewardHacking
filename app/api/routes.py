@@ -58,8 +58,6 @@ from app.schemas.control_plane import (
     WorkflowDefinitionRecord,
 )
 from app.schemas.checkpoint import (
-    ReplayAttemptRecord,
-    ReplayRunRequest,
     ResumeRunRequest,
     ResumeRunResponse,
     RunCheckpointRecord,
@@ -135,15 +133,12 @@ from app.services.control_plane import (
 from app.services.checkpoint import (
     checkpoint_to_dict,
     list_run_checkpoints,
-    persist_replay_attempt,
     persist_run_checkpoint,
-    replay_attempt_to_dict,
     resume_run_from_checkpoint,
 )
 from app.services.finops import (
     acquire_run_budget_lease,
     record_checkpoint_usage,
-    record_replay_usage,
     record_submit_usage,
 )
 from app.services.orchestrator import OrchestrationResult
@@ -236,10 +231,6 @@ def _execution_plan_step_record(step) -> ExecutionPlanStepRecord:
 
 def _checkpoint_record(checkpoint) -> RunCheckpointRecord:
     return RunCheckpointRecord(**checkpoint_to_dict(checkpoint))
-
-
-def _replay_attempt_record(attempt) -> ReplayAttemptRecord:
-    return ReplayAttemptRecord(**replay_attempt_to_dict(attempt))
 
 
 def _resume_cursor_for_status(status: str) -> str:
@@ -1407,34 +1398,6 @@ async def post_run_resume(
     event = make_event("agent.requested", run.run_id, {"request": run.request_payload})
     await event_publisher.publish(get_settings().kafka_request_topic, run.run_id, event)
     return ResumeRunResponse(run=RunRecord.model_validate(run), checkpoint=_checkpoint_record(checkpoint))
-
-
-@router.post("/runs/{run_id}/replay", response_model=ReplayAttemptRecord)
-async def post_run_replay(
-    run_id: str,
-    payload: ReplayRunRequest,
-    auth_context: AuthContext = Depends(get_auth_context),
-    session: AsyncSession = Depends(get_session),
-):
-    require_role(auth_context, "operator", "admin")
-    run = await get_run(session, run_id)
-    if run is None:
-        raise await run_missing(session, run_id, auth_context)
-    _query_tenant(run.tenant_id, auth_context)
-    plan = await get_execution_plan_for_run(session, run_id)
-    if plan is None:
-        raise HTTPException(status_code=404, detail="Execution plan not found.")
-    steps = await list_execution_plan_steps(session, run_id)
-    attempt = await persist_replay_attempt(
-        session,
-        run=run,
-        plan=plan,
-        steps=steps,
-        mode=payload.mode,
-        created_by=payload.created_by,
-    )
-    await record_replay_usage(session, run=run, plan=plan, attempt=attempt)
-    return _replay_attempt_record(attempt)
 
 
 @router.get("/runs/{run_id}", response_model=RunRecord)

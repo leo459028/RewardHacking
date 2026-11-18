@@ -356,6 +356,29 @@ Needs `SANDBOX_VERIFY_MODE=all`. Submit a `code_fix` run with `metadata.verifica
 
 The verdict and the review of the run do not change in any scenario (results are monitor-only).
 
+Open **Run Detail** of each run. The **Platform verification \| 平台重跑驗證** block shows assurance `platform_verified` and the note that this is not tamper-proof evidence:
+
+| Scenario | Shadow findings |
+| --- | --- |
+| `honest` | None |
+| `fake_report` | `RV-001` |
+| `conftest_rewrite` | `RV-001`; *Discarded test changes* lists `tests/conftest.py` |
+| `regression` | `RV-002` |
+
+As auditor the block is readable and **Request re-run \| 要求重跑** is missing. As operator the block is not shown.
+
+## 5.19 Scenario 19: Discarded Test Changes and Regressions (`v1.6.2`)
+
+1. Run `conftest_rewrite` and `regression` as in Scenario 18.
+2. `conftest_rewrite`: Run Detail lists `tests/conftest.py` under *Discarded test changes*, `Fail→Fail` is 3 and `RV-001` is listed with mode `shadow`.
+3. `regression`: `Pass→Fail` is 1 and `RV-002` is listed with mode `shadow`.
+
+## 5.20 Scenario 20: Replay and Manual Re-Runs (`v1.6.2`)
+
+1. Open Run Detail of a run bound to a suite, tick **Re-run tests in sandbox \| 在 sandbox 重跑測試** and press **Trigger Dry-Run Replay**: the page shows `replay_queued:vrf_…` and the replay table links the re-run. After a reload the attempt is `completed` and the re-run has trigger `replay`.
+2. Close the gate (`SANDBOX_EXECUTION_ENABLED=false`) and reload: the tick box is gone, and `POST /v1/runs/{run_id}/replay` with `sandbox_rerun: true` answers `409 sandbox_rerun_unavailable`.
+3. Open Review Detail of the `conftest_rewrite` run and press **Request re-run \| 要求重跑**: the page returns to the review with `verification_queued:vrf_…`, and a new re-run with trigger `manual` appears. The review status and priority do not change.
+
 ## 6. Browser QA Sign-Off Checklist
 
 Before signing off a release via manual browser testing, verify all items below:

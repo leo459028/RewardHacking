@@ -10,11 +10,14 @@
   </div>
 </div>
 
+<p class="notice" data-testid="verification-detail-note">{{ assurance_note }} | {{ assurance_note_zh }}</p>
+
 <section class="grid stats">
   <div class="stat"><div class="stat-label">Status | 狀態</div><div class="stat-value"><span class="status {{ 'completed' if item.status == 'completed' else ('failed' if item.status == 'failed' else 'pending') }}" data-testid="verification-detail-status">{{ item.status }}</span></div></div>
   <div class="stat"><div class="stat-label">Fail→Pass</div><div class="stat-value" data-testid="verification-detail-f2p">{{ counts.fail_to_pass if counts else "-" }}</div></div>
   <div class="stat"><div class="stat-label">Pass→Fail</div><div class="stat-value" data-testid="verification-detail-p2f">{{ counts.pass_to_fail if counts else "-" }}</div></div>
   <div class="stat"><div class="stat-label">Flaky</div><div class="stat-value" data-testid="verification-detail-flaky">{{ counts.flaky if counts else "-" }}</div></div>
+  <div class="stat"><div class="stat-label">Assurance | 保證等級</div><div class="stat-value"><span class="assurance {{ item.assurance_level or 'none' }}" data-testid="verification-detail-assurance">{{ item.assurance_level or "-" }}</span></div></div>
 </section>
 
 <section class="panel">
@@ -65,6 +68,11 @@
   <p data-testid="verification-detail-coverage">{{ item.coverage.changed_lines_executed }} / {{ item.coverage.changed_lines_total }} changed lines executed. | 變更行中有這些行被執行。</p>
   {% for line in item.coverage.unexecuted %}<div><code>{{ line.path }}:{{ line.line }}</code></div>{% endfor %}
   {% else %}<p class="muted" data-testid="verification-detail-coverage">Not measured. | 未量測。</p>{% endif %}
+</section>
+
+<section class="panel">
+  <h2>Shadow findings <span class="heading-note">Shadow 偵測結果（不影響判定）</span></h2>
+  <div data-testid="verification-detail-findings">{% set findings = item.findings %}{% include "_findings.html" %}</div>
 </section>
 
 <section class="panel">

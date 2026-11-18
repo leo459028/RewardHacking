@@ -21,7 +21,7 @@ from app.models.evaluation_review import TenantEvaluationPolicy
 from app.services import change_requests
 from app.services.audit_log import get_run
 from app.services.sandbox import docker_config, gate
-from app.services.verification import publishing, sampling, suites
+from app.services.verification import assurance, publishing, sampling, suites
 from app.services.verification.errors import VerificationError
 from app.ui.routers.change_requests import pending_message
 from app.ui.routes import dashboard_auth, templates
@@ -86,7 +86,14 @@ async def dashboard_verification_detail(verification_id: str, request: Request, 
         raise HTTPException(status_code=404, detail="Verification not found.")
     await ensure_tenant_access(request, session, row.tenant_id, permission="verification.view")
     return templates.TemplateResponse(
-        request, "verification_detail.html", {"active": "verification", "item": sampling.verification_to_dict(row)}
+        request,
+        "verification_detail.html",
+        {
+            "active": "verification",
+            "item": sampling.verification_to_dict(row),
+            "assurance_note": assurance.ASSURANCE_NOTE,
+            "assurance_note_zh": assurance.ASSURANCE_NOTE_ZH,
+        },
     )
 
 
@@ -152,9 +159,26 @@ async def dashboard_verification_default(
     return _back(message=f"suite_default_{'set' if enabled == '1' else 'cleared'}:{suite_id}")
 
 
+def _request_back(run_id: str, return_to: str, review_id: str, *, message: str = "", error: str = "") -> RedirectResponse:
+    """Back to the page the button was pressed on. Only quoted IDs reach the path, so the redirect cannot leave the site."""
+    query = f"message={quote(message)}" if message else f"error={quote(error)}"
+    if return_to == "review" and review_id:
+        return RedirectResponse(f"/dashboard/reviews/{quote(review_id, safe='')}?{query}", status_code=303)
+    if return_to == "run":
+        return RedirectResponse(f"/dashboard/runs/{quote(run_id, safe='')}?{query}", status_code=303)
+    return _back(message=message, error=error)
+
+
 @router.post(PAGE + "/request", response_class=HTMLResponse, dependencies=needs("verification.request", view=VIEW))
-async def dashboard_verification_request(request: Request, run_id: str = Form(default=""), session: AsyncSession = Depends(get_session)):
-    run = await get_run(session, run_id.strip())
+async def dashboard_verification_request(
+    request: Request,
+    run_id: str = Form(default=""),
+    return_to: str = Form(default=""),
+    review_id: str = Form(default=""),
+    session: AsyncSession = Depends(get_session),
+):
+    run_id = run_id.strip()
+    run = await get_run(session, run_id)
     if run is None:
         await _hide_from_tenant_users(request, session, "verification.request")
         return _back(error="run_not_found")
@@ -162,6 +186,6 @@ async def dashboard_verification_request(request: Request, run_id: str = Form(de
     try:
         row, created = await sampling.request_manual(session, get_settings(), run=run, requested_by=actor_for(request, "dashboard"))
     except VerificationError as exc:
-        return _back(error=exc.code)
+        return _request_back(run_id, return_to, review_id.strip(), error=exc.code)
     state = row.skip_reason if row.status == sampling.SKIPPED else ("queued" if created else "already_active")
-    return _back(message=f"verification_{state}:{row.verification_id}")
+    return _request_back(run_id, return_to, review_id.strip(), message=f"verification_{state}:{row.verification_id}")

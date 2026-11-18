@@ -23,6 +23,7 @@ from app.core.logging import configure_logging
 from app.infra.postgres import close_engine, init_engine
 from app.services import audit_chain, change_requests, judge_activation
 from app.services.retention import RetentionError
+from app.api.routers.replay import router as replay_router
 from app.services.verification.errors import VerificationError
 from app.services.evaluation.judges.profiles import load_profiles
 from app.observability.metrics import HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_TOTAL
@@ -32,6 +33,7 @@ from app.ui.routers.benchmark import router as benchmark_ui_router
 from app.ui.routers.change_requests import router as change_requests_ui_router
 from app.ui.routers.judges import router as judges_ui_router
 from app.ui.routers.operations import router as operations_ui_router
+from app.ui.routers.replay import router as replay_ui_router
 from app.ui.routers.retention import router as retention_ui_router
 from app.ui.routers.reviews import router as reviews_ui_router
 from app.ui.routers.sandbox import router as sandbox_ui_router
@@ -302,6 +304,7 @@ app.include_router(evaluations_router)
 app.include_router(benchmark_router)
 app.include_router(operations_router)
 app.include_router(retention_router)
+app.include_router(replay_router)
 app.include_router(sandbox_router)
 app.include_router(verification_router)
 app.include_router(audit_chain_router)
@@ -315,5 +318,6 @@ app.include_router(operations_ui_router)
 app.include_router(retention_ui_router)
 app.include_router(audit_chain_ui_router)
 app.include_router(change_requests_ui_router)
+app.include_router(replay_ui_router)
 app.include_router(sandbox_ui_router)
 app.include_router(verification_ui_router)
