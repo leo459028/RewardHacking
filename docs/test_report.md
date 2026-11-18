@@ -13,7 +13,8 @@
 - **Hooks**: `post_edit_lint.py` 0.25 s, fired on a real `Write` and reported `F401`. `stop_check.py` 0.42–0.44 s before `lint-imports` was added (`lint-imports` itself 0.6 s); it was tested by feeding it hook input, not by ending a live turn.
 - **Pre-commit** (real `git commit` in a disposable repository): refused `docs/plan/`, `docs/handoff.md`, `.env`, `.env.e2e`, `config/k.pem`, a nested `*.pem`, `config/judge_profiles.yaml` and trailing whitespace; allowed `.env.example` and an ordinary file.
 - **`AGENTS.md`**: 191 lines / 31,479 bytes → 119 lines / 15,439 bytes.
-- **Not run in this phase**: the browser E2E (the deny rule on `.env.e2e` keeps the agent from loading the accounts it needs), the new CI jobs and the `release-image.yml` manual run (the branch has not been pushed).
+- **Browser E2E** (`python scripts/browser_manual_test.py --headless`, exit 0, against the stack on the new image): Scenarios 1–15 passed, 21 navigation tabs returned 200 with 0 `0E-8` artifacts, 0 console errors or warnings, 0 page errors, 0 failed requests, 0 unexpected re-authentication redirects. Live IDs: run `a3a4fccf-a8b2-451e-b20c-9056089e0160`, review `review_85e9c3df287e48868d9f4220`, benchmark `bmr_0eef925e32d04be483b3f67e`, checkpoint `acp_6c99240a1fc641908a72766a4d75a73a` (signed), change request `chg_316240fd3bf79de9e2fa3ce2`. The run used three accounts created for it with generated passwords (`e2e-run-d27f30-admin`, `-admin2`, `-auditor`), because the agent may not read `.env.e2e`; all three were disabled afterwards.
+- **Not run in this phase**: the new CI jobs and the `release-image.yml` manual run (the branch has not been pushed).
 
 ## 2026-11-12 - v1.6.1 Enterprise Access & Audit Integrity Verification
 
