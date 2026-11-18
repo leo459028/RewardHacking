@@ -1,0 +1,11 @@
+*
+!app/
+!migrations/
+!alembic.ini
+!requirements.txt
+!requirements-otel.txt
+!README.md
+!LICENSE
+!config/*.example.yaml
+**/__pycache__
+**/*.pyc

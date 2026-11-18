@@ -115,7 +115,7 @@ def test_leaf_modules_import_nothing_from_the_app(path):
 def test_architecture_contracts_pass():
     executable = shutil.which("lint-imports")
     if executable is None:
-        pytest.skip("import-linter is not installed (pip install -r requirements.txt)")
+        pytest.skip("import-linter is not installed (pip install -r requirements-dev.txt)")
     result = subprocess.run([executable], cwd=ROOT, capture_output=True, text=True, timeout=300)
     assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-2000:]
     assert "0 broken" in result.stdout

@@ -17,6 +17,7 @@ Application configuration is loaded from environment variables and local `.env` 
 | `LOG_LEVEL` | `INFO` | Structlog level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 | `API_HOST` | `0.0.0.0` | Ingress binding host interface |
 | `API_PORT` | `8000` | Ingress HTTP port |
+| `RH_AUTO_MIGRATE` | `true` | `v1.6.2`, read by the container start command: `true` runs `alembic upgrade head` before the API starts and a failed migration stops the start; set `false` on all but one replica |
 | `POSTGRES_DSN` | `postgresql+asyncpg://app:app@localhost:5432/app` | SQLAlchemy asynchronous PostgreSQL connection string |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis URI for run states, circuit breakers, and tenant quotas |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka broker endpoints for asynchronous event messaging |

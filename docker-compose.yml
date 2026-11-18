@@ -110,6 +110,9 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: ["sh", "-c", "python -m app.workers.consumer"]
+    # The image health check probes the API port, which the worker does not serve.
+    healthcheck:
+      disable: true
 
   # v1.6.0 D8: optional trace backend. `docker compose --profile observability up -d`, set OTEL_ENABLED=true in .env,
   # rebuild api / worker, then open http://localhost:16686. Pinned to a release at least two weeks old.

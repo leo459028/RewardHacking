@@ -1,0 +1,8 @@
+# Development and test tools (v1.6.2): never installed into the published image.
+-r requirements.txt
+aiosqlite>=0.20.0
+httpx2>=2.0.0
+pytest>=8.3.0
+pytest-asyncio>=0.23.0
+ruff>=0.6.0
+import-linter>=2.15,<2.16
