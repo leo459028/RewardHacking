@@ -714,6 +714,7 @@ def test_discarded_test_changes_are_recorded():
         ([("timeout", None, {})], "before_no_report"),
         ([("error", None, {})], "sandbox_error:image_missing"),
         ([FAILING, ("timeout", None, {})], "after_no_report"),
+        ([FAILING, ("nonzero_exit", None, {})], "after_no_report"),  # pytest itself killed: Docker may not report an OOM
         ([FAILING, ("oom", FIXED, {})], "after_no_report"),
         ([FAILING, ("error", None, {})], "sandbox_error:image_missing"),
     ],

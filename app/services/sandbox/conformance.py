@@ -344,7 +344,10 @@ def pids_limit_enforced(factory: BackendFactory, image: str = CONFORMANCE_IMAGE)
 
 
 def memory_limit_enforced(factory: BackendFactory, image: str = CONFORMANCE_IMAGE) -> CaseResult:
-    result = _shell(factory(), image, "dd if=/dev/zero of=/dev/null bs=256M count=1", timeout=30, memory_mb=32)
+    # The shell must outlive dd: when the container's main process is the one killed, Docker can handle the exit first
+    # and never record the OOM. The pass condition stays Docker's own report.
+    script = "dd if=/dev/zero of=/dev/null bs=256M count=1; echo dd-finished; sleep 1"
+    result = _shell(factory(), image, script, timeout=30, memory_mb=32)
     return _check("memory_limit_enforced", result.status == "oom" and STARTED in result.stdout, _describe(result))
 
 
