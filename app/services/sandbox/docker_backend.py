@@ -32,6 +32,9 @@ TMPFS_OPTIONS = "noexec,nosuid,size=64m"
 TAR_OVERHEAD_BYTES = 1_048_576  # headers of the output archive, on top of max_output_files_bytes
 STREAM_DRAIN_SECONDS = 5
 ORPHAN_GRACE_SECONDS = 300
+SIGKILL_EXIT_CODE = 137
+OOM_REPORT_WAIT_SECONDS = 3.0
+OOM_REPORT_POLL_SECONDS = 0.1
 
 
 class _BoundedOutput:
@@ -347,6 +350,8 @@ class DockerBackend:
             reader.join(STREAM_DRAIN_SECONDS)
 
             container.reload()
+            if not timed_out:
+                self._await_oom_report(container)
             attrs = container.attrs or {}
             state = attrs.get("State") or {}
             self._last_host_config = dict(attrs.get("HostConfig") or {})
@@ -377,6 +382,18 @@ class DockerBackend:
             )
         finally:
             self._cleanup(attach, container, volumes)
+
+    @staticmethod
+    def _await_oom_report(container: Any) -> None:
+        """Docker delivers the OOM event apart from the exit event, so a SIGKILLed container can read as not OOM-killed
+        for a moment (seen with gVisor). Only Docker's own ``OOMKilled`` flag ever counts as an OOM."""
+        deadline = time.monotonic() + OOM_REPORT_WAIT_SECONDS
+        while time.monotonic() < deadline:
+            state = (container.attrs or {}).get("State") or {}
+            if state.get("ExitCode") != SIGKILL_EXIT_CODE or state.get("OOMKilled"):
+                return
+            time.sleep(OOM_REPORT_POLL_SECONDS)
+            container.reload()
 
     @staticmethod
     def _drain(frames: Iterable[Any], stdout: _BoundedOutput, stderr: _BoundedOutput) -> None:

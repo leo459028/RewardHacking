@@ -330,6 +330,36 @@ def test_oom_flag_wins_over_a_zero_exit_code():
     assert backend.run(_spec()).status == "oom"
 
 
+def test_a_sigkilled_container_waits_for_dockers_late_oom_report(monkeypatch):
+    reloads = []
+
+    def reload(container) -> None:
+        reloads.append(1)
+        container.attrs["State"]["OOMKilled"] = len(reloads) >= 3
+
+    monkeypatch.setattr(FakeContainer, "reload", reload)
+    monkeypatch.setattr(docker_backend, "OOM_REPORT_POLL_SECONDS", 0)
+    backend, _ = _backend(FakeDocker(exit_code=137))
+    assert backend.run(_spec()).status == "oom" and len(reloads) == 3
+
+
+def test_a_sigkill_without_an_oom_report_is_not_called_an_oom(monkeypatch):
+    monkeypatch.setattr(docker_backend, "OOM_REPORT_WAIT_SECONDS", 0.02)
+    monkeypatch.setattr(docker_backend, "OOM_REPORT_POLL_SECONDS", 0.001)
+    backend, _ = _backend(FakeDocker(exit_code=137))
+    result = backend.run(_spec())
+    assert (result.status, result.exit_code) == ("nonzero_exit", 137)
+
+
+@pytest.mark.parametrize("exit_code", [0, 1, 143])
+def test_other_exit_codes_do_not_wait_for_an_oom_report(monkeypatch, exit_code):
+    reloads = []
+    monkeypatch.setattr(FakeContainer, "reload", lambda container: reloads.append(1))
+    backend, _ = _backend(FakeDocker(exit_code=exit_code))
+    backend.run(_spec())
+    assert len(reloads) == 1
+
+
 def test_timeout_kills_the_container():
     backend, client = _backend(FakeDocker(hang=True))
     result = backend.run(_spec(limits=replace(LIMITS, timeout_seconds=1)))
