@@ -1,7 +1,7 @@
 """Sandbox backend contract (v1.6.0 D18, D20, D21).
 
 ``SandboxBackend.run`` is synchronous on purpose: the tool path (``orchestrator.execute`` ->
-``executor.execute``) is synchronous, and a real backend (v1.6.1) is called through ``asyncio.to_thread``.
+``executor.execute``) is synchronous, and the Docker backend (v1.6.2) is called through ``asyncio.to_thread``.
 
 Isolation level and evidence provenance are two independent fields (D22): a backend never raises provenance.
 """
@@ -36,7 +36,7 @@ class IsolationLevel(IntEnum):
             raise ValueError(f"unknown isolation level: {value!r}") from exc
 
 
-NETWORK_MODES = ("none", "egress_proxy")  # egress_proxy is reserved for v1.6.3
+NETWORK_MODES = ("none", "egress_proxy")  # egress_proxy is reserved for v1.6.6+
 RESULT_STATUSES = ("ok", "nonzero_exit", "timeout", "oom", "rejected", "error")
 LIMIT_FIELDS = ("timeout_seconds", "cpu_millis", "memory_mb", "pids", "max_output_bytes", "max_output_files_bytes")
 

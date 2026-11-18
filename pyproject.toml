@@ -80,6 +80,24 @@ source_modules = ["app.services.sandbox"]
 forbidden_modules = ["app.api", "app.ui", "app.workers"]
 
 [[tool.importlinter.contracts]]
+name = "Only sandbox-runner may load the Docker backend; the API and the worker never reach Docker (v1.6.2 D19)"
+type = "forbidden"
+source_modules = [
+    "app.main",
+    "app.api",
+    "app.ui",
+    "app.workers.consumer",
+    "app.workers.producer",
+    "app.services.executor",
+    "app.services.orchestrator",
+    "app.services.operations",
+    "app.services.sandbox.registry",
+    "app.services.sandbox.health",
+    "app.services.sandbox.gate",
+]
+forbidden_modules = ["app.services.sandbox.docker_backend"]
+
+[[tool.importlinter.contracts]]
 name = "FinOps submodules are layered (higher layers may import lower ones, never the reverse)"
 type = "layers"
 containers = ["app.services.finops"]

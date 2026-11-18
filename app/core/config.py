@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from functools import lru_cache
+import json
 import re
 from typing import Any
 
@@ -100,14 +101,32 @@ class Settings(BaseSettings):
     # person: retention.apply, legal_hold.release, judge.activate, evaluation_policy.protected_paths. Empty = off.
     dual_control_actions: str = ""
     dual_control_request_ttl_hours: int = 24
-    # v1.6.0 D21 / D23: sandbox spec. "simulated" (nothing is executed) is the only backend in this release;
-    # the isolation requirement is recorded in the tool transcript and enforced from v1.6.1.
+    # v1.6.0 D21 / D23, v1.6.2 D14-D20: sandbox. "simulated" executes nothing. "docker" is used only by sandbox-runner
+    # for conformance and platform re-runs, and only behind the execution gate; agent-run tools stay simulated.
     sandbox_backend: str = "simulated"
     sandbox_high_risk_threshold: float | None = None  # None -> DEFAULT_RISK_THRESHOLD
     sandbox_min_isolation_default: str = "container"
     sandbox_min_isolation_high_risk: str = "gvisor"
     sandbox_max_timeout_seconds: int = 300
     sandbox_max_output_bytes: int = 1048576
+    sandbox_execution_enabled: bool = False  # D14: feature flag; the conformance gate must also pass
+    sandbox_docker_runtime: str = "runc"  # D20: runc -> isolation "container"; runsc -> "gvisor"
+    sandbox_docker_user: str = "65534:65534"  # D16: numeric uid:gid, never 0
+    sandbox_docker_pull: str = "never"  # D16: never | missing
+    sandbox_docker_allow_local_image_ids: bool = False  # D18: local development only; always false when APP_ENV=prod
+    sandbox_conformance_image: str = "busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec"
+    sandbox_conformance_max_age_hours: int = 168
+    # D18: JSON {"python": "<digest-pinned reference>"}. ``str`` lets an empty variable reach the validator below.
+    sandbox_images: dict[str, str] | str = Field(default_factory=dict)
+    sandbox_artifact_max_bytes: int = 20971520
+    # v1.6.2 D32: platform re-run sampling and limits (used from P3; off by default).
+    sandbox_verify_mode: str = "off"  # off | sampled | all
+    sandbox_verify_sample_rate: float = 0.0
+    sandbox_verify_sample_secret: SecretStr = SecretStr("")
+    sandbox_verify_daily_cap_per_tenant: int = 50
+    sandbox_verify_flaky_retries: int = 2
+    sandbox_verify_timeout_seconds: int = 300
+    sandbox_compute_cost_per_cpu_second: Decimal = Decimal("0")
     # v1.6.0 D5: optional OpenTelemetry export (endpoint / service name / sampler use the standard OTEL_* variables)
     otel_enabled: bool = False
     otel_trace_ui_url_template: str = ""
@@ -184,6 +203,19 @@ class Settings(BaseSettings):
     def _empty_sandbox_threshold_is_unset(cls, value: Any) -> Any:
         # v1.6.0: ``SANDBOX_HIGH_RISK_THRESHOLD=`` (empty) falls back to DEFAULT_RISK_THRESHOLD, as documented.
         return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("sandbox_images", mode="before")
+    @classmethod
+    def _parse_sandbox_images(cls, value: Any) -> Any:
+        # v1.6.2 D18: ``SANDBOX_IMAGES=`` (empty) means no image is configured; anything else must be a JSON object.
+        if not isinstance(value, str):
+            return value
+        if not value.strip():
+            return {}
+        parsed = json.loads(value)
+        if not isinstance(parsed, dict):
+            raise ValueError("SANDBOX_IMAGES must be a JSON object.")
+        return parsed
 
     @model_validator(mode="after")
     def _validate_finops_currency_settings(self) -> Settings:
