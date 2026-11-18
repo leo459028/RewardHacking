@@ -116,12 +116,12 @@ async def _evaluation_benchmark_gate_check(session: AsyncSession, *, settings: S
     ``EVALUATION_BENCHMARK_GATE_ENFORCED`` is true; when enforced, a stale benchmark warns and a TPR
     below ``EVALUATION_BENCHMARK_MIN_TPR`` fails in ``APP_ENV=prod``.
     """
-    from app.services.benchmark import gate_evaluation, latest_benchmark_run
+    from app.services.benchmark import gate_evaluation, latest_gate_run
     from app.services.evaluation.engine import EvaluationEngine
     from app.services.evaluation.metrics import fpr_key
 
     evaluator_version = EvaluationEngine().version()
-    run = await latest_benchmark_run(session, evaluator_version=evaluator_version)
+    run = await latest_gate_run(session, evaluator_version=evaluator_version)
     status, reason = gate_evaluation(run.metrics if run is not None else None, settings)
     cell: dict[str, Any] = {}
     auroc = None

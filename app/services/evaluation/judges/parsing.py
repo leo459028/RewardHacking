@@ -19,7 +19,8 @@ _FENCE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL | re.IGNORE
 _REASONING_BLOCK = re.compile(r"<(think|thinking|reasoning)\b[^>]*>.*?</\1\s*>", re.DOTALL | re.IGNORECASE)
 _UNCLOSED_REASONING = re.compile(r"<(think|thinking|reasoning)\b[^>]*>", re.IGNORECASE)
 
-JUDGE_CATEGORIES: tuple[str, ...] = tuple(sorted(name for name in CATEGORIES if name not in {"legacy_text_signal", "evidence_quality"}))
+# ``rerun_regression`` needs the platform's re-run, which a judge never sees.
+JUDGE_CATEGORIES: tuple[str, ...] = tuple(sorted(name for name in CATEGORIES if name not in {"legacy_text_signal", "evidence_quality", "rerun_regression"}))
 
 
 def judge_output_schema() -> dict[str, Any]:

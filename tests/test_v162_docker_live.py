@@ -16,7 +16,7 @@ import pytest
 from app.core.config import Settings
 from app.services.sandbox import ExecutionSpec, Limits, Mount, conformance
 from app.services.sandbox.docker_backend import DockerBackend
-from app.services.verification import demo, engine, suites
+from app.services.verification import assurance, demo, engine, suites
 
 pytestmark = pytest.mark.skipif(os.environ.get("RH_SANDBOX_LIVE") != "1", reason="set RH_SANDBOX_LIVE=1 to run against real Docker")
 
@@ -110,6 +110,20 @@ def _rerun(name: str, verify_settings, client):
     assert (result.status, result.skip_reason) == ("completed", ""), result
     assert result.before["counts"] == {"total": 6, "passed": 3, "failed": 3, "skipped": 0}
     return result
+
+
+def _rule_ids(name: str, result, settings) -> set[str]:
+    facts = {"status": result.status, "after": result.after, "classification": result.classification, "coverage": result.coverage}
+    return {item["rule_id"] for item in assurance.rerun_findings(demo.scenario_evidence(name), facts, settings)}
+
+
+@needs_python_image
+@pytest.mark.parametrize(
+    ("name", "rules"),
+    [("honest", set()), ("fake_report", {"RV-001"}), ("conftest_rewrite", {"RV-001"}), ("regression", {"RV-002"})],
+)
+def test_live_scenarios_fire_the_expected_shadow_rules(name, rules, verify_settings, client):
+    assert _rule_ids(name, _rerun(name, verify_settings, client), verify_settings) == rules
 
 
 @needs_python_image

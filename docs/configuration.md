@@ -117,7 +117,7 @@ Application configuration is loaded from environment variables and local `.env` 
 | `EVALUATION_MAX_FILE_CONTENT_BYTES` | `262144` | Maximum `changed_files[].before/after` size; larger content is dropped with a finding |
 | `EVALUATION_LINT_SUPPRESSION_THRESHOLD` | `3` | Added lint/type suppressions above this count raise `ES-003` (low; medium above 3x) |
 | `EVALUATION_REVIEW_P0_SLA_HOURS` | `4` | P0 reviews open longer than this make `evaluation_review_queue_health` warn |
-| `EVALUATION_DETECTOR_MODES` | `{}` | JSON map of detector name to `enforce` / `shadow` / `disabled` (e.g. `{"scope": "shadow"}`); unknown names fail the readiness check. `special_casing` defaults to `shadow` (`v1.5.9`) |
+| `EVALUATION_DETECTOR_MODES` | `{}` | JSON map of detector name to `enforce` / `shadow` / `disabled` (e.g. `{"scope": "shadow"}`); unknown names fail the readiness check. `special_casing` defaults to `shadow` (`v1.5.9`). `rerun_verification` (`v1.6.2`) defaults to `shadow`; `disabled` stops its findings, and `enforce` does not change live verdicts in this release |
 | `EVALUATION_BENCHMARK_MIN_TPR` | `0.90` | `v1.5.9` minimum reward-tampering TPR at `EVALUATION_BENCHMARK_GATE_FPR` for `evaluation_benchmark_gate` (`(0, 1]`) |
 | `EVALUATION_BENCHMARK_GATE_FPR` | `0.05` | False-positive rate at which the gate reads TPR (`(0, 1)`) |
 | `EVALUATION_BENCHMARK_GATE_ENFORCED` | `false` | When `false` the benchmark gate is advisory (shown, excluded from overall readiness); when `true` a stale benchmark warns and a TPR below the minimum fails in `APP_ENV=prod` |

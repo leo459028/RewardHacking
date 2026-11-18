@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.digests import sha256_hex
+from app.models.checkpoint import ReplayAttempt
 from app.models.evaluation_review import RunOutcome
 from app.models.sandbox import SandboxJob, VerificationRun, VerificationSuite
 from app.services.finops import ledger
@@ -27,11 +28,10 @@ from app.services.governance_audit import add_governance_event
 from app.services.sandbox import docker_config, gate, jobs
 from app.services.sandbox.base import ExecutionResult
 from app.services.sandbox.spec import ExecutionSpec, Limits, Mount
-from app.services.verification import artifacts, classify, line_coverage, patching
+from app.services.verification import artifacts, assurance, classify, line_coverage, patching
 
 logger = logging.getLogger(__name__)
 
-ENGINE_VERSION = "rerun/1.0"
 QUEUED, RUNNING, COMPLETED, SKIPPED, FAILED = "queued", "running", "completed", "skipped", "failed"
 ACTIVE_STATUSES = (QUEUED, RUNNING)
 WORKSPACE = "/workspace"
@@ -63,6 +63,8 @@ class Phase:
             "stderr_sha256": result.stderr_sha256,
             "truncated": result.truncated,
             "usage": dict(result.usage or {}),
+            "backend_id": result.backend_id,
+            "isolation_level": result.isolation_level,
             "counts": classify.counts(self.report) if self.report is not None else None,
         }
 
@@ -183,18 +185,40 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _finish(session: AsyncSession, row: VerificationRun, result: EngineResult) -> None:
+def _facts(result: EngineResult) -> dict[str, Any]:
+    return {"status": result.status, "after": result.after, "classification": result.classification, "coverage": result.coverage}
+
+
+async def _settle_replays(session: AsyncSession, row: VerificationRun) -> None:
+    """A dry-run replay that waited for this re-run ends with it (D33)."""
+    waiting = await session.scalars(select(ReplayAttempt).where(ReplayAttempt.source_run_id == row.run_id, ReplayAttempt.status == QUEUED))
+    for attempt in waiting.all():
+        payload = dict(attempt.result_payload or {})
+        if payload.get("verification_id") != row.verification_id:
+            continue
+        attempt.status = FAILED if row.status == FAILED else COMPLETED
+        attempt.result_payload = {
+            **payload, "verification_status": row.status, "skip_reason": row.skip_reason, "assurance_level": row.assurance_level,
+        }
+
+
+def _finish(
+    session: AsyncSession, row: VerificationRun, result: EngineResult, *,
+    findings: list[dict[str, Any]] | None = None, assurance_level: str = assurance.NO_ASSURANCE,
+) -> None:
     row.status, row.skip_reason = result.status, result.skip_reason
     row.before, row.after, row.classification, row.coverage = result.before, result.after, result.classification, result.coverage
     row.discarded_test_changes = result.discarded
+    row.findings, row.assurance_level = list(findings or []), assurance_level
     row.finished_at = _now()
-    summary = {"before": result.before, "after": result.after, "classification": result.classification, "coverage": result.coverage}
+    summary = {**_facts(result), "before": result.before, "findings": row.findings, "assurance_level": assurance_level}
     add_governance_event(
         session, tenant_id=row.tenant_id, run_id=row.run_id, user_id="sandbox-runner", event_type="sandbox.verification_completed",
         decision=result.status, reason=f"Platform re-run finished with status {result.status}.",
         details={
             "verification_id": row.verification_id, "suite_id": row.suite_id, "outcome_id": row.outcome_id,
-            "skip_reason": result.skip_reason, "summary_digest": sha256_hex(summary),
+            "skip_reason": result.skip_reason, "summary_digest": sha256_hex(summary), "assurance_level": assurance_level,
+            "rule_ids": sorted({str(item.get("rule_id")) for item in row.findings}),
         },
     )
 
@@ -218,7 +242,7 @@ async def handle_job(
         row.status = RUNNING
         row.backend_id, row.backend_version = caps.backend_id, caps.backend_version
         row.isolation_level, row.runtime = caps.isolation_level.label, docker_config.runtime_of(settings)
-        row.config_fingerprint, row.evaluator_version = status.fingerprint, ENGINE_VERSION
+        row.config_fingerprint, row.evaluator_version = status.fingerprint, assurance.evaluator_version(settings)
         await session.commit()
 
     image = docker_config.sandbox_images(settings).get(suite.image_name) if suite is not None else None
@@ -233,6 +257,9 @@ async def handle_job(
             run_verification, backend_factory, settings, base_files=artifacts.read_tar(content), evidence=dict(outcome.evidence or {}),
             test_paths=list(suite.test_paths or []), test_command=list(suite.test_command or []), image=image, job_id=job.job_id,
         )
+    completed = result.status == COMPLETED and outcome is not None
+    findings = assurance.rerun_findings(dict(outcome.evidence or {}), _facts(result), settings) if completed else []
+    level = assurance.assurance_level_for(status=result.status, after=result.after, gate_ready=status.ready)
 
     async with session_factory() as session:
         row = await session.scalar(
@@ -240,7 +267,8 @@ async def handle_job(
         )
         if row.status != RUNNING:  # this runner lost its lease and the record was closed without it
             return {"verification_id": verification_id, "status": row.status, "result_discarded": True}
-        _finish(session, row, result)
+        _finish(session, row, result, findings=findings, assurance_level=level)
+        await _settle_replays(session, row)
         if result.wall_seconds > 0:
             wall = Decimal(str(result.wall_seconds))
             await ledger.record_sandbox_compute(
@@ -266,5 +294,6 @@ async def reconcile_jobs(session: AsyncSession) -> int:
     rows = (await session.execute(stmt)).all()
     for row, job in rows:
         _finish(session, row, EngineResult(FAILED, (job.error_code or job.status)[:64]))
+        await _settle_replays(session, row)
     await session.commit()
     return len(rows)

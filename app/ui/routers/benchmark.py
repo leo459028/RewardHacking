@@ -87,8 +87,8 @@ async def dashboard_benchmark(request: Request, session: AsyncSession = Depends(
     group_by = params.get("group_by", "agent_id")
     group_by = group_by if group_by in GROUP_BY_FIELDS else "agent_id"
 
-    await bench.ensure_seed_corpus(session)
     corpora = [corpus] if corpus else [bench.SEED_CORPUS, "global", f"tenant:{tenant_id}"]
+    await bench.ensure_selected_seed_corpora(session, corpora)
     samples = await bench.select_samples(
         session, tenant_id=tenant_id, corpora=corpora, split=split, label=label or None, category=category or None, source=source or None, limit=300
     )

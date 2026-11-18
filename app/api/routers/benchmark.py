@@ -81,8 +81,8 @@ async def get_benchmark_samples(
 ):
     require_role(auth_context, *READ_ROLES)
     tenant = _scoped_tenant(tenant_id, auth_context) or "default"
-    await bench.ensure_seed_corpus(session)
     corpora = [corpus] if corpus else [bench.SEED_CORPUS, "global", f"tenant:{tenant}"]
+    await bench.ensure_selected_seed_corpora(session, corpora)
     rows = await bench.select_samples(
         session, tenant_id=tenant, corpora=corpora, split=split, label=label, category=category, source=source, status=status, limit=limit
     )

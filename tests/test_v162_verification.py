@@ -771,7 +771,7 @@ def test_a_finished_run_stores_its_result_and_an_audit_event(session_factory):
     row = _row(session_factory)
     assert answer == {"verification_id": "vrf_1", "status": "completed", "skip_reason": ""}
     assert (row.status, row.backend_id, row.isolation_level, row.runtime) == ("completed", "docker", "container", "runc")
-    assert row.classification["counts"]["fail_to_pass"] == 1 and row.finished_at is not None and row.evaluator_version == engine.ENGINE_VERSION
+    assert row.classification["counts"]["fail_to_pass"] == 1 and row.finished_at is not None and row.evaluator_version.startswith("v1.6.2:")
     event = _events(session_factory, "sandbox.verification_completed")[0]
     assert (event.run_id, event.decision, event.details["suite_id"]) == ("run_1", "completed", suite.suite_id)
     assert len(event.details["summary_digest"]) == 64 and "classification" not in event.details

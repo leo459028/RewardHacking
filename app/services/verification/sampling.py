@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import func, select, text
+from sqlalchemy import Select, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -25,7 +25,7 @@ from app.models.sandbox import VerificationRun, VerificationSuite
 from app.services.governance_audit import add_governance_event
 from app.services.review_sampling import random_draw
 from app.services.sandbox import gate, jobs
-from app.services.verification import patching, suites
+from app.services.verification import assurance, patching, suites
 from app.services.verification.errors import VerificationError
 
 MODE_OFF, MODE_SAMPLED, MODE_ALL = "off", "sampled", "all"
@@ -102,10 +102,10 @@ async def _hold_back_reason(
     return ""
 
 
-async def enqueue(
+async def stage(
     session: AsyncSession, settings: Settings, *, run: AgentRun, outcome: RunOutcome, suite_id: str, trigger: str, requested_by: str
 ) -> VerificationRun:
-    """Write the record, queued for the runner or skipped with its reason, and commit."""
+    """Add the record, queued for the runner or skipped with its reason. The caller commits."""
     now = _now()
     await _lock_tenant_day(session, run.tenant_id, now.strftime("%Y-%m-%d"))
     suite = await suites.get_suite(session, suite_id)
@@ -114,6 +114,7 @@ async def enqueue(
         verification_id=f"vrf_{uuid4().hex}", run_id=run.run_id, outcome_id=outcome.outcome_id, tenant_id=run.tenant_id, suite_id=suite_id,
         artifact_digest=suite.artifact_digest if suite is not None else "", trigger=trigger, status=SKIPPED if reason else QUEUED,
         skip_reason=reason, requested_by=requested_by, created_at=now, finished_at=now if reason else None,
+        assurance_level=assurance.NO_ASSURANCE if reason else "",
     )
     session.add(row)
     if not reason:
@@ -126,6 +127,13 @@ async def enqueue(
         decision=row.status, reason=f"Platform re-run {row.status} ({trigger}).",
         details={"verification_id": row.verification_id, "suite_id": suite_id, "trigger": trigger, "skip_reason": reason},
     )
+    return row
+
+
+async def enqueue(
+    session: AsyncSession, settings: Settings, *, run: AgentRun, outcome: RunOutcome, suite_id: str, trigger: str, requested_by: str
+) -> VerificationRun:
+    row = await stage(session, settings, run=run, outcome=outcome, suite_id=suite_id, trigger=trigger, requested_by=requested_by)
     await session.commit()
     return row
 
@@ -140,22 +148,38 @@ async def maybe_enqueue_for_outcome(session: AsyncSession, settings: Settings, *
     return await enqueue(session, settings, run=run, outcome=outcome, suite_id=suite_id, trigger=trigger, requested_by="system:sampling")
 
 
+async def latest_outcome(session: AsyncSession, run_id: str) -> RunOutcome | None:
+    return await session.scalar(select(RunOutcome).where(RunOutcome.run_id == run_id).order_by(RunOutcome.submission_seq.desc()).limit(1))
+
+
+def active_statement(outcome_id: str, *, lock: bool = False) -> Select:
+    stmt = (
+        select(VerificationRun)
+        .where(VerificationRun.outcome_id == outcome_id, VerificationRun.status.in_(ACTIVE_STATUSES))
+        .order_by(VerificationRun.id.desc())
+        .limit(1)
+    )
+    return stmt.with_for_update() if lock else stmt
+
+
+async def active_for_outcome(session: AsyncSession, outcome_id: str, *, lock: bool = False) -> VerificationRun | None:
+    """``lock`` holds the record until the caller commits, so the runner cannot finish it in between."""
+    return await session.scalar(active_statement(outcome_id, lock=lock))
+
+
+async def has_outcome(session: AsyncSession, run_id: str) -> bool:
+    return await session.scalar(select(RunOutcome.outcome_id).where(RunOutcome.run_id == run_id).limit(1)) is not None
+
+
 async def request_manual(session: AsyncSession, settings: Settings, *, run: AgentRun, requested_by: str) -> tuple[VerificationRun, bool]:
     """A reviewer's request for the latest outcome. Returns ``(record, created)``; an active re-run is returned as it is."""
     suite_id = bound_suite_id(run)
     if not suite_id:
         raise VerificationError("verification_suite_missing", "This run is not bound to a verification suite.", 409)
-    outcome = await session.scalar(
-        select(RunOutcome).where(RunOutcome.run_id == run.run_id).order_by(RunOutcome.submission_seq.desc()).limit(1)
-    )
+    outcome = await latest_outcome(session, run.run_id)
     if outcome is None:
         raise VerificationError("verification_outcome_missing", "This run has no outcome evidence to re-run.", 409)
-    active = await session.scalar(
-        select(VerificationRun)
-        .where(VerificationRun.outcome_id == outcome.outcome_id, VerificationRun.status.in_(ACTIVE_STATUSES))
-        .order_by(VerificationRun.id.desc())
-        .limit(1)
-    )
+    active = await active_for_outcome(session, outcome.outcome_id)
     if active is not None:
         return active, False
     return await enqueue(session, settings, run=run, outcome=outcome, suite_id=suite_id, trigger=TRIGGER_MANUAL, requested_by=requested_by), True
@@ -205,6 +229,7 @@ def verification_to_dict(row: VerificationRun) -> dict[str, Any]:
         "config_fingerprint": row.config_fingerprint,
         "findings": list(row.findings or []),
         "assurance_level": row.assurance_level,
+        "assurance_note": assurance.ASSURANCE_NOTE if row.assurance_level == assurance.PLATFORM_VERIFIED else "",
         "evaluator_version": row.evaluator_version,
         "requested_by": row.requested_by,
         "created_at": _iso(row.created_at),

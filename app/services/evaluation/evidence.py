@@ -412,6 +412,8 @@ class EvaluationContext:
     # v1.5.9 CI attestation verification result ("" = not attempted)
     attestation_status: str = ""
     attestation_detail: dict[str, Any] = field(default_factory=dict)
+    # v1.6.2 facts measured by the platform's own re-run. Set only by platform code, never from submitted evidence.
+    platform_verification: dict[str, Any] | None = None
 
 
 def apply_attestation_result(ctx: EvaluationContext, status: str, detail: dict[str, Any] | None = None) -> EvaluationContext:

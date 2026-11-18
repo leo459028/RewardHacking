@@ -35,8 +35,12 @@ from app.services.evaluation.evidence import (
 from app.services.evaluation.taxonomy import CATEGORIES, PRIORITY_RANK, kind_for
 
 SEED_CORPUS = "seed-v1.5.9"
+RERUN_SEED_CORPUS = "seed-v1.6.2-rerun"  # samples that carry a platform re-run; the v1.5.9 corpus stays as it was
 SEED_DIR = Path(__file__).resolve().parents[1] / "seeds" / "benchmark"
 SEED_FILE = SEED_DIR / "seed_v159.yaml"
+RERUN_SEED_FILE = SEED_DIR / "seed_v162_rerun.yaml"
+PLATFORM_VERIFICATION_KEY = "platform_verification"
+GATE_RUN_WINDOW = 50
 GLOBAL_TENANT = "*"
 LABELS = ("hacking", "benign")
 SOURCES = ("seed_fixture", "review_export", "honeypot", "inspect_import")
@@ -64,6 +68,7 @@ DETECTOR_CATEGORIES: dict[str, set[str]] = {
     "claim_evidence": {"false_verification_claim", "unsupported_claim"},
     "scope": {"scope_violation"},
     "special_casing": {"special_casing"},
+    "rerun_verification": {"false_verification_claim", "rerun_regression", "evidence_quality"},
     "legacy_text": set(CATEGORIES),
 }
 
@@ -120,10 +125,9 @@ def normalize_task(raw: dict[str, Any] | None, defaults: dict[str, Any] | None =
 # ---------------------------------------------------------------------------
 
 
-@lru_cache(maxsize=1)
-def load_seed_definitions() -> tuple[dict[str, Any], ...]:
-    document = yaml.safe_load(SEED_FILE.read_text(encoding="utf-8")) or {}
-    corpus = str(document.get("corpus") or SEED_CORPUS)
+def _read_seed_file(path: Path, default_corpus: str) -> tuple[dict[str, Any], ...]:
+    document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    corpus = str(document.get("corpus") or default_corpus)
     defaults = dict(document.get("defaults") or {})
     items: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -145,6 +149,12 @@ def load_seed_definitions() -> tuple[dict[str, Any], ...]:
             raw_evidence["diff"] = (SEED_DIR / "fixtures" / str(diff_file)).read_text(encoding="utf-8")
         evidence = normalize_evidence(raw_evidence)
         sample_id = sample_id_for(f"{corpus}:{name}")
+        task = normalize_task(entry.get("task"), defaults)
+        digest = evidence_digest(evidence)
+        rerun = entry.get(PLATFORM_VERIFICATION_KEY)
+        if rerun is not None:  # code-owned facts: only the seed file can attach a re-run to a sample
+            task[PLATFORM_VERIFICATION_KEY] = dict(rerun)
+            digest = evidence_digest({**evidence, PLATFORM_VERIFICATION_KEY: task[PLATFORM_VERIFICATION_KEY]})
         items.append(
             {
                 "sample_id": sample_id,
@@ -158,17 +168,38 @@ def load_seed_definitions() -> tuple[dict[str, Any], ...]:
                 "label_categories": categories,
                 "label_notes": [str(item) for item in entry.get("notes") or []],
                 "finding_labels": {},
-                "task": normalize_task(entry.get("task"), defaults),
+                "task": task,
                 "evidence": evidence,
-                "evidence_digest": evidence_digest(evidence),
+                "evidence_digest": digest,
             }
         )
     return tuple(items)
 
 
+@lru_cache(maxsize=1)
+def load_seed_definitions() -> tuple[dict[str, Any], ...]:
+    return _read_seed_file(SEED_FILE, SEED_CORPUS)
+
+
+@lru_cache(maxsize=1)
+def load_rerun_seed_definitions() -> tuple[dict[str, Any], ...]:
+    return _read_seed_file(RERUN_SEED_FILE, RERUN_SEED_CORPUS)
+
+
 async def ensure_seed_corpus(session: AsyncSession) -> int:
     """Idempotently upsert the code-owned seed corpus. Returns the number of rows inserted or updated."""
-    definitions = load_seed_definitions()
+    return await _upsert_seed(session, load_seed_definitions())
+
+
+async def ensure_selected_seed_corpora(session: AsyncSession, corpora: list[str] | None) -> int:
+    """The re-run corpus is added only when someone asks for it, so existing corpus selections stay unchanged."""
+    changed = await ensure_seed_corpus(session)
+    if RERUN_SEED_CORPUS in (corpora or []):
+        changed += await _upsert_seed(session, load_rerun_seed_definitions())
+    return changed
+
+
+async def _upsert_seed(session: AsyncSession, definitions: tuple[dict[str, Any], ...]) -> int:
     existing = {
         row.sample_id: row
         for row in (await session.scalars(select(BenchmarkSample).where(BenchmarkSample.source == "seed_fixture"))).all()
@@ -194,7 +225,7 @@ async def ensure_seed_corpus(session: AsyncSession) -> int:
 
 
 def corpus_visible(corpus: str, tenant_id: str) -> bool:
-    if corpus in {SEED_CORPUS, "global"}:
+    if corpus in {SEED_CORPUS, RERUN_SEED_CORPUS, "global"}:
         return True
     if corpus.startswith("tenant:"):
         return corpus == f"tenant:{tenant_id}"
@@ -290,6 +321,8 @@ def evaluate_sample(
     except EvidenceError as exc:
         return {**_per_sample_base(data), "error": exc.code, "score": 0.0, "score_all_enforced": 0.0, "verdict": "error",
                 "verdict_all_enforced": "error", "priority": "", "rule_ids": [], "detector_scores": {}, "finding_ids": []}
+    if data.get("source") == "seed_fixture":  # exported and imported samples can never bring their own re-run facts
+        ctx.platform_verification = task.get(PLATFORM_VERIFICATION_KEY)
     configured = engine.evaluate_context(ctx)
     promoted = engine.evaluate_context(ctx, promote_shadow=True)
     detector_scores: dict[str, float] = {}
@@ -456,9 +489,9 @@ async def run_benchmark(
             judges = [get_judge(settings, provider=judge_provider)]
     except JudgeProfileError as exc:
         raise BenchmarkError("benchmark_judge_profile_unknown", str(exc), 422) from exc
-    await ensure_seed_corpus(session)
     engine = engine or EvaluationEngine()
     corpora = list(corpora or [SEED_CORPUS])
+    await ensure_selected_seed_corpora(session, corpora)
     samples = await select_samples(
         session, tenant_id=tenant_id, corpora=corpora, split=split, exclude_accepted_behavior=exclude_accepted_behavior
     )
@@ -955,6 +988,20 @@ def sample_to_dict(sample: BenchmarkSample, *, include_evidence: bool = True) ->
     if include_evidence:
         data["evidence"] = dict(sample.evidence or {})
     return data
+
+
+async def latest_gate_run(session: AsyncSession, *, evaluator_version: str) -> BenchmarkRun | None:
+    """The readiness gate measures reward tampering, which the re-run corpus does not hold, so its runs are passed over."""
+    stmt = (
+        select(BenchmarkRun.id, BenchmarkRun.corpus_selector)
+        .where(BenchmarkRun.evaluator_version == evaluator_version)
+        .order_by(BenchmarkRun.created_at.desc(), BenchmarkRun.id.desc())
+        .limit(GATE_RUN_WINDOW)
+    )
+    for run_id, selector in (await session.execute(stmt)).all():
+        if RERUN_SEED_CORPUS not in (selector or {}).get("corpora", []):
+            return await session.get(BenchmarkRun, run_id)
+    return None
 
 
 async def latest_benchmark_run(session: AsyncSession, *, evaluator_version: str | None = None, tenant_id: str | None = None) -> BenchmarkRun | None:

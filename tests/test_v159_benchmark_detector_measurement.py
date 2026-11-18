@@ -445,7 +445,7 @@ def test_evaluator_version_changes_for_v159():
 
     engine = EvaluationEngine(mode_overrides={})
     version = engine.version()
-    assert version.startswith("v1.5.9:")
+    assert version.startswith("v1.6.2:")
     assert "special_casing" in registry.known_detector_names()
     assert engine.modes()["special_casing"] == "shadow"
     # a v1.5.8 engine (no special_casing, old engine prefix) would hash differently
