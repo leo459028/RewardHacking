@@ -163,3 +163,16 @@ jobs:
           RH_SANDBOX_LIVE: "1"
           SANDBOX_DOCKER_RUNTIME: ${{ matrix.runtime }}
         run: pytest tests/test_v162_docker_live.py -q -W error::DeprecationWarning
+
+      - name: Show which container option fails
+        if: failure()
+        env:
+          RUNTIME: ${{ matrix.runtime }}
+        run: |
+          image="$(python -c "from app.core.config import Settings; print(Settings(_env_file=None).sandbox_conformance_image)")"
+          for options in "" "--init" "--read-only" "--cap-drop ALL" "--security-opt no-new-privileges:true" "--user 65534:65534" \
+            "--tmpfs /tmp:noexec,nosuid,size=64m" "--ipc private" "--log-driver none" "--pids-limit 32" \
+            "--memory 128m --memory-swap 128m" "--cpus 0.5" "--network none" "--hostname sandbox"; do
+            echo "=== options: [$options]"
+            docker run --rm --runtime="$RUNTIME" $options "$image" sh -c 'echo ok' 2>&1 || echo "exit code $?"
+          done

@@ -254,7 +254,10 @@ def _ran(result: ExecutionResult) -> bool:
 
 
 def _describe(result: ExecutionResult) -> str:
-    return f"status={result.status} reasons={list(result.rejection_reasons)} stdout={result.stdout[:200]!r}"
+    return (
+        f"status={result.status} exit={result.exit_code} reasons={list(result.rejection_reasons)} "
+        f"stdout={result.stdout[:200]!r} stderr={result.stderr[:200]!r}"
+    )
 
 
 def root_fs_read_only(factory: BackendFactory, image: str = CONFORMANCE_IMAGE) -> CaseResult:

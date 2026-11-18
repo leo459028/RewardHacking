@@ -25,6 +25,7 @@ SECRET_PATTERNS = [
 
 # Allowlisted substrings known to be benign mock data or tests
 ALLOWLIST_PATTERNS = [
+    r'key = b"-----BEGIN RSA PRIVATE KEY-----\\n"',  # header-only fixture of the image content scan test
     r"demo-key",
     r"admin-key",
     r"key-a",
