@@ -235,6 +235,11 @@ PIDS_LIMIT = 16
 PIDS_ATTEMPTS = 64
 PIDS_CONTROL_LIMIT = 64
 PIDS_CONTROL_COUNT = 8
+MEMORY_LIMIT_MB = 32
+MEMORY_CONTROL_MB = 768
+MEMORY_DONE = "dd-finished"
+SIGKILL_EXIT_CODE = 137
+_MEMORY_SCRIPT = f"dd if=/dev/zero of=/dev/null bs=256M count=1; echo {MEMORY_DONE}; sleep 1"
 
 
 def _expectations(backend: SandboxBackend) -> dict[str, str]:
@@ -344,11 +349,27 @@ def pids_limit_enforced(factory: BackendFactory, image: str = CONFORMANCE_IMAGE)
 
 
 def memory_limit_enforced(factory: BackendFactory, image: str = CONFORMANCE_IMAGE) -> CaseResult:
-    # The shell must outlive dd: when the container's main process is the one killed, Docker can handle the exit first
-    # and never record the OOM. The pass condition stays Docker's own report.
-    script = "dd if=/dev/zero of=/dev/null bs=256M count=1; echo dd-finished; sleep 1"
-    result = _shell(factory(), image, script, timeout=30, memory_mb=32)
-    return _check("memory_limit_enforced", result.status == "oom" and STARTED in result.stdout, _describe(result))
+    """``runc`` needs Docker's own OOM report; the shell outlives ``dd`` so that Docker gets to record it.
+
+    On ``runsc`` the whole sandbox can die with ``dd`` and Docker then reports nothing. There the proof is a control run:
+    the same command finishes with room to spare, and under the limit it is killed before it finishes. Exit code 137
+    alone proves nothing, because any SIGKILL produces it.
+    """
+    backend = factory()
+    limited = _shell(backend, image, _MEMORY_SCRIPT, timeout=30, memory_mb=MEMORY_LIMIT_MB)
+    reported = limited.status == "oom" and STARTED in limited.stdout
+    if _expectations(backend).get("runtime") != "runsc":
+        return _check("memory_limit_enforced", reported, _describe(limited))
+    control = _shell(factory(), image, _MEMORY_SCRIPT, timeout=30, memory_mb=MEMORY_CONTROL_MB)
+    if control.status != "ok" or MEMORY_DONE not in control.stdout:
+        return CaseResult("memory_limit_enforced", False, f"control run did not finish: {_describe(control)}")
+    killed = (
+        limited.status == "nonzero_exit"
+        and limited.exit_code == SIGKILL_EXIT_CODE
+        and STARTED in limited.stdout
+        and MEMORY_DONE not in limited.stdout
+    )
+    return _check("memory_limit_enforced", reported or killed, _describe(limited))
 
 
 def host_env_not_visible(factory: BackendFactory, image: str = CONFORMANCE_IMAGE) -> CaseResult:

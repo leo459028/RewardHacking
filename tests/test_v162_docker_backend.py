@@ -330,34 +330,10 @@ def test_oom_flag_wins_over_a_zero_exit_code():
     assert backend.run(_spec()).status == "oom"
 
 
-def test_a_sigkilled_container_waits_for_dockers_late_oom_report(monkeypatch):
-    reloads = []
-
-    def reload(container) -> None:
-        reloads.append(1)
-        container.attrs["State"]["OOMKilled"] = len(reloads) >= 3
-
-    monkeypatch.setattr(FakeContainer, "reload", reload)
-    monkeypatch.setattr(docker_backend, "OOM_REPORT_POLL_SECONDS", 0)
-    backend, _ = _backend(FakeDocker(exit_code=137))
-    assert backend.run(_spec()).status == "oom" and len(reloads) == 3
-
-
-def test_a_sigkill_without_an_oom_report_is_not_called_an_oom(monkeypatch):
-    monkeypatch.setattr(docker_backend, "OOM_REPORT_WAIT_SECONDS", 0.02)
-    monkeypatch.setattr(docker_backend, "OOM_REPORT_POLL_SECONDS", 0.001)
+def test_a_sigkill_without_an_oom_report_is_not_called_an_oom():
     backend, _ = _backend(FakeDocker(exit_code=137))
     result = backend.run(_spec())
     assert (result.status, result.exit_code) == ("nonzero_exit", 137)
-
-
-@pytest.mark.parametrize("exit_code", [0, 1, 143])
-def test_other_exit_codes_do_not_wait_for_an_oom_report(monkeypatch, exit_code):
-    reloads = []
-    monkeypatch.setattr(FakeContainer, "reload", lambda container: reloads.append(1))
-    backend, _ = _backend(FakeDocker(exit_code=exit_code))
-    backend.run(_spec())
-    assert len(reloads) == 1
 
 
 def test_timeout_kills_the_container():
@@ -659,6 +635,78 @@ def test_runs_as_non_root_compares_with_the_configured_uid():
 def test_memory_case_needs_an_oom_result():
     assert _case(conformance.memory_limit_enforced, status="oom").passed
     assert not _case(conformance.memory_limit_enforced, status="ok").passed
+
+
+class MemoryBackend(ScriptedBackend):
+    """Answers the limited run and the control run of ``memory_limit_enforced`` separately."""
+
+    def __init__(self, runtime: str, limited: dict, control: dict | None = None) -> None:
+        super().__init__()
+        self.runtime, self.limited, self.control = runtime, limited, control
+        self.memory: list[int] = []
+
+    def hardening_expectations(self):
+        return {**super().hardening_expectations(), "runtime": self.runtime}
+
+    def run(self, spec):
+        self.memory.append(spec.limits.memory_mb)
+        answer = dict(self.limited if spec.limits.memory_mb == conformance.MEMORY_LIMIT_MB else self.control or {})
+        status, stdout = answer.pop("status", "ok"), answer.pop("stdout", "")
+        return ExecutionResult(status, "docker", "v1.6.2", "gvisor", "d", stdout=f"{conformance.STARTED}\n{stdout}", **answer)
+
+
+KILLED = {"status": "nonzero_exit", "exit_code": 137}
+FINISHED = {"status": "ok", "exit_code": 0, "stdout": f"{conformance.MEMORY_DONE}\n"}
+
+
+def _memory_case(runtime, limited, control=None):
+    backend = MemoryBackend(runtime, limited, control)
+    return conformance.memory_limit_enforced(lambda: backend, IMAGE), backend
+
+
+def test_runc_still_needs_dockers_own_oom_report():
+    assert _memory_case("runc", {"status": "oom"})[0].passed
+    result, backend = _memory_case("runc", KILLED, FINISHED)
+    assert not result.passed and backend.memory == [conformance.MEMORY_LIMIT_MB]
+
+
+def test_runsc_accepts_a_kill_that_the_control_run_explains():
+    result, backend = _memory_case("runsc", KILLED, FINISHED)
+    assert result.passed and backend.memory == [conformance.MEMORY_LIMIT_MB, conformance.MEMORY_CONTROL_MB]
+
+
+def test_runsc_accepts_dockers_own_report_with_a_good_control_run():
+    assert _memory_case("runsc", {"status": "oom"}, FINISHED)[0].passed
+
+
+@pytest.mark.parametrize(
+    "control",
+    [
+        KILLED,
+        {"status": "oom"},
+        {"status": "timeout"},
+        {"status": "ok", "exit_code": 0, "stdout": ""},
+        {"status": "nonzero_exit", "exit_code": 1, "stdout": f"{conformance.MEMORY_DONE}\n"},
+    ],
+)
+def test_runsc_refuses_a_kill_when_the_control_run_does_not_finish(control):
+    result, _backend = _memory_case("runsc", KILLED, control)
+    assert not result.passed and "control run" in result.detail
+
+
+@pytest.mark.parametrize(
+    "limited",
+    [
+        FINISHED,
+        {"status": "nonzero_exit", "exit_code": 1},
+        {"status": "nonzero_exit", "exit_code": 143},
+        {"status": "timeout"},
+        {"status": "error"},
+        {"status": "nonzero_exit", "exit_code": 137, "stdout": f"{conformance.MEMORY_DONE}\n"},
+    ],
+)
+def test_runsc_refuses_a_limited_run_that_was_not_killed_before_finishing(limited):
+    assert not _memory_case("runsc", limited, FINISHED)[0].passed
 
 
 CONTROL_OK = {"stdout": "spawned=8\nall-spawned\nprocs=10\n"}

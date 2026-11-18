@@ -362,13 +362,13 @@ class _Backend:
         return result, {"out/junit.xml": report}
 
 
-def _complete(session_factory, settings, evidence=None):
+def _complete(session_factory, settings, evidence=None, backend=None):
     suite = _suite(session_factory, settings=settings)
     _open_gate(session_factory, settings)
     run, outcome = _run(session_factory, suite_id=suite.suite_id, evidence=demo.scenario_evidence("honest") if evidence is None else evidence)
     row = _in_session(session_factory, lambda s: sampling.enqueue(s, settings, run=run, outcome=outcome, suite_id=suite.suite_id, trigger="all", requested_by="test"))
     job = _in_session(session_factory, lambda s: s.scalar(select(SandboxJob)))
-    asyncio.run(engine.handle_job(job, settings=settings, session_factory=session_factory, backend_factory=_Backend(), docker_server_version=DOCKER_VERSION))
+    asyncio.run(engine.handle_job(job, settings=settings, session_factory=session_factory, backend_factory=backend or _Backend(), docker_server_version=DOCKER_VERSION))
     return row
 
 
@@ -400,6 +400,31 @@ def test_recording_the_same_rerun_twice_keeps_one_event(session_factory):
 
     _in_session(session_factory, twice)
     assert _count(session_factory, UsageEvent) == 1 and _count(session_factory, CostEvent) == 1
+
+
+class _KilledAfterTheChange(_Backend):
+    """gVisor can end a run with exit 137 and no OOM report: the sandbox says ``nonzero_exit`` and leaves no test report."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def run_with_outputs(self, spec, *, artifacts=None):
+        self.calls += 1
+        if self.calls == 1:
+            return super().run_with_outputs(spec, artifacts=artifacts)
+        result = ExecutionResult(
+            status="nonzero_exit", backend_id="docker", backend_version="v1.6.2", isolation_level="gvisor", spec_digest="d", exit_code=137,
+            usage={"wall_ms": 2500, "cpu_ms": None, "max_rss_mb": None},
+        )
+        return result, {}
+
+
+def test_a_run_killed_without_an_oom_report_fails_and_still_records_its_compute(session_factory):
+    row = _complete(session_factory, _settings(), backend=_KilledAfterTheChange())
+    stored = _in_session(session_factory, lambda s: sampling.get_verification(s, row.verification_id))
+    usage = _in_session(session_factory, lambda s: s.scalar(select(UsageEvent)))
+    assert (stored.status, stored.skip_reason, stored.after["status"], stored.after["exit_code"]) == ("failed", "after_no_report", "nonzero_exit", 137)
+    assert stored.classification == {} and (usage.status, usage.quantity) == ("failed", Decimal("5"))
 
 
 def test_a_skipped_rerun_records_no_compute(session_factory):
