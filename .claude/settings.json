@@ -1,0 +1,63 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git reset --hard *)",
+      "Bash(git clean *)",
+      "Bash(git checkout -- *)",
+      "Bash(git push --force*)",
+      "Bash(git push -f *)",
+      "Bash(git push * --force*)",
+      "Bash(git push * -f)",
+      "Bash(git push * -f *)",
+      "Bash(git stash drop *)",
+      "Bash(git stash clear *)",
+      "Bash(git branch -D *)",
+      "PowerShell(git reset --hard *)",
+      "PowerShell(git clean *)",
+      "PowerShell(git checkout -- *)",
+      "PowerShell(git push --force*)",
+      "PowerShell(git push -f *)",
+      "PowerShell(git push * --force*)",
+      "PowerShell(git push * -f)",
+      "PowerShell(git push * -f *)",
+      "PowerShell(git stash drop *)",
+      "PowerShell(git stash clear *)",
+      "PowerShell(git branch -D *)",
+      "Read(.env.e2e)",
+      "Read(config/*.pem)"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(gh pr merge *)",
+      "PowerShell(git push *)",
+      "PowerShell(gh pr merge *)",
+      "Read(.env)",
+      "Edit(.env)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${CLAUDE_PROJECT_DIR}/scripts/hooks/post_edit_lint.py\"",
+            "timeout": 35
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${CLAUDE_PROJECT_DIR}/scripts/hooks/stop_check.py\"",
+            "timeout": 35
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -89,6 +89,7 @@ README、`docs/OVERVIEW.md`、`docs/roadmap.md`、`docs/manual_test.md`、`docs/
 > 依 `AGENTS.md` 第 1 節第 7 項維護。接手時先讀本節，再執行 `git status`、`git diff` 與 Stage 1 測試。
 > Commit：每階段 Stage 1 通過並更新本表後 `wip(vX.Y.Z): P<n> ...`（`python scripts/phase_check.py ... --commit`）；Stage 2 全數通過並寫入 test report 後 `feat(vX.Y.Z): ...`。不 push。
 > 分支：`vX.Y.Z`（本地，從 `main` @ `<commit>` 建立）。
+> 階段數依 `AGENTS.md` §3：一個階段＝一個 session、一個主題、可獨立測試，約 1,000–1,800 行（含測試）；一版 4–5 個階段，超過 5 個就拆版。
 
 | 階段 | 內容 | 狀態 | 變更檔案 | Stage 1 結果 | 備註／下一步 |
 | :--- | :--- | :--- | :--- | :--- | :--- |

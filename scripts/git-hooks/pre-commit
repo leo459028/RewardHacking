@@ -1,0 +1,7 @@
+#!/bin/sh
+# v1.6.2 D51: enabled with `git config core.hooksPath scripts/git-hooks`.
+hook_dir=$(dirname "$0")
+if command -v python >/dev/null 2>&1; then
+    exec python "$hook_dir/pre_commit.py"
+fi
+exec python3 "$hook_dir/pre_commit.py"

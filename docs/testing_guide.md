@@ -108,20 +108,43 @@ How to reach specific code paths in tests. Moved from `AGENTS.md` §2.2 in v1.6.
 - **Change requests in tests (v1.6.1 P6)**: set `DUAL_CONTROL_ACTIONS` with `monkeypatch.setenv` and call `get_settings.cache_clear()` (the `signed_in` fixture clears the cache only when it is set up, so env changes made later in a test need their own clear). Create requests through the API (`AUTH_ENABLED=false` gives requester `dashboard`), then approve as a `signed_in` user with `POST /dashboard/change-requests/{id}/approve`; the API has no approve endpoint by design. Build retention plans without `now=` so their TTL is in the future. Simulate a changed target with Core `update()` on the target table (`retention_purges`, `legal_holds`) or by adding a `JudgeProfileState` row; refused decisions answer 403 `{"error": {"code": "change_request_..."}}`. The Dashboard retention forms (P7) post `confirm_purge_id` + `plan_digest` to `/dashboard/retention/plans/{id}/apply` and `release_reason` to `/dashboard/retention/holds/{id}/release` with a same-origin `Origin` header; service refusals come back as a 303 whose `error` query parameter holds the code (decode it with `urllib.parse.unquote_plus`).
 - **Retention, sandbox and tracing in tests (v1.6.0)**: build old runs with the helpers in `tests/test_v160_retention.py` (`_add_run`, `_add_full_children`) and set `AUDIT_RETENTION_PURGE_MODE=apply` through `monkeypatch.setenv` plus `get_settings.cache_clear()` (never rely on `.env`); Postgres-only paths (advisory lock, `FOR UPDATE`) are not exercised on SQLite. Drive sandbox backends through `conformance.run_cases(factory)`; a real backend must pass `image=` a digest-pinned image. Assert propagated traces on `client.event_publisher.events[i]["headers"]["traceparent"]` and drive the worker with `app.workers.consumer.process_message(...)`; OTel tests use the in-memory exporter.
 
+## Development Guardrails (`v1.6.2`)
+
+These checks run around coding agents and commits. Product behaviour does not depend on them.
+
+| Check | When it runs | What it does |
+| :--- | :--- | :--- |
+| `.claude/settings.json` deny rules | Claude Code tool calls | Refuses destructive git commands (`git reset --hard`, `git clean`, `git checkout -- <path>`, force pushes, `git stash drop` / `clear`, `git branch -D`) and reading `.env.e2e` or `config/*.pem` |
+| `.claude/settings.json` ask rules | Claude Code tool calls | Asks before `git push`, `gh pr merge` and reading or editing `.env` |
+| `scripts/hooks/post_edit_lint.py` | After `Edit` / `Write` on a Python file under `app/`, `tests/` or `scripts/` | Runs `ruff check` on that file and shows errors to the agent (exit 2) |
+| `scripts/hooks/stop_check.py` | When the agent ends a turn with Python changes | Runs `ruff check` on the changed files, `git diff --check` and, when `app/` changed, `lint-imports`; exit 2 keeps the agent working. It passes when `stop_hook_active` is set or after 30 seconds |
+| `scripts/git-hooks/pre-commit` | Every `git commit` in a clone that enabled it | Refuses `docs/plan/`, `docs/handoff.md`, `.env*` (except `.env.example`), `*.pem` and `config/judge_profiles.yaml`, and runs `git diff --cached --check` |
+
+Enable the pre-commit check once per clone:
+
+```bash
+git config core.hooksPath scripts/git-hooks
+```
+
+When a hook fails, fix the reported problem and repeat the step; do not skip the hook with `--no-verify`. If a forbidden file was staged by mistake, run `git restore --staged <file>`. The full test suite is not part of these hooks: it runs in Stage 2 and CI. The limits of these checks are listed in [`security.md`](security.md), Known Boundaries.
+
 ## CI / CD Verification Gate
 
 Every GitHub pull request and commit to `main` triggers automated verification via `.github/workflows/ci.yml`:
-1. **Lint**: `ruff check app tests scripts`
+1. **Lint**: `ruff check app tests scripts`, after the version anchors (`python scripts/bump_version.py --check`) and a whitespace check of the change (`git diff --check`, `v1.6.2`)
 2. **Security & Secret Scan**: `python scripts/security_check.py`
 3. **Automated Tests**: `pytest -q -W error::DeprecationWarning` (deprecation warnings fail CI since `v1.5.8`)
 4. **Architecture Contracts** (`v1.6.0`): `lint-imports` (`[tool.importlinter]` in `pyproject.toml`); CI installs `requirements-otel.txt` so the OpenTelemetry tests run.
+5. **Image** (`v1.6.2`): the `image` job builds the Dockerfile without pushing and runs `python scripts/image_content_check.py --image <ref>`.
 
-**CI resolves newer dependencies than a local environment.** `requirements.txt` only sets lower bounds, so CI installs the newest releases while a developer machine keeps older ones. This broke CI twice although every local run passed: `v1.5.8` (PR #21, newer `pytest-asyncio` warned about `asyncio_default_fixture_loop_scope`) and `v1.6.0` (PR #26, FastAPI 0.16x keeps included routers as `_IncludedRouter` objects in `app.routes`, and Pydantic 2.14 dropped the `pattern` of `Decimal` JSON schemas). Before pushing a release, run the suite once in a fresh virtual environment built from the requirements files (same resolution as CI):
+**CI resolves newer dependencies than a local environment.** The requirements files only set lower bounds, so CI installs the newest releases while a developer machine keeps older ones. This broke CI twice although every local run passed: `v1.5.8` (PR #21, newer `pytest-asyncio` warned about `asyncio_default_fixture_loop_scope`) and `v1.6.0` (PR #26, FastAPI 0.16x keeps included routers as `_IncludedRouter` objects in `app.routes`, and Pydantic 2.14 dropped the `pattern` of `Decimal` JSON schemas). Before pushing a release, run the suite once in a fresh virtual environment built from the requirements files (same resolution as CI):
 
 ```bash
 python -m venv <scratch>/civenv
-<scratch>/civenv/Scripts/python -m pip install -r requirements.txt -r requirements-otel.txt   # bin/python on Linux / macOS
+<scratch>/civenv/Scripts/python -m pip install -r requirements-dev.txt -r requirements-otel.txt   # bin/python on Linux / macOS
 <scratch>/civenv/Scripts/python -m pytest -q -W error::DeprecationWarning -p no:cacheprovider
 ```
 
 Tests must not depend on framework internals that change between releases: walk routes with `tests.openapi_contract.iter_routes()` / `route_owners()` instead of `app.routes`, and keep library-generated schema details out of contract digests.
+
+**TestClient and `httpx2`.** Starlette 1.2 added `httpx2` support to `starlette.testclient`, and newer releases warn when the test client falls back to `httpx` (`StarletteDeprecationWarning`, a `UserWarning` subclass, so `-W error::DeprecationWarning` does not catch it). `requirements-dev.txt` installs `httpx2`, and `pyproject.toml` turns that warning into a test failure. The application itself keeps using `httpx` for judge requests.

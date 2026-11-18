@@ -27,12 +27,14 @@ dependencies = [
 
 [project.optional-dependencies]
 otel = ["opentelemetry-api==1.45.1", "opentelemetry-sdk==1.45.1", "opentelemetry-exporter-otlp-proto-http==1.45.1"]
-dev = ["pytest>=8.3.0", "pytest-asyncio>=0.23.0", "ruff>=0.6.0", "aiosqlite>=0.20.0", "import-linter>=2.15,<2.16"]
+dev = ["pytest>=8.3.0", "pytest-asyncio>=0.23.0", "ruff>=0.6.0", "aiosqlite>=0.20.0", "httpx2>=2.0.0", "import-linter>=2.15,<2.16"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+# v1.6.2: the test client must use httpx2; matched by message because older Starlette lacks the warning class.
+filterwarnings = ["error:Using `httpx` with `starlette.testclient` is deprecated"]
 
 [tool.ruff]
 line-length = 120

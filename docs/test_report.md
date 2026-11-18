@@ -1,5 +1,20 @@
 # Test Execution & Verification Report
 
+## 2026-11-18 - v1.6.2 P1 Published Image Baseline & Development Guardrails (phase result, not a release)
+
+- **Branch**: `v1.6.2` (version anchors stay at `1.6.1` until the release phase; Alembic head `202611120003`).
+- **Automated tests**: full suite on the final tree → **1387 passed in 521.19 s** (baseline 1254, 133 new). Stage 1 (`ruff`, `lint-imports` 4 kept / 0 broken, `git diff --check`, P1 test files) → 195 passed.
+- **CI dependency versions** (fresh venv: FastAPI 0.163.2, Pydantic 2.14.3, Starlette 1.10.0, SQLAlchemy 2.1.9, pytest 9.2.0, `httpx2` 2.16.2) → 1254 passed in 522.60 s on a snapshot taken before the P1 test files existed, with `StarletteDeprecationWarning` as an error; the P1 test files then passed in the same venv (135 passed). With `httpx2` uninstalled the suite stops at collection, so the warning cannot return unnoticed.
+- **Image**: 887 MB → **363 MB**. Base `python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b`. `scripts/image_content_check.py` → `pass`, 7 layers, 9566 files, 0 findings, for both `rewardhacking-api` and `rewardhacking-worker`. `id` → `uid=10001(app) gid=10001(app)`. No `gcc`, `curl`, `pytest` or `ruff`; the application user cannot write to `/app`.
+- **Stack on the new image**: `api` healthy, `alembic current` → `202611120003 (head)`, `/v1/healthz` and `/v1/readyz` 200, `/dashboard/login` 200, UID 10001 reads the mounted audit chain keys and `judge_profiles.yaml`.
+- **Read-only root filesystem** (`--read-only --tmpfs /tmp`): API answered `/v1/healthz` and `/v1/readyz` with 200, writes to `/app` and `/opt` were refused, `/tmp` was writable; the worker kept running; no permission errors in either log. An unreachable database stopped the API start (exit 1).
+- **Old image cleanup**: removed only the `api` and `worker` containers (the Postgres container and its anonymous volume were kept), deleted images `c1ec25b89d17` and `70bdf2fb278e`, and pruned by ID the 17 build cache records from the old `COPY config`, `COPY tests` and `COPY README.md` steps; none remain. Cache records of other projects were not touched.
+- **Permission rules** (tried in a disposable repository): denied `git reset --hard`, `git clean -fd`, `git checkout -- <path>`, `git push --force`, `git push ... -f`, `git stash drop`, `git stash clear`, `git branch -D`, PowerShell `git reset --hard`, and reading `.env.e2e` and `config/*.pem`. `git push` asked for confirmation.
+- **Hooks**: `post_edit_lint.py` 0.25 s, fired on a real `Write` and reported `F401`. `stop_check.py` 0.42–0.44 s before `lint-imports` was added (`lint-imports` itself 0.6 s); it was tested by feeding it hook input, not by ending a live turn.
+- **Pre-commit** (real `git commit` in a disposable repository): refused `docs/plan/`, `docs/handoff.md`, `.env`, `.env.e2e`, `config/k.pem`, a nested `*.pem`, `config/judge_profiles.yaml` and trailing whitespace; allowed `.env.example` and an ordinary file.
+- **`AGENTS.md`**: 191 lines / 31,479 bytes → 119 lines / 15,439 bytes.
+- **Not run in this phase**: the browser E2E (the deny rule on `.env.e2e` keeps the agent from loading the accounts it needs), the new CI jobs and the `release-image.yml` manual run (the branch has not been pushed).
+
 ## 2026-11-12 - v1.6.1 Enterprise Access & Audit Integrity Verification
 
 - **Version**: `v1.6.1` (branch `v1.6.1`, Alembic head `202611120003`, OpenAPI `1.6.1`, `evaluator_version` unchanged at `v1.5.9`)
