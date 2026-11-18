@@ -59,6 +59,7 @@ source_modules = [
     "app.services.judge_triage",
     "app.services.review_sampling",
     "app.services.change_requests",
+    "app.services.verification",
 ]
 forbidden_modules = [
     "app.services.events",
@@ -95,6 +96,7 @@ source_modules = [
     "app.services.sandbox.health",
     "app.services.sandbox.gate",
     "app.services.sandbox.jobs",
+    "app.services.verification",
 ]
 forbidden_modules = ["app.services.sandbox.docker_backend"]
 

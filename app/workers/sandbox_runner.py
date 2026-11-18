@@ -26,6 +26,7 @@ from app.services.sandbox import conformance, docker_config, gate, jobs
 from app.services.sandbox.docker_backend import DockerBackend
 from app.services.sandbox.policy import isolation_rejection
 from app.services.sandbox.registry import DOCKER, configured_backend
+from app.services.verification import engine as verification_engine
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,10 @@ class SandboxRunner:
         self.gate_ready = False
         self.prepared = False
         self.last_sweep = time.monotonic()
-        self.handlers: dict[str, Handler] = {jobs.KIND_CONFORMANCE: self._handle_conformance}
+        self.handlers: dict[str, Handler] = {
+            jobs.KIND_CONFORMANCE: self._handle_conformance,
+            jobs.KIND_VERIFICATION: self._handle_verification,
+        }
 
     @property
     def enabled(self) -> bool:
@@ -120,6 +124,16 @@ class SandboxRunner:
         run = await self.run_conformance(str((job.payload or {}).get("requested_by") or "job"))
         return {"conformance_run_id": run.run_id, "passed": bool(run.passed)}
 
+    async def _handle_verification(self, job: SandboxJob) -> dict[str, Any]:
+        return await verification_engine.handle_job(
+            job, settings=self.settings, session_factory=self.session_factory, backend_factory=self.backend_factory,
+            docker_server_version=self.docker_server_version,
+        )
+
+    async def _reconcile_verifications(self) -> None:
+        async with self.session_factory() as session:
+            await verification_engine.reconcile_jobs(session)
+
     async def _gate(self) -> gate.GateStatus:
         async with self.session_factory() as session:
             return await gate.evaluate(session, self.settings, docker_server_version=self.docker_server_version)
@@ -140,6 +154,7 @@ class SandboxRunner:
         if not status.ready:
             async with self.session_factory() as session:
                 await jobs.fail_queued(session, kinds=jobs.GATED_KINDS, error_code=gate.NOT_CONFORMANT)
+        await self._reconcile_verifications()
         kinds = [kind for kind in self.handlers if kind == jobs.KIND_CONFORMANCE or status.ready]
         async with self.session_factory() as session:
             job = await jobs.claim_next(session, runner_id=self.runner_id, kinds=kinds)
@@ -169,6 +184,7 @@ class SandboxRunner:
             kept = await jobs.finish(session, job_id=job.job_id, runner_id=self.runner_id, status=status, result=result, error_code=error_code)
         if not kept:
             logger.warning("sandbox job %s: lease lost, result discarded", job.job_id)
+        await self._reconcile_verifications()
 
     async def heartbeat_once(self) -> None:
         # The lease lives in the database, so a Redis outage must not end it.

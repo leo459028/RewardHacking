@@ -16,8 +16,13 @@ import pytest
 from app.core.config import Settings
 from app.services.sandbox import ExecutionSpec, Limits, Mount, conformance
 from app.services.sandbox.docker_backend import DockerBackend
+from app.services.verification import demo, engine, suites
 
 pytestmark = pytest.mark.skipif(os.environ.get("RH_SANDBOX_LIVE") != "1", reason="set RH_SANDBOX_LIVE=1 to run against real Docker")
+
+# The sandbox-python image, as a digest reference or a local image ID.
+PYTHON_IMAGE = os.environ.get("RH_SANDBOX_PYTHON_IMAGE", "")
+needs_python_image = pytest.mark.skipif(not PYTHON_IMAGE, reason="set RH_SANDBOX_PYTHON_IMAGE to run the demo suite")
 
 LIMITS = Limits(timeout_seconds=20, cpu_millis=1000, memory_mb=128, pids=32, max_output_bytes=8192, max_output_files_bytes=65536)
 
@@ -71,6 +76,61 @@ def test_live_hardening_case(case, factory, settings, client):
 def test_live_full_suite_passes(factory, settings):
     report = conformance.run_full_suite(factory, image=settings.sandbox_conformance_image)
     assert conformance.suite_passed(report), [item for item in report if not item["passed"]]
+
+
+@pytest.fixture(scope="module")
+def verify_settings() -> Settings:
+    return Settings(
+        _env_file=None,
+        sandbox_backend="docker",
+        sandbox_docker_runtime=os.environ.get("SANDBOX_DOCKER_RUNTIME", "runc"),
+        sandbox_docker_allow_local_image_ids=True,
+        sandbox_images={"python": PYTHON_IMAGE},
+    )
+
+
+def _rerun(name: str, verify_settings, client):
+    result = engine.run_verification(
+        lambda: DockerBackend(verify_settings, client=client),
+        verify_settings,
+        base_files=demo.suite_files(),
+        evidence=demo.scenario_evidence(name),
+        test_paths=list(suites.DEFAULT_TEST_PATHS),
+        test_command=["-q"],
+        image=PYTHON_IMAGE,
+    )
+    _no_leftovers(client)
+    assert (result.status, result.skip_reason) == ("completed", ""), result
+    assert result.before["counts"] == {"total": 6, "passed": 3, "failed": 3, "skipped": 0}
+    return result
+
+
+@needs_python_image
+def test_live_honest_fix_turns_the_failures_green(verify_settings, client):
+    result = _rerun("honest", verify_settings, client)
+    counts = result.classification["counts"]
+    assert (counts["fail_to_pass"], counts["pass_to_pass"], counts["pass_to_fail"], counts["flaky"]) == (3, 3, 0, 0)
+    assert result.coverage["status"] == "measured" and result.coverage["ratio"] > 0
+    assert result.after["attempts"] == 1
+
+
+@needs_python_image
+def test_live_invented_report_is_contradicted(verify_settings, client):
+    counts = _rerun("fake_report", verify_settings, client).classification["counts"]
+    assert (counts["fail_to_pass"], counts["fail_to_fail"], counts["pass_to_pass"]) == (0, 3, 3)
+
+
+@needs_python_image
+def test_live_conftest_rewrite_is_discarded(verify_settings, client):
+    result = _rerun("conftest_rewrite", verify_settings, client)
+    assert result.discarded == [{"path": "tests/conftest.py", "reason": "test_config"}]
+    assert result.classification["counts"]["fail_to_fail"] == 3
+
+
+@needs_python_image
+def test_live_regression_is_found(verify_settings, client):
+    counts = _rerun("regression", verify_settings, client).classification["counts"]
+    assert (counts["fail_to_pass"], counts["pass_to_fail"]) == (3, 1)
 
 
 def test_live_artifact_round_trip_and_read_only_source(factory, settings, client):

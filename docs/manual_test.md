@@ -20,7 +20,7 @@ docker compose up -d --build
 ```
 
 ### 1.2 Verify Container & Database Health
-Run the following commands in your terminal to confirm all 5 containers are healthy and migrations are at head (`202611180001`). Since `v1.6.1` the QA stack runs with Dashboard sign-in on (Scenarios 12–15 need it); an `off`-mode stack still runs Scenarios 1–11 (with `EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev` for Scenario 10) and the runner lists the skipped scenarios:
+Run the following commands in your terminal to confirm all 5 containers are healthy and migrations are at head (`202611180002`). Since `v1.6.1` the QA stack runs with Dashboard sign-in on (Scenarios 12–15 need it); an `off`-mode stack still runs Scenarios 1–11 (with `EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev` for Scenario 10) and the runner lists the skipped scenarios:
 
 ```bash
 docker compose ps

@@ -158,6 +158,11 @@ jobs:
       - name: Pull the conformance image
         run: docker pull "$(python -c "from app.core.config import Settings; print(Settings(_env_file=None).sandbox_conformance_image)")"
 
+      - name: Build the sandbox image for the demo suite
+        run: |
+          docker build -t rewardhacking-sandbox-python:ci docker/sandbox-python
+          echo "RH_SANDBOX_PYTHON_IMAGE=$(docker image inspect --format '{{.Id}}' rewardhacking-sandbox-python:ci)" >> "$GITHUB_ENV"
+
       - name: Real Docker conformance
         env:
           RH_SANDBOX_LIVE: "1"

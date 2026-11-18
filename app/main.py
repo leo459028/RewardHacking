@@ -22,6 +22,7 @@ from app.core.logging import configure_logging
 from app.infra.postgres import close_engine, init_engine
 from app.services import audit_chain, change_requests, judge_activation
 from app.services.retention import RetentionError
+from app.services.verification.errors import VerificationError
 from app.services.evaluation.judges.profiles import load_profiles
 from app.observability.metrics import HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_TOTAL
 from app.ui.routers.access import router as access_ui_router
@@ -183,6 +184,12 @@ async def retention_exception_handler(request: Request, exc: RetentionError):
     if exc.details:
         error["details"] = jsonable_encoder(exc.details)
     return JSONResponse(status_code=exc.status_code, content={"error": error})
+
+
+@app.exception_handler(VerificationError)
+async def verification_exception_handler(request: Request, exc: VerificationError):
+    """v1.6.2: refused suite and re-run operations keep the shared ``{"error": {"code"}}`` shape."""
+    return JSONResponse(status_code=exc.status_code, content={"error": {"code": exc.code, "message": exc.message}})
 
 
 @app.exception_handler(audit_chain.AuditChainError)
