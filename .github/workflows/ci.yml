@@ -163,39 +163,3 @@ jobs:
           RH_SANDBOX_LIVE: "1"
           SANDBOX_DOCKER_RUNTIME: ${{ matrix.runtime }}
         run: pytest tests/test_v162_docker_live.py -q -W error::DeprecationWarning
-
-      - name: Show which container option fails
-        if: failure()
-        env:
-          RUNTIME: ${{ matrix.runtime }}
-        run: |
-          image="$(python -c "from app.core.config import Settings; print(Settings(_env_file=None).sandbox_conformance_image)")"
-          base="--init --read-only --cap-drop ALL --security-opt no-new-privileges:true --user 65534:65534 --network none --memory 256m --memory-swap 256m"
-          spawn() {
-            echo "=== $1 (spawn $3)"
-            timeout 60 docker run --rm --runtime="$RUNTIME" $base $2 "$image" sh -c \
-              "i=0; while [ \$i -lt $3 ]; do sleep 15 2>/dev/null & i=\$((i+1)); done 2>/dev/null; echo spawned=\$i procs=\$(ls /proc | grep -c '^[0-9]')" 2>&1 | tail -3
-            echo "exit code ${PIPESTATUS[0]}"
-          }
-          for limit in 48 64 80 96 128 192; do
-            failures=0
-            for attempt in 1 2 3 4 5 6 7 8 9 10; do
-              docker run --rm --runtime="$RUNTIME" $base --pids-limit "$limit" "$image" sh -c 'echo ok' >/dev/null 2>&1 || failures=$((failures+1))
-            done
-            echo "=== start reliability: pids-limit $limit -> $failures of 10 failed"
-          done
-          spawn "pids-limit 128" "--pids-limit 128" 64
-          spawn "pids-limit 128" "--pids-limit 128" 400
-          spawn "pids-limit 256" "--pids-limit 256" 400
-          spawn "pids-limit 128, nproc 16" "--pids-limit 128 --ulimit nproc=16:16" 64
-          spawn "pids-limit 128, nproc 32" "--pids-limit 128 --ulimit nproc=32:32" 64
-          spawn "no pids-limit, nproc 16" "--ulimit nproc=16:16" 64
-          name="rh-pid-probe"
-          docker run -d --name "$name" --runtime="$RUNTIME" $base --pids-limit 512 "$image" sh -c 'sleep 25 & sleep 25 & sleep 25 & sleep 25 & wait' >/dev/null
-          sleep 3
-          echo "=== host PIDs with 4 sleeping processes: $(docker stats --no-stream --format '{{.PIDs}}' "$name")"
-          docker rm -f "$name" >/dev/null
-          docker run -d --name "$name" --runtime="$RUNTIME" $base --pids-limit 512 "$image" sh -c 'i=0; while [ $i -lt 100 ]; do sleep 25 & i=$((i+1)); done; wait' >/dev/null
-          sleep 3
-          echo "=== host PIDs with 100 sleeping processes: $(docker stats --no-stream --format '{{.PIDs}}' "$name")"
-          docker rm -f "$name" >/dev/null

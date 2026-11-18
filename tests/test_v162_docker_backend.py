@@ -238,6 +238,25 @@ def test_runsc_is_passed_to_docker():
     assert backend.run(_spec()).isolation_level == "gvisor" and client.main.kwargs["runtime"] == "runsc"
 
 
+def test_runc_limits_processes_with_the_cgroup_only():
+    backend, client = _backend()
+    backend.run(_spec())
+    assert client.main.kwargs["pids_limit"] == LIMITS.pids and "ulimits" not in client.main.kwargs
+
+
+def test_runsc_limits_the_program_with_a_hard_nproc_limit():
+    backend, client = _backend(sandbox_docker_runtime="runsc")
+    backend.run(_spec())
+    assert client.main.kwargs["ulimits"] == [{"name": "nproc", "soft": LIMITS.pids, "hard": LIMITS.pids}]
+
+
+@pytest.mark.parametrize("pids", [1, 16, 32, 512])
+def test_runsc_host_limit_leaves_room_for_gvisor_threads(pids):
+    measured_need = 36 + 2 * pids
+    assert docker_config.host_pids_limit("runsc", pids) > measured_need
+    assert docker_config.host_pids_limit("runc", pids) == pids
+
+
 def test_configured_user_is_used():
     backend, client = _backend(sandbox_docker_user="1234:1234")
     backend.run(_spec())

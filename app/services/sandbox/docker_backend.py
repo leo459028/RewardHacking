@@ -201,7 +201,9 @@ class DockerBackend:
     def container_options(self, spec: ExecutionSpec, volumes: dict[str, dict[str, str]]) -> dict[str, Any]:
         """Every hardening setting of D16 in one place (asserted item by item in the tests)."""
         limits = spec.limits
+        ulimits = docker_config.process_ulimits(self._runtime, limits.pids)
         return {
+            **({"ulimits": ulimits} if ulimits else {}),
             "command": list(spec.argv),
             "working_dir": spec.workdir,
             "environment": dict(spec.env),
@@ -212,7 +214,7 @@ class DockerBackend:
             "network_mode": "none",
             "cap_drop": ["ALL"],
             "security_opt": ["no-new-privileges:true"],
-            "pids_limit": limits.pids,
+            "pids_limit": docker_config.host_pids_limit(self._runtime, limits.pids),
             "mem_limit": f"{limits.memory_mb}m",
             "memswap_limit": f"{limits.memory_mb}m",
             "nano_cpus": limits.cpu_millis * 1_000_000,

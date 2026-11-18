@@ -27,6 +27,22 @@ MAX_LIMITS = {
 }
 
 
+def host_pids_limit(runtime: str, pids: int) -> int:
+    """The cgroup limit Docker applies on the host for a spec that allows ``pids`` processes.
+
+    gVisor's own threads count against this cgroup: measured about 36 host PIDs at rest plus 2 per sandboxed process,
+    and a limit of 32 or less stops the sandbox from starting. So ``runsc`` gets headroom here, and the limit the
+    program sees is the ``nproc`` hard limit from ``process_ulimits``.
+    """
+    return pids * 3 + 64 if runtime == "runsc" else pids
+
+
+def process_ulimits(runtime: str, pids: int) -> list[dict[str, Any]]:
+    """Set from outside the sandbox, without capabilities the program cannot raise it. ``runc`` uses the cgroup alone:
+    there ``nproc`` would count every process of that UID on the host."""
+    return [{"name": "nproc", "soft": pids, "hard": pids}] if runtime == "runsc" else []
+
+
 def runtime_of(settings: Any) -> str:
     return str(getattr(settings, "sandbox_docker_runtime", "runc") or "").strip().lower()
 
