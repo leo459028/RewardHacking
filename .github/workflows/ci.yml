@@ -170,21 +170,32 @@ jobs:
           RUNTIME: ${{ matrix.runtime }}
         run: |
           image="$(python -c "from app.core.config import Settings; print(Settings(_env_file=None).sandbox_conformance_image)")"
-          groups=("--init" "--read-only" "--cap-drop ALL" "--security-opt no-new-privileges:true" "--user 65534:65534"
-            "--tmpfs /tmp:noexec,nosuid,size=64m" "--ipc private" "--log-driver none" "--pids-limit 32"
-            "--memory 128m --memory-swap 128m" "--cpus 0.5" "--network none" "--hostname sandbox")
-          try() {
-            echo "=== $1"
-            docker run --rm --runtime="$RUNTIME" $2 "$image" sh -c 'echo ok' 2>&1 || echo "exit code $?"
+          base="--init --read-only --cap-drop ALL --security-opt no-new-privileges:true --user 65534:65534 --network none --memory 256m --memory-swap 256m"
+          spawn() {
+            echo "=== $1 (spawn $3)"
+            timeout 60 docker run --rm --runtime="$RUNTIME" $base $2 "$image" sh -c \
+              "i=0; while [ \$i -lt $3 ]; do sleep 15 2>/dev/null & i=\$((i+1)); done 2>/dev/null; echo spawned=\$i procs=\$(ls /proc | grep -c '^[0-9]')" 2>&1 | tail -3
+            echo "exit code ${PIPESTATUS[0]}"
           }
-          try "all options" "${groups[*]}"
-          for skip in "${!groups[@]}"; do
-            options=""
-            for index in "${!groups[@]}"; do
-              if [ "$index" != "$skip" ]; then options="$options ${groups[$index]}"; fi
+          for limit in 48 64 80 96 128 192; do
+            failures=0
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              docker run --rm --runtime="$RUNTIME" $base --pids-limit "$limit" "$image" sh -c 'echo ok' >/dev/null 2>&1 || failures=$((failures+1))
             done
-            try "all except: ${groups[$skip]}" "$options"
+            echo "=== start reliability: pids-limit $limit -> $failures of 10 failed"
           done
-          base="--init --read-only --cap-drop ALL --security-opt no-new-privileges:true --user 65534:65534 --network none"
-          for memory in 32m 64m 128m 256m 512m 1g; do try "memory $memory" "$base --memory $memory --memory-swap $memory"; done
-          for pids in 16 32 64 128 256; do try "pids $pids" "$base --pids-limit $pids"; done
+          spawn "pids-limit 128" "--pids-limit 128" 64
+          spawn "pids-limit 128" "--pids-limit 128" 400
+          spawn "pids-limit 256" "--pids-limit 256" 400
+          spawn "pids-limit 128, nproc 16" "--pids-limit 128 --ulimit nproc=16:16" 64
+          spawn "pids-limit 128, nproc 32" "--pids-limit 128 --ulimit nproc=32:32" 64
+          spawn "no pids-limit, nproc 16" "--ulimit nproc=16:16" 64
+          name="rh-pid-probe"
+          docker run -d --name "$name" --runtime="$RUNTIME" $base --pids-limit 512 "$image" sh -c 'sleep 25 & sleep 25 & sleep 25 & sleep 25 & wait' >/dev/null
+          sleep 3
+          echo "=== host PIDs with 4 sleeping processes: $(docker stats --no-stream --format '{{.PIDs}}' "$name")"
+          docker rm -f "$name" >/dev/null
+          docker run -d --name "$name" --runtime="$RUNTIME" $base --pids-limit 512 "$image" sh -c 'i=0; while [ $i -lt 100 ]; do sleep 25 & i=$((i+1)); done; wait' >/dev/null
+          sleep 3
+          echo "=== host PIDs with 100 sleeping processes: $(docker stats --no-stream --format '{{.PIDs}}' "$name")"
+          docker rm -f "$name" >/dev/null
