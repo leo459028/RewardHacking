@@ -605,7 +605,6 @@ NET_OK = "tcp-blocked\ndns-blocked\ninterfaces-begin\nInter-|\n face |\n    lo: 
         (conformance.network_unreachable, NET_OK, "tool-missing\n" + NET_OK),
         (conformance.capabilities_dropped, "CapEff:\t0000000000000000\n", "CapEff:\t00000000a80425fb\n"),
         (conformance.no_new_privileges, "NoNewPrivs:\t1\n", "NoNewPrivs:\t0\n"),
-        (conformance.pids_limit_enforced, "procs=16\n", "procs=64\n"),
         (conformance.host_env_not_visible, "PATH=/bin\n", "POSTGRES_DSN=postgres://x\n"),
         (conformance.workspace_isolated, "checked-paths\n", "visible:/var/run/docker.sock\nchecked-paths\n"),
     ],
@@ -632,8 +631,67 @@ def test_memory_case_needs_an_oom_result():
     assert not _case(conformance.memory_limit_enforced, status="ok").passed
 
 
-def test_pids_case_passes_when_the_shell_cannot_fork_any_more():
-    assert _case(conformance.pids_limit_enforced, stdout="", status="nonzero_exit").passed
+CONTROL_OK = {"stdout": "spawned=8\nall-spawned\nprocs=10\n"}
+REFUSED = {"stdout": "spawned=13\n", "stderr": "sh: can't fork: Resource temporarily unavailable\n", "status": "nonzero_exit"}
+
+
+class PidsBackend(ScriptedBackend):
+    """Answers the control run and the limited run of ``pids_limit_enforced`` separately."""
+
+    def __init__(self, control: dict, limited: dict) -> None:
+        super().__init__()
+        self.answers = {conformance.PIDS_CONTROL_LIMIT: control, conformance.PIDS_LIMIT: limited}
+
+    def run(self, spec):
+        answer = self.answers[spec.limits.pids]
+        return ExecutionResult(
+            answer.get("status", "ok"), "docker", "v1.6.2", "container", "d",
+            stdout=f"{conformance.STARTED}\n{answer.get('stdout', '')}", stderr=answer.get("stderr", ""),
+        )
+
+
+def _pids_case(control: dict, limited: dict):
+    backend = PidsBackend(control, limited)
+    return conformance.pids_limit_enforced(lambda: backend, IMAGE)
+
+
+def test_pids_case_passes_when_the_limit_refuses_the_fork():
+    assert _pids_case(CONTROL_OK, REFUSED).passed
+
+
+def test_pids_case_accepts_the_kernel_wording_of_the_refusal():
+    assert _pids_case(CONTROL_OK, {**REFUSED, "stderr": "sh: Resource temporarily unavailable\n"}).passed
+
+
+def test_pids_case_fails_when_the_shell_stops_for_another_reason():
+    result = _pids_case(CONTROL_OK, {"stdout": "spawned=3\n", "stderr": "", "status": "nonzero_exit"})
+    assert not result.passed
+
+
+def test_pids_case_fails_on_an_unrelated_error_message():
+    assert not _pids_case(CONTROL_OK, {**REFUSED, "stderr": "sh: Cannot allocate memory\n"}).passed
+
+
+def test_pids_case_fails_when_nothing_limits_the_processes():
+    assert not _pids_case(CONTROL_OK, {"stdout": "spawned=64\nall-spawned\nprocs=66\n"}).passed
+
+
+def test_pids_case_fails_when_more_processes_start_than_allowed():
+    assert not _pids_case(CONTROL_OK, {**REFUSED, "stdout": "spawned=17\n"}).passed
+
+
+@pytest.mark.parametrize(
+    "control",
+    [
+        {"stdout": "spawned=3\n", "status": "nonzero_exit"},
+        {"stdout": "spawned=8\nall-spawned\n"},
+        {"stdout": "spawned=8\nall-spawned\nprocs=2\n"},
+        {"status": "error"},
+    ],
+)
+def test_pids_case_fails_when_the_control_run_does_not_work(control):
+    result = _pids_case(control, REFUSED)
+    assert not result.passed and "control run" in result.detail
 
 
 def test_host_env_case_cleans_its_canary(monkeypatch):

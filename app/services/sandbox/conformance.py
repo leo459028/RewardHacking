@@ -230,6 +230,11 @@ STARTED = "rh-started"
 _CAP_EFF = re.compile(r"^CapEff:\s*([0-9a-fA-F]+)\s*$", re.MULTILINE)
 _NO_NEW_PRIVS = re.compile(r"^NoNewPrivs:\s*(\d)\s*$", re.MULTILINE)
 _HOST_ENV_NAMES = ("POSTGRES_DSN", "REDIS_URL", "KAFKA_BOOTSTRAP_SERVERS")
+_FORK_REFUSED = re.compile(r"can't fork|resource temporarily unavailable", re.IGNORECASE)
+PIDS_LIMIT = 16
+PIDS_ATTEMPTS = 64
+PIDS_CONTROL_LIMIT = 64
+PIDS_CONTROL_COUNT = 8
 
 
 def _expectations(backend: SandboxBackend) -> dict[str, str]:
@@ -314,15 +319,28 @@ def no_new_privileges(factory: BackendFactory, image: str = CONFORMANCE_IMAGE) -
     return _check("no_new_privileges", ok, "NoNewPrivs is not reported and the container configuration does not prove it")
 
 
-def pids_limit_enforced(factory: BackendFactory, image: str = CONFORMANCE_IMAGE) -> CaseResult:
-    script = (
-        "i=0; while [ $i -lt 64 ]; do sleep 8 2>/dev/null & i=$((i+1)); done 2>/dev/null; "
-        "echo procs=$(ls /proc | grep -c '^[0-9]')"
+def _spawn_script(count: int) -> str:
+    return (
+        f"i=0; while [ $i -lt {count} ]; do sleep 8 & i=$((i+1)); echo spawned=$i; done; "
+        "echo all-spawned; echo procs=$(ls /proc | grep -c '^[0-9]')"
     )
-    result = _shell(factory(), image, script, timeout=15, pids=16)
-    match = re.search(r"procs=(\d+)", result.stdout)
-    ok = _ran(result) and (match is None or int(match.group(1)) <= 16)
-    return _check("pids_limit_enforced", ok, _describe(result))
+
+
+def pids_limit_enforced(factory: BackendFactory, image: str = CONFORMANCE_IMAGE) -> CaseResult:
+    """Needs proof from both sides: the script works with room to spare, and the limit is what stops it."""
+    control = _shell(factory(), image, _spawn_script(PIDS_CONTROL_COUNT), timeout=15, pids=PIDS_CONTROL_LIMIT)
+    counted = re.search(r"procs=(\d+)", control.stdout)
+    if not (_ran(control) and "all-spawned" in control.stdout and counted and int(counted.group(1)) >= PIDS_CONTROL_COUNT):
+        return CaseResult("pids_limit_enforced", False, f"control run did not spawn its processes: {_describe(control)}")
+    limited = _shell(factory(), image, _spawn_script(PIDS_ATTEMPTS), timeout=15, pids=PIDS_LIMIT)
+    spawned = [int(value) for value in re.findall(r"spawned=(\d+)", limited.stdout)]
+    ok = (
+        _ran(limited)
+        and "all-spawned" not in limited.stdout
+        and _FORK_REFUSED.search(limited.stderr) is not None
+        and max(spawned, default=0) <= PIDS_LIMIT
+    )
+    return _check("pids_limit_enforced", ok, f"spawned={max(spawned, default=0)} {_describe(limited)}")
 
 
 def memory_limit_enforced(factory: BackendFactory, image: str = CONFORMANCE_IMAGE) -> CaseResult:
