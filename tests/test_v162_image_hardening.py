@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import image_content_check as scan  # noqa: E402
+import security_check  # noqa: E402
 
 ALLOW_LIST = [
     "!app/",
@@ -322,9 +323,48 @@ def test_secret_content_fails_without_echoing_the_value(tmp_path, capsys):
     assert "secret_content" in output and fake not in output
 
 
-def test_allowlisted_and_binary_content_passes(tmp_path):
-    files = {**CLEAN, "app/fixture.py": b"token = 'sk-abcdefghijklmnop1234'\n", "app/blob.bin": b"\0AKIAABCDEFGHIJKLMNOP"}
+FAKE_TOKEN = "sk-" + "a" * 24
+FAKE_ACCESS_KEY = "AKIA" + "ABCDEFGHIJKLMNOP"
+KEY_HEADER = "-----BEGIN RSA " + "PRIVATE KEY-----"
+PASSWORD_LINE = "password" + " = 'real-value-123'"
+MOCK_PASSWORD_LINE = "password" + " = 'mock-value-123'"
+
+
+def test_mock_password_and_binary_content_pass(tmp_path):
+    files = {**CLEAN, "app/fixture.py": MOCK_PASSWORD_LINE.encode(), "app/blob.bin": b"\0" + FAKE_ACCESS_KEY.encode()}
     assert scan.scan_archive(_archive(tmp_path, [files]))["findings"] == []
+
+
+def test_a_token_marked_as_mock_still_fails_the_image_scan(tmp_path):
+    files = {**CLEAN, "app/fixture.py": f"token = '{FAKE_TOKEN}'  # mock\n".encode()}
+    assert "secret_content" in _rules(scan.scan_archive(_archive(tmp_path, [files])))
+
+
+@pytest.mark.parametrize("word", ["mock", "dummy", "demo-key", "key-a"])
+@pytest.mark.parametrize(
+    ("value", "rule"),
+    [(FAKE_TOKEN, "OpenAI API Key"), (FAKE_ACCESS_KEY, "AWS Access Key ID"), (KEY_HEADER, "Private Key")],
+)
+def test_allowlist_words_never_excuse_a_token_or_private_key(value, rule, word):
+    assert security_check.line_findings(f"{value}  # {word}") == [rule]
+
+
+def test_allowlist_words_only_excuse_the_password_rule():
+    assert security_check.line_findings(PASSWORD_LINE) == [security_check.PASSWORD_RULE]
+    assert security_check.line_findings(MOCK_PASSWORD_LINE) == []
+
+
+def test_a_reviewed_fixture_line_passes_only_when_it_is_unchanged():
+    line = 'key = b"' + KEY_HEADER + '\\n"'
+    assert security_check.line_findings(f"    {line}") == []
+    assert security_check.line_findings(line + "  # mock") == ["Private Key"]
+    assert security_check.line_findings(line.replace("RSA", "EC")) == ["Private Key"]
+
+
+def test_reviewed_fixture_lines_are_digests_with_a_reason():
+    assert security_check.KNOWN_FIXTURE_LINES
+    for digest, reason in security_check.KNOWN_FIXTURE_LINES.items():
+        assert re.fullmatch(r"[0-9a-f]{64}", digest) and reason.strip()
 
 
 @pytest.mark.parametrize("path", ["app/tests/test_a.py", "app/tests"])

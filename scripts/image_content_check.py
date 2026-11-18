@@ -25,7 +25,6 @@ import argparse
 import fnmatch
 import json
 import posixpath
-import re
 import subprocess
 import sys
 import tarfile
@@ -36,7 +35,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from security_check import ALLOWLIST_PATTERNS, SECRET_PATTERNS  # noqa: E402
+from security_check import line_findings  # noqa: E402
 
 SECRET_NAME_PATTERNS = ("*.pem", "*.key", "*.p12", "id_rsa*", ".env*")
 # Public CA bundles shipped by the base image and by certifi. They are checked for private keys instead.
@@ -146,12 +145,8 @@ def _finding(rule: str, path: str, detail: str, **extra: Any) -> dict[str, Any]:
 def _secret_rule_names(content: bytes) -> list[tuple[int, str]]:
     if b"\0" in content:
         return []
-    matches = []
-    for line_no, line in enumerate(content.decode("utf-8", errors="ignore").splitlines(), start=1):
-        if any(re.search(allow, line) for allow in ALLOWLIST_PATTERNS):
-            continue
-        matches.extend((line_no, name) for pattern, name in SECRET_PATTERNS if re.search(pattern, line))
-    return matches
+    lines = content.decode("utf-8", errors="ignore").splitlines()
+    return [(line_no, name) for line_no, line in enumerate(lines, start=1) for name in line_findings(line)]
 
 
 def check_secrets(all_entries: list[Entry], view: dict[str, Entry]) -> list[dict[str, Any]]:
