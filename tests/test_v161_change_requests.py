@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.jobs import retention as retention_job
@@ -716,3 +717,129 @@ def test_dual_control_check_is_in_the_operations_readiness(client):
     body = client.get("/v1/operations/readiness").json()
     check = next(item for item in body["checks"] if item["check_key"] == "dual_control_configured")
     assert check["status"] == "warn" and check["metadata"]["advisory"] is True
+
+
+# ---------------------------------------------------------------------------
+# concurrency regressions found on real Postgres (2026-11-18): the advisory lock must survive until the new request is
+# committed, and one expiry writes one event. SQLite has no advisory locks, so these assert the transaction shape.
+# ---------------------------------------------------------------------------
+
+RACE_REQUESTER = change_requests.Requester(actor="user:race-admin", kind="dashboard", role="admin", user_id="usr_race")
+
+
+def _stale_request(session_factory, target_ref: str) -> str:
+    change_id = "chg_stale_" + target_ref.replace(":", "_")
+    now = datetime.now(timezone.utc)
+
+    async def seed(session):
+        session.add(
+            ChangeRequest(
+                change_id=change_id, action=change_requests.LEGAL_HOLD_RELEASE, target_ref=target_ref, payload={}, payload_digest="0" * 64,
+                status="pending", requested_by="user:someone", requested_at=now - timedelta(days=2), expires_at=now - timedelta(days=1), result={},
+            )
+        )
+        await session.commit()
+
+    _db(session_factory, seed)
+    return change_id
+
+
+def _count_commits_after_lock(monkeypatch) -> dict:
+    """Commits made while the per-target advisory lock is held (a commit releases ``pg_advisory_xact_lock``)."""
+    seen = {"locked": False, "commits": 0}
+    lock_target, commit = change_requests._lock_target, AsyncSession.commit
+
+    async def recording_lock(session, action, target_ref):
+        seen["locked"] = True
+        await lock_target(session, action, target_ref)
+
+    async def recording_commit(session):
+        seen["commits"] += 1 if seen["locked"] else 0
+        await commit(session)
+
+    monkeypatch.setattr(change_requests, "_lock_target", recording_lock)
+    monkeypatch.setattr(AsyncSession, "commit", recording_commit)
+    return seen
+
+
+def _request_release(session_factory, hold_id: str) -> change_requests.Outcome:
+    params = {"hold_id": hold_id, "release_reason": "race"}
+    return _db(
+        session_factory,
+        lambda s: change_requests.execute_or_request(s, get_settings(), change_requests.LEGAL_HOLD_RELEASE, params, RACE_REQUESTER, reason="race"),
+    )
+
+
+def test_expiring_another_request_does_not_release_the_target_lock(client, session_factory, monkeypatch):
+    _enable(monkeypatch)
+    hold_id = _hold(client)["hold_id"]
+    stale_id = _stale_request(session_factory, "hold:another-target")
+    seen = _count_commits_after_lock(monkeypatch)
+    outcome = _request_release(session_factory, hold_id)
+    assert outcome.created is True and seen["locked"] is True
+    assert seen["commits"] == 1  # only the commit that stores the new request
+    assert _cr(session_factory, stale_id).status == "expired"
+
+
+def test_own_target_request_that_expires_after_the_sweep_is_replaced(client, session_factory, monkeypatch):
+    _enable(monkeypatch)
+    hold_id = _hold(client)["hold_id"]
+    stale_id = _stale_request(session_factory, f"hold:{hold_id}")
+
+    async def sweep_saw_nothing(session, settings, *, now=None):
+        return 0
+
+    monkeypatch.setattr(change_requests, "expire_stale", sweep_saw_nothing)
+    seen = _count_commits_after_lock(monkeypatch)
+    outcome = _request_release(session_factory, hold_id)
+    assert outcome.created is True and outcome.change_request.change_id != stale_id and seen["commits"] == 1
+    assert _cr(session_factory, stale_id).status == "expired"
+    pending = _db(session_factory, lambda s: _all(s, select(ChangeRequest).where(ChangeRequest.status == "pending")))
+    assert [row.change_id for row in pending] == [outcome.change_request.change_id]
+    assert [event.event_type for event in _events(session_factory)] == ["change_request.expired", "change_request.created"]
+
+
+def test_losing_the_expiry_race_writes_no_second_event(session_factory):
+    change_id = _stale_request(session_factory, "hold:raced")
+
+    async def scenario(session):
+        row = await change_requests.get_change_request(session, change_id)
+        async with session_factory() as other:
+            assert await change_requests.expire_stale(other, get_settings()) == 1
+        return await change_requests._expire(session, row)
+
+    assert _db(session_factory, scenario) is False
+    assert [event.event_type for event in _events(session_factory)] == ["change_request.expired"]
+
+
+def test_loading_a_request_another_session_just_expired_reports_expired(session_factory, monkeypatch):
+    change_id = _stale_request(session_factory, "hold:loaded")
+    original = change_requests.get_change_request
+
+    async def expired_meanwhile(session, wanted):
+        row = await original(session, wanted)
+        async with session_factory() as other:
+            await change_requests.expire_stale(other, get_settings())
+        return row
+
+    monkeypatch.setattr(change_requests, "get_change_request", expired_meanwhile)
+    with pytest.raises(change_requests.ChangeRequestError) as refused:
+        _db(session_factory, lambda s: change_requests._load_pending(s, get_settings(), change_id))
+    assert refused.value.code == "change_request_expired"
+    assert [event.event_type for event in _events(session_factory)] == ["change_request.expired"]
+
+
+def test_each_expiry_is_committed_on_its_own(session_factory, monkeypatch):
+    """Sweepers never hold one row lock while waiting for another (no deadlock between concurrent page loads)."""
+    first, second = _stale_request(session_factory, "hold:one"), _stale_request(session_factory, "hold:two")
+    commits = {"count": 0}
+    commit = AsyncSession.commit
+
+    async def counting(session):
+        commits["count"] += 1
+        await commit(session)
+
+    monkeypatch.setattr(AsyncSession, "commit", counting)
+    assert _db(session_factory, lambda s: change_requests.expire_stale(s, get_settings())) == 2
+    assert commits["count"] == 2
+    assert {_cr(session_factory, first).status, _cr(session_factory, second).status} == {"expired"}

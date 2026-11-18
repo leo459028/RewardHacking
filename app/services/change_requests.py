@@ -494,9 +494,14 @@ async def execute_or_request(
 
     prepared = await spec.prepare(session, settings, dict(params), requester)
     digest = sha256_hex(prepared.payload)
-    await _lock_target(session, action, prepared.target_ref)
+    # expire_stale() commits, and a commit releases the transaction-scoped advisory lock: sweep before taking it.
     await expire_stale(session, settings)
+    await _lock_target(session, action, prepared.target_ref)
     existing = await pending_for(session, action, prepared.target_ref)
+    if existing is not None and _aware(existing.expires_at) <= _now():
+        # It expired after the sweep. Expire it inside this transaction so the lock is held until the new row commits.
+        await _expire(session, existing)
+        existing = None
     if existing is not None:
         if existing.payload_digest != digest:
             raise ChangeRequestError(
@@ -546,8 +551,10 @@ async def _load_pending(session: AsyncSession, settings: Settings, change_id: st
     if cr is None:
         raise ChangeRequestError("change_request_not_found", f"Change request {change_id} not found.", 404)
     if cr.status == PENDING and _aware(cr.expires_at) <= _now():
-        await _expire(session, cr)
-        await session.commit()
+        if await _expire(session, cr):
+            await session.commit()
+        else:
+            await session.refresh(cr)  # another session decided or expired it first
     if cr.status == EXPIRED:
         raise ChangeRequestError("change_request_expired", "This change request expired; submit a new one.", 409)
     if cr.status != PENDING:
@@ -672,23 +679,39 @@ async def cancel(session: AsyncSession, settings: Settings, change_id: str, requ
     return cr
 
 
-async def _expire(session: AsyncSession, cr: ChangeRequest) -> None:
+async def _expire(session: AsyncSession, cr: ChangeRequest) -> bool:
+    """Claim a pending request as ``expired`` and record its event; ``False`` when another session got there first.
+
+    Does not commit. The conditional UPDATE is what keeps concurrent sweepers to one event per request."""
+    now = _now()
+    claimed = await session.execute(
+        update(ChangeRequest)
+        .where(ChangeRequest.change_id == cr.change_id, ChangeRequest.status == PENDING)
+        .values(status=EXPIRED, decided_by="", decided_at=now)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        return False
     cr.status = EXPIRED
-    cr.decided_at = _now()
+    cr.decided_at = now
     cr.decided_by = ""
     _event(session, cr, "expired", actor="system:change_requests", reason="Expired without a second approval; nothing was executed.")
+    return True
 
 
 async def expire_stale(session: AsyncSession, settings: Settings, *, now: datetime | None = None) -> int:
-    """Mark pending requests past ``expires_at`` as ``expired`` (one event each). Commits when anything changed."""
+    """Mark pending requests past ``expires_at`` as ``expired`` (one event each) and return how many this call expired.
+
+    Each expiry commits on its own, so a sweeper never holds one row lock while waiting for another. Never call this
+    while holding ``_lock_target()``: the commit would release the lock."""
     now = _aware(now) or _now()
     rows = list((await session.scalars(select(ChangeRequest).where(ChangeRequest.status == PENDING))).all())
-    stale = [row for row in rows if _aware(row.expires_at) <= now]
-    for row in stale:
-        await _expire(session, row)
-    if stale:
-        await session.commit()
-    return len(stale)
+    expired = 0
+    for row in [row for row in rows if _aware(row.expires_at) <= now]:
+        if await _expire(session, row):
+            await session.commit()
+            expired += 1
+    return expired
 
 
 async def list_change_requests(
