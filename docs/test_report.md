@@ -1,5 +1,19 @@
 # Test Execution & Verification Report
 
+## 2026-11-18 - v1.6.2 P2 Sandbox Runtime: Docker Backend, Runner and Dashboard (phase result, not a release)
+
+- **Branch**: `v1.6.2` (version anchors stay at `1.6.1` until the release phase; Alembic head `202611180001`).
+- **Automated tests**: full suite → **1588 passed, 24 skipped in 598.09 s** (baseline 1387; the skipped tests are the real Docker checks). Stage 1 (`ruff`, `lint-imports` 5 kept / 0 broken, `git diff --check`, P2 test files) → 581 passed.
+- **CI dependency versions** (fresh venv: FastAPI 0.163.2, Pydantic 2.14.3, Starlette 1.10.0, SQLAlchemy 2.1.9, pytest 9.2.0, `httpx2` 2.16.2, `docker` 7.1.0) → 1588 passed, 24 skipped in 671.26 s. One Dependabot grouping test was added after these two runs and passed on its own.
+- **Real Docker** (`RH_SANDBOX_LIVE=1`, Docker Desktop 29.9.2 on Windows, `runc`) → **24 passed in 26.86 s**. `runsc` (gVisor) cannot run on this machine and is verified only by the CI `sandbox` job.
+- **Conformance in the compose `sandbox-runner`** (UID 10001): 20 of 20 cases passed (10 base, 10 hardening) in about 12.4 s, for example run `sbc_a067efbf884e4dfc8ad0d8560a5a8c14`. No sandbox container or volume was left behind.
+- **Workspace transfer spike (D17)**: a named volume seeded through a container that never starts works with a read-only root filesystem. A tmpfs volume lost its content before the container started, so it was rejected.
+- **Migration**: on a temporary Postgres database `upgrade head`, `downgrade -1` and `upgrade head` all succeeded and the five tables exist. The full revision chain cannot run on SQLite because of older revisions; the new revision is applied on SQLite by a test.
+- **Job queue on Postgres** (temporary database): 8 concurrent runners claimed 600 jobs over 20 rounds with 0 duplicates; 6 concurrent reclaims requeued an expired job once; a runner that lost its lease could not write a result.
+- **Browser E2E**: exit 0 with temporary accounts `e2e-run-070a35-*` (disabled afterwards). 22 navigation views returned 200; Scenario 16 queued conformance run `sbc_f913934f3c774138bf9360b58ab37383`, which passed 20/20 with the gate `ready`; the auditor saw no button and a POST answered 403. 0 console errors, 0 page errors, 0 failed requests, 0 unexpected re-authentication redirects.
+- **Images**: `rewardhacking-api` content scan `pass` (7 layers, 9716 files, 0 findings, user `10001:10001`). `rewardhacking-sandbox-python` content scan `pass` (6 layers, 5973 files, 0 findings, user `65534:65534`; pytest 8.4.2, coverage 7.10.7).
+- **Independent review** (`/code-review high`): 10 findings, all fixed. The main ones: orphaned containers are now swept repeatedly, the gate uses the live Docker version, files under `out/` in an artifact are refused, and a Redis outage no longer stops lease renewal.
+
 ## 2026-11-18 - v1.6.2 P1 Published Image Baseline & Development Guardrails (phase result, not a release)
 
 - **Branch**: `v1.6.2` (version anchors stay at `1.6.1` until the release phase; Alembic head `202611120003`).

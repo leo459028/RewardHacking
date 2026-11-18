@@ -1277,6 +1277,49 @@ def run_manual_test_suite(
             assert after["status"] == "planned" and str(len(after["candidate_run_ids"])) == candidates
             print(f"[Scenario 15] Dashboard apply of {e2e_purge_id} in {policy['purge_mode']} mode -> retention_apply_disabled; plan still planned with {candidates} candidates")
 
+        # Scenario 16 (v1.6.2): sandbox runtime status; with execution on, a queued conformance run must pass end to end.
+        sandbox_status = page.request.get(f"{base_url}/v1/sandbox/status").json()
+        page.goto(f"{base_url}/dashboard/sandbox")
+        if "execution_disabled" in sandbox_status["gate"]["reasons"]:
+            assert "execution_disabled" in page.inner_text('[data-testid="sandbox-gate-reasons"]')
+            assert page.locator("#sandbox-conformance-button").count() == 0
+            print("[Scenario 16] Sandbox execution is off on this stack: the page shows execution_disabled and no Run conformance button")
+        else:
+            assert page.inner_text('[data-testid="sandbox-backend"]').strip() == "docker"
+            assert page.locator('[data-testid="sandbox-runner-row"]').count() >= 1, "sandbox-runner is not running (docker compose --profile sandbox up -d)"
+            previous_run = page.inner_text('[data-testid="sandbox-latest-run"]').strip() if page.locator('[data-testid="sandbox-latest-run"]').count() else ""
+            page.click("#sandbox-conformance-button")
+            page.wait_for_load_state("networkidle")
+            assert "conformance_" in page.inner_text('[data-testid="sandbox-message"]')
+            latest_run = previous_run
+            for _ in range(60):
+                page.goto(f"{base_url}/dashboard/sandbox")
+                if page.locator('[data-testid="sandbox-latest-run"]').count():
+                    latest_run = page.inner_text('[data-testid="sandbox-latest-run"]').strip()
+                if latest_run != previous_run:
+                    break
+                page.wait_for_timeout(2000)
+            assert latest_run != previous_run, "the queued conformance run did not finish within 120 s"
+            latest_status = page.inner_text('[data-testid="sandbox-latest-status"]').strip()
+            latest_count = page.inner_text('[data-testid="sandbox-latest-count"]').strip()
+            gate_state = page.inner_text('[data-testid="sandbox-gate"]').strip()
+            assert latest_status == "passed" and latest_count == "20/20" and gate_state == "ready", (latest_status, latest_count, gate_state)
+            print(
+                f"[Scenario 16] Sandbox: backend docker, runtime {page.inner_text('[data-testid=sandbox-runtime]').strip()}, "
+                f"isolation {page.inner_text('[data-testid=sandbox-isolation]').strip()}; conformance {latest_run} {latest_status} {latest_count}; gate {gate_state}"
+            )
+        if session_mode:
+            auditor_context = browser.new_context(viewport={"width": 1440, "height": 900})
+            auditor_page = auditor_context.new_page()
+            sign_in(auditor_page, base_url, *creds["auditor"])
+            response = auditor_page.goto(f"{base_url}/dashboard/sandbox")
+            assert response is not None and response.status == 200
+            assert auditor_page.locator("#sandbox-conformance-button").count() == 0
+            refused = auditor_page.request.post(f"{base_url}/dashboard/sandbox/conformance", max_redirects=0)
+            assert refused.status == 403, refused.status
+            auditor_context.close()
+            print("[Scenario 16.1] Auditor reads /dashboard/sandbox without the Run conformance button; POST -> 403")
+
         page.goto(f"{base_url}/dashboard/observability")
         obs_html = page.content()
         assert "FinOps" in obs_html
@@ -1323,7 +1366,7 @@ def run_manual_test_suite(
         assert "evaluation_review_queue_health" in ops_html
         assert "evaluation_benchmark_gate" in ops_html
         assert "evaluation_judge_health" in ops_html and "evaluation_sampling_health" in ops_html
-        assert "retention_policy" in ops_html and "sandbox_backend_health" in ops_html
+        assert "retention_policy" in ops_html and "sandbox_backend_health" in ops_html and "sandbox_runner_health" in ops_html
         assert "dashboard_auth_mode" in ops_html and "audit_chain_integrity" in ops_html and "dual_control_configured" in ops_html
         release_ver = page.input_value('input[name="release_version"]')
         assert release_ver == "v1.6.1"
@@ -1364,6 +1407,7 @@ def run_manual_test_suite(
             "/dashboard/admin/users",
             "/dashboard/change-requests",
             "/dashboard/audit-chain",
+            "/dashboard/sandbox",
         ]
         for route in nav_routes:
             r = page.goto(f"{base_url}{route}")

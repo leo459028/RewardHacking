@@ -235,3 +235,13 @@ Enforces soft and hard expenditure thresholds across `run`, `tenant`, `workflow`
 
 ### 9. `PricingImportBatch` (`pricing_import_batches`), `PricingChangeLog` (`pricing_change_logs`) & `PricingSourceDocument` (`pricing_source_documents`)
 Maintains full audit traceability for pricing catalog seed imports, manual rate adjustments, supersessions, and upstream official pricing source documents.
+
+## Sandbox Runtime & Verification (`v1.6.2`, Alembic `202611180001`)
+
+| Table | ID prefix | Purpose |
+| --- | --- | --- |
+| `sandbox_jobs` | `sbj_` | Work queue read by `sandbox-runner`: `kind` (`conformance`, `verification`), `status` (`queued`, `running`, `completed`, `failed`, `cancelled`, `expired`), `payload` (never holds secrets), `result`, `error_code`, `attempts`, `claimed_by`, `claimed_at`, `lease_expires_at` |
+| `sandbox_conformance_runs` | `sbc_` | One full conformance run: `backend_id`, `backend_version`, `runtime`, `config_fingerprint`, `passed`, `cases` (result and duration per case), `docker_server_version`, `triggered_by`. The latest row decides the execution gate; the most recent 200 are kept |
+| `verification_suites` | `vsu_` | Immutable test suites per tenant (`name`, `version`, `artifact_digest`, `base_ref`, `framework`, `image_name`, `test_command`, `test_paths`, `status`). Service added with platform re-runs |
+| `sandbox_artifacts` | `sha256` | Normalized snapshots stored once per content hash |
+| `verification_runs` | `vrf_` | Before / after results of a platform re-run: classification, coverage, discarded test changes, backend identity, findings and assurance level. Service added with platform re-runs |

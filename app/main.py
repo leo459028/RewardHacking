@@ -32,6 +32,7 @@ from app.ui.routers.judges import router as judges_ui_router
 from app.ui.routers.operations import router as operations_ui_router
 from app.ui.routers.retention import router as retention_ui_router
 from app.ui.routers.reviews import router as reviews_ui_router
+from app.ui.routers.sandbox import router as sandbox_ui_router
 from app.ui.routes import router as ui_router
 from app.ui.security import (
     ACCOUNT_PATH,
@@ -304,3 +305,4 @@ app.include_router(operations_ui_router)
 app.include_router(retention_ui_router)
 app.include_router(audit_chain_ui_router)
 app.include_router(change_requests_ui_router)
+app.include_router(sandbox_ui_router)

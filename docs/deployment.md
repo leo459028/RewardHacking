@@ -156,6 +156,16 @@ Images are not signed yet; signing is planned for `v1.6.5`.
 
 ---
 
+## Optional: Sandbox Runner (`v1.6.2`)
+
+`sandbox-runner` is the only service that talks to Docker. It is off by default.
+
+1. Pull the conformance image and set the sandbox variables in `.env` (see [`configuration.md`](configuration.md)): `SANDBOX_BACKEND=docker`, `SANDBOX_EXECUTION_ENABLED=true`.
+2. On Linux set `DOCKER_SOCKET_GID` to the group of `/var/run/docker.sock`.
+3. Start it with `docker compose --profile sandbox up -d`, then check `/dashboard/sandbox`: the gate must read `ready`.
+
+The Docker socket gives root-level access to the host, so run the runner on a dedicated host or VM in production and use `SANDBOX_DOCKER_RUNTIME=runsc` for untrusted code. The published `rewardhacking-sandbox-python` image holds `pytest` and `coverage`, runs as UID 65534 and can be mirrored to an internal registry and configured by digest.
+
 ## Production Readiness & Hardening Checklist
 
 When preparing for production deployment (`APP_ENV=prod`):

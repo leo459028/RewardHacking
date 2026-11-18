@@ -60,6 +60,12 @@ class RunStateStore(Protocol):
     async def list_open_mcp_breakers(self) -> dict[str, dict[str, Any]]:
         ...
 
+    async def set_sandbox_runner_heartbeat(self, runner_id: str, payload: dict[str, Any], *, ttl_seconds: int = 60) -> None:
+        ...
+
+    async def list_sandbox_runners(self) -> list[dict[str, Any]]:
+        ...
+
     async def record_tool_failure(
         self,
         tool_name: str,
@@ -155,6 +161,7 @@ def _five_minute_bucket(now: datetime | None = None) -> str:
 
 
 MCP_BREAKER_PREFIX = "circuit:mcp:"
+SANDBOX_RUNNER_PREFIX = "sandbox:runner:"  # v1.6.2 D19: sandbox:runner:<id>:heartbeat
 
 
 def mcp_breaker_key(mcp_server_id: str) -> str:
@@ -205,6 +212,7 @@ def _is_breaker_active(breaker: dict[str, Any] | None) -> bool:
 
 class InMemoryRunStateStore:
     def __init__(self) -> None:
+        self.sandbox_runners: dict[str, tuple[datetime, dict[str, Any]]] = {}
         self.run_states: dict[str, dict[str, Any]] = {}
         self.idempotency_keys: set[str] = set()
         self.breakers: dict[str, dict[str, Any]] = {}
@@ -327,6 +335,13 @@ class InMemoryRunStateStore:
                 continue
             result[server_id] = record
         return result
+
+    async def set_sandbox_runner_heartbeat(self, runner_id: str, payload: dict[str, Any], *, ttl_seconds: int = 60) -> None:
+        self.sandbox_runners[runner_id] = (datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds), dict(payload))
+
+    async def list_sandbox_runners(self) -> list[dict[str, Any]]:
+        now = datetime.now(timezone.utc)
+        return [dict(payload) for expires, payload in self.sandbox_runners.values() if expires > now]
 
     async def list_open_mcp_breakers(self) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
@@ -597,6 +612,18 @@ class RedisRunStateStore:
             if _is_breaker_active(record):
                 result[server_id] = record
         return result
+
+    async def set_sandbox_runner_heartbeat(self, runner_id: str, payload: dict[str, Any], *, ttl_seconds: int = 60) -> None:
+        await set_json(self.redis, f"{SANDBOX_RUNNER_PREFIX}{runner_id}:heartbeat", payload, ttl_seconds=ttl_seconds)
+
+    async def list_sandbox_runners(self) -> list[dict[str, Any]]:
+        runners: list[dict[str, Any]] = []
+        async for raw_key in self.redis.scan_iter(match=f"{SANDBOX_RUNNER_PREFIX}*:heartbeat"):
+            key = raw_key.decode("utf-8") if isinstance(raw_key, bytes) else str(raw_key)
+            record = await get_json(self.redis, key)
+            if record:
+                runners.append(record)
+        return runners
 
     async def list_open_mcp_breakers(self) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}

@@ -93,6 +93,9 @@ PERMISSIONS: dict[str, frozenset[str]] = {
     "audit_chain.read": frozenset({ADMIN, AUDITOR}),
     "audit_chain.verify": frozenset({ADMIN, AUDITOR}),
     "audit_chain.checkpoint": _ADMIN,
+    # v1.6.2 D40: sandbox runtime (platform view)
+    "sandbox.view": frozenset({ADMIN, OPERATOR, AUDITOR}),
+    "sandbox.manage": _ADMIN,  # queue a conformance run; no step-up, it changes no setting
 }
 
 # D26 / feature seven: permissions that need a recent re-authentication (applied in P4).
@@ -124,6 +127,7 @@ READ_PERMISSIONS = frozenset(
         "api_keys.view",
         "audit_chain.read",
         "audit_chain.verify",
+        "sandbox.view",
     }
 )
 

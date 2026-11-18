@@ -20,7 +20,7 @@ docker compose up -d --build
 ```
 
 ### 1.2 Verify Container & Database Health
-Run the following commands in your terminal to confirm all 5 containers are healthy and migrations are at head (`202611120003`). Since `v1.6.1` the QA stack runs with Dashboard sign-in on (Scenarios 12–15 need it); an `off`-mode stack still runs Scenarios 1–11 (with `EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev` for Scenario 10) and the runner lists the skipped scenarios:
+Run the following commands in your terminal to confirm all 5 containers are healthy and migrations are at head (`202611180001`). Since `v1.6.1` the QA stack runs with Dashboard sign-in on (Scenarios 12–15 need it); an `off`-mode stack still runs Scenarios 1–11 (with `EVALUATION_JUDGE_DASHBOARD_EDITING=insecure_dev` for Scenario 10) and the runner lists the skipped scenarios:
 
 ```bash
 docker compose ps
@@ -324,11 +324,20 @@ Optional API checks: `GET /v1/control-plane/mcp-servers`; `POST /v1/control-plan
 2. The page shows `retention_apply_disabled`; `GET /v1/retention/plans/{purge_id}` is still `planned` with the same candidates. Nothing is deleted.
 3. **(Manual, throwaway database only)** with `AUDIT_RETENTION_PURGE_MODE=apply` the same form shows the receipt (runs purged, rows per table, skipped, failures, `receipt_digest`, `applied_by` `user:<name>`). Never on the live stack.
 
+## 5.16 Scenario 16: Sandbox Runtime and Conformance (`v1.6.2`)
+
+Needs the local sandbox stack: `SANDBOX_BACKEND=docker`, `SANDBOX_EXECUTION_ENABLED=true`, `SANDBOX_MIN_ISOLATION_HIGH_RISK=container` in `.env`, the conformance image pulled, and `docker compose --profile sandbox up -d`.
+
+1. As admin open `/dashboard/sandbox`: backend `docker`, runtime `runc`, isolation `container`, gate `ready`, the *lowered high-risk minimum* notice, a runner row with a heartbeat of a few seconds, and 20 conformance cases passed.
+2. Press **Run conformance \| 執行一致性檢查**: the page shows `conformance_queued:sbj_…`; after a reload a new run shows `passed` and `20/20`.
+3. As auditor open the same page: everything is visible, there is no button, and a POST to `/dashboard/sandbox/conformance` answers 403.
+4. Set `SANDBOX_EXECUTION_ENABLED=false` and restart: the gate is `closed` with `execution_disabled` and the button is gone. Stop the runner with execution on: `sandbox_runner_health` fails on `/dashboard/operations`.
+
 ## 6. Browser QA Sign-Off Checklist
 
 Before signing off a release via manual browser testing, verify all items below:
 
-- [ ] All primary navigation tabs (`Overview`, `Runs`, `Approvals`, `Reviews`, `Benchmark`, `Judge Profiles`, `Worker`, `Observability`, `Governance`, `Control Plane`, `Costs`, `Admin FinOps`, `Operations`, `Retention`, `Playground`, and since `v1.6.1` `Users`, `Change Requests`, `Audit Chain`: 21 views) return HTTP 200 with zero server tracebacks.
+- [ ] All primary navigation tabs (`Overview`, `Runs`, `Approvals`, `Reviews`, `Benchmark`, `Judge Profiles`, `Worker`, `Observability`, `Governance`, `Control Plane`, `Costs`, `Admin FinOps`, `Operations`, `Retention`, `Playground`, since `v1.6.1` `Users`, `Change Requests`, `Audit Chain`, and since `v1.6.2` `Sandbox`: 22 views) return HTTP 200 with zero server tracebacks.
 - [ ] In session mode the runner reports 0 unexpected re-authentication redirects, and Scenarios 12–15 ran (an off-mode run lists them as skipped).
 - [ ] Browser Developer Tools (`F12` $\rightarrow$ **Console** & **Network**) show `0` unhandled JavaScript errors or broken asset requests (`404`/`500`).
 - [ ] No scientific notation artifacts (`0E-8` or `0E-12`) appear on `/dashboard/costs`, `/dashboard/runs/{run_id}`, `/dashboard/admin/finops/pricing`, or `/dashboard/admin/finops/budgets`.

@@ -243,7 +243,9 @@ class DockerBackend:
                 with tarfile.open(fileobj=io.BytesIO(artifacts[mount.source_ref]), mode="r:*") as source:
                     for member in source.getmembers():
                         path = _safe_member_path(member.name)
-                        if path is None or path == OUTPUT_DIR or not (member.isfile() or member.isdir()):
+                        # ``out/`` belongs to the run: a planted file there would read as output the sandbox produced.
+                        reserved = path is not None and (path == OUTPUT_DIR or path.startswith(f"{OUTPUT_DIR}/"))
+                        if path is None or reserved or not (member.isfile() or member.isdir()):
                             raise ValueError("artifact_invalid")
                         info = tarfile.TarInfo(path)
                         info.type = tarfile.DIRTYPE if member.isdir() else tarfile.REGTYPE
@@ -395,7 +397,14 @@ class DockerBackend:
             # The SDK reports the timeout differently per transport (ReadTimeout, or ConnectionError on npipe).
             if time.monotonic() - started < timeout_seconds:
                 raise
-        container.kill()
+        try:
+            container.kill()
+        except Exception:
+            # The program may have exited at the deadline; then its real exit status stands.
+            container.reload()
+            if ((container.attrs or {}).get("State") or {}).get("Running"):
+                raise
+            return False
         container.wait(timeout=30)
         return True
 
@@ -418,15 +427,17 @@ class DockerBackend:
         client = self._docker()
         now = now or datetime.now(timezone.utc)
         cutoff = now - timedelta(seconds=int(self._caps.max_limits["timeout_seconds"]) + ORPHAN_GRACE_SECONDS)
+        containers = client.containers.list(all=True, filters={"label": f"{LABEL_SANDBOX}=1"})
+        volumes = client.volumes.list(filters={"label": f"{LABEL_SANDBOX}=1"})
+        stale = [item for item in containers if self._older_than((item.attrs or {}).get("Created"), cutoff)]
+        stale += [item for item in volumes if self._older_than((item.attrs or {}).get("CreatedAt"), cutoff)]
         removed = 0
-        for container in client.containers.list(all=True, filters={"label": f"{LABEL_SANDBOX}=1"}):
-            if self._older_than((container.attrs or {}).get("Created"), cutoff):
-                container.remove(force=True)
+        for item in stale:
+            try:
+                item.remove(force=True)
                 removed += 1
-        for volume in client.volumes.list(filters={"label": f"{LABEL_SANDBOX}=1"}):
-            if self._older_than((volume.attrs or {}).get("CreatedAt"), cutoff):
-                volume.remove(force=True)
-                removed += 1
+            except Exception as exc:  # noqa: BLE001 - one stuck object must not stop the runner; the next sweep retries
+                logger.warning("sandbox orphan cleanup failed: %s", _error_name(exc))
         return removed
 
     @staticmethod

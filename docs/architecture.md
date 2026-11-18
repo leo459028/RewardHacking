@@ -109,7 +109,8 @@ flowchart LR
 - Enforces strict constraints on tool invocation count (`max_tool_calls`), timeout limits, and permitted tool lists.
 - Tracks tool failure frequencies in Redis; trips circuit breakers if consecutive failures exceed thresholds.
 - Simulates tool execution safely during dry-run and test modes without invoking external side-effects.
-- `v1.6.0`: builds an `ExecutionSpec` for every allowed tool and calls the configured `SandboxBackend` (`simulated` only; nothing executed); the transcript records `sandbox_execution` with backend, isolation level, required isolation (record-only policy) and `spec_digest`. The sandbox package may not import the API, Dashboard or worker layers (import-linter contract).
+- `v1.6.0`: builds an `ExecutionSpec` for every allowed tool and calls the simulated `SandboxBackend` (nothing executed); the transcript records `sandbox_execution` with backend, isolation level, required isolation and `spec_digest`. The sandbox package may not import the API, Dashboard or worker layers (import-linter contract).
+- `v1.6.2`: `sandbox-runner` (`app/workers/sandbox_runner.py`, compose profile `sandbox`) is the only process with Docker access. It accepts no requests: the API and Dashboard queue work in `sandbox_jobs`, and the runner claims it (`FOR UPDATE SKIP LOCKED`, leases renewed by its heartbeat). `DockerBackend` runs each job in a read-only container without network, capabilities or root. `gate.py` opens execution only when the flag is on and the latest conformance run passed for the current configuration fingerprint. Agent-run tools still use the simulated backend (`get_tool_backend`).
 
 ### 7. Evidence-Based Evaluation Engine (`app/services/evaluation/`, `v1.5.8`)
 - `evidence.py` bounds, parses (unified diff, JUnit XML) and redacts agent outcome evidence; `claims.py` extracts verification claims from the final message.
@@ -137,7 +138,7 @@ review queue order=triage: (min(rule, triage), rule, -triage_score) ─► rule 
 - Evaluates run-level budget policies and generates budget violation alerts.
 
 ### 8a. Module Contracts (`v1.6.0`)
-`lint-imports` enforces four contracts: post-execution review modules (`review_queue`, `outcomes`, `evaluation`, `judge_triage`, `review_sampling`) never import Kafka publishing, workers or token leases; `app.services` never imports `app.api` / `app.ui`; the sandbox package is independent of API, Dashboard and workers; FinOps submodules are layered without cycles.
+`lint-imports` enforces five contracts: post-execution review modules (`review_queue`, `outcomes`, `evaluation`, `judge_triage`, `review_sampling`) never import Kafka publishing, workers or token leases; `app.services` never imports `app.api` / `app.ui`; the sandbox package is independent of API, Dashboard and workers; only `sandbox-runner` may load the Docker backend (`v1.6.2`); FinOps submodules are layered without cycles.
 
 ### 9. Operational Dashboard (`app/ui/`)
 - Server-rendered HTML dashboard providing operational visibility:

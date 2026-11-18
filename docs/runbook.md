@@ -225,3 +225,11 @@ docker compose logs --tail=100 -f worker
 - **Cancel / expire**: the requester cancels with `POST /v1/change-requests/{id}/cancel` or the Dashboard **Cancel**. Pending requests expire after `DUAL_CONTROL_REQUEST_TTL_HOURS` (24); purge-plan requests expire with the plan (`AUDIT_RETENTION_PLAN_TTL_MINUTES`), so approve those promptly or create a new plan.
 - **Scheduled purge**: with `retention.apply` listed, `python -m app.jobs.retention --apply-latest` exits 2 (`second_approval_required`). Keep scheduling `--plan` and request the apply through the API for a person to approve.
 - **`dual_control_configured` warn**: in `APP_ENV=prod`, `retention.apply` or `legal_hold.release` is not listed (advisory outside prod), or `DUAL_CONTROL_ACTIONS` has an unknown name.
+
+### 16. Sandbox Runner (`v1.6.2`)
+- **Start**: set `SANDBOX_BACKEND=docker` and `SANDBOX_EXECUTION_ENABLED=true`, pull the image named by `SANDBOX_CONFORMANCE_IMAGE`, then run `docker compose --profile sandbox up -d`. The runner runs the full conformance suite at start-up; `/dashboard/sandbox` shows the result per case.
+- **Gate closed**: read the reasons on `/dashboard/sandbox` or `GET /v1/sandbox/status`. `execution_disabled` / `backend_not_docker`: check the settings. `conformance_missing` / `conformance_stale`: press **Run conformance** or restart the runner. `fingerprint_mismatch`: a setting, an image or the Docker version changed; run conformance again. `conformance_failed`: read the failed case and fix the host. `isolation_below_minimum`: the runtime is weaker than `SANDBOX_MIN_ISOLATION_DEFAULT`.
+- **`sandbox_runner_health` fails**: no heartbeat means the runner is down (`docker compose --profile sandbox ps`, then its logs). `docker_unreachable` means the runner cannot open the socket: on Linux set `DOCKER_SOCKET_GID`.
+- **Image missing** (`image_missing` in a case detail): `docker pull` the digest-pinned image. Nothing is pulled automatically unless `SANDBOX_DOCKER_PULL=missing`.
+- **gVisor**: install `runsc` on the Linux host, run `runsc install`, restart Docker and set `SANDBOX_DOCKER_RUNTIME=runsc`. Docker Desktop does not support it.
+- **Leftovers**: objects labelled `rh.sandbox=1` belong to the runner. It removes those older than the longest possible run when it starts.

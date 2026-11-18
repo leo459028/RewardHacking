@@ -318,6 +318,35 @@ def test_timeout_kills_the_container():
     assert client.main.killed is True and client.main.removed is True
 
 
+def _container_class(client, cls):
+    client.containers.create = lambda image, **kwargs: client.containers_created.append(cls(client, image, kwargs)) or client.containers_created[-1]
+
+
+def test_a_program_that_exits_at_the_deadline_keeps_its_exit_status():
+    client = FakeDocker(hang=True, exit_code=0)
+
+    class ExitedAtDeadline(FakeContainer):
+        def kill(self):
+            raise RuntimeError("409 container is not running")
+
+    _container_class(client, ExitedAtDeadline)
+    result = _backend(client)[0].run(_spec(limits=replace(LIMITS, timeout_seconds=1)))
+    assert (result.status, result.exit_code) == ("ok", 0)
+
+
+def test_a_failed_kill_of_a_running_container_is_an_error():
+    client = FakeDocker(hang=True)
+
+    class Unkillable(FakeContainer):
+        def kill(self):
+            self.attrs["State"]["Running"] = True
+            raise RuntimeError("daemon refused")
+
+    _container_class(client, Unkillable)
+    result = _backend(client)[0].run(_spec(limits=replace(LIMITS, timeout_seconds=1)))
+    assert result.status == "error" and client.main.removed is True
+
+
 def test_early_wait_failure_is_an_error_not_a_timeout():
     client = FakeDocker()
 
@@ -463,7 +492,15 @@ def test_artifact_with_the_wrong_digest_is_rejected():
     assert result.rejection_reasons == ("artifact_digest_mismatch",)
 
 
-@pytest.mark.parametrize("entries", [[("link", "symlink", None)], [("../up.txt", "file", b"x")]])
+@pytest.mark.parametrize(
+    "entries",
+    [
+        [("link", "symlink", None)],
+        [("../up.txt", "file", b"x")],
+        [("out", "dir", None)],
+        [("out/junit.xml", "file", b"<testsuite tests='50'/>")],
+    ],
+)
 def test_artifact_with_unsafe_members_is_rejected(entries):
     tar, source = _artifact(entries)
     backend, client = _backend()
@@ -492,6 +529,17 @@ def test_sweep_removes_only_objects_older_than_the_longest_run():
     backend, _ = _backend(FakeDocker(listed_containers=[old, recent], listed_volumes=[old_volume, bad_volume]))
     assert backend.sweep_orphans(now=now) == 2
     assert (old.removed, recent.removed, old_volume.removed, bad_volume.removed) == (True, False, True, False)
+
+
+def test_one_stuck_orphan_does_not_stop_the_sweep():
+    class Stuck(_Orphan):
+        def remove(self, force=False):
+            raise RuntimeError("409 removal in progress")
+
+    now = datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc)
+    stuck, old = Stuck({"Created": "2026-11-18T10:00:00Z"}), _Orphan({"Created": "2026-11-18T10:00:00Z"})
+    backend, _ = _backend(FakeDocker(listed_containers=[stuck, old]))
+    assert backend.sweep_orphans(now=now) == 1 and old.removed is True
 
 
 # ---------------------------------------------------------------------------

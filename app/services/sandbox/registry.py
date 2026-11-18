@@ -1,13 +1,13 @@
 """Backend selection (v1.6.0 D23, v1.6.2 D19).
 
-``SANDBOX_BACKEND`` is ``simulated`` (default) or ``docker``. The Docker backend is registered only by
-``app.workers.sandbox_runner``, so the API and the worker can never reach Docker: ``get_backend`` refuses ``docker``
-in those processes. Agent-run tools use ``get_tool_backend``, which stays simulated in this release (plan 1.3).
+``SANDBOX_BACKEND`` is ``simulated`` (default) or ``docker``. Only ``app.workers.sandbox_runner`` builds the Docker
+backend, so the API and the worker can never reach Docker: ``get_backend`` refuses ``docker``. Agent-run tools use
+``get_tool_backend``, which stays simulated in this release (plan 1.3).
 """
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any
 
 from app.services.sandbox.base import SandboxBackend
 from app.services.sandbox.simulated import SimulatedBackend
@@ -16,17 +16,9 @@ SIMULATED = "simulated"
 DOCKER = "docker"
 SUPPORTED_BACKENDS = (SIMULATED, DOCKER)
 
-_docker_factory: Callable[[Any], SandboxBackend] | None = None
-
 
 class SandboxConfigError(RuntimeError):
     """Unknown ``SANDBOX_BACKEND`` or a non-positive maximum: fail closed instead of running misconfigured."""
-
-
-def register_docker_backend(factory: Callable[[Any], SandboxBackend] | None) -> None:
-    """Called once by ``sandbox-runner``; ``None`` removes the registration (tests)."""
-    global _docker_factory
-    _docker_factory = factory
 
 
 def configured_backend(settings: Any) -> str:
@@ -54,9 +46,7 @@ def get_backend(settings: Any) -> SandboxBackend:
     if name == SIMULATED:
         return _simulated(settings)
     if name == DOCKER:
-        if _docker_factory is None:
-            raise SandboxConfigError("The docker backend is available only inside sandbox-runner.")
-        return _docker_factory(settings)
+        raise SandboxConfigError("The docker backend is available only inside sandbox-runner.")
     raise _unsupported(name)
 
 

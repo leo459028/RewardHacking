@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Sandbox Runtime | 沙箱執行環境{% endblock %}
+{% block content %}
+{% set caps = report.capabilities or {} %}
+<div class="page-head">
+  <div>
+    <h1>Sandbox Runtime</h1>
+    <div class="title-note">沙箱執行環境</div>
+    <div class="muted">Isolated execution for platform re-runs (v1.6.2). Agent-run tools stay simulated. The feature flag and the runtime are environment settings. | 平台重跑用的隔離環境；agent run 的工具仍是模擬。開關與 runtime 只能用環境變數設定。</div>
+  </div>
+</div>
+
+{% if message %}<div class="success" role="status" data-testid="sandbox-message">{{ message }}</div>{% endif %}
+{% if error %}<div class="error" role="alert" data-testid="sandbox-error">{{ error }}</div>{% endif %}
+{% if report.error %}<div class="error" role="alert" data-testid="sandbox-config-error">{{ report.error }}</div>{% endif %}
+{% if gate.relaxed_high_risk %}<div class="notice" role="status" data-testid="sandbox-relaxed">High-risk minimum isolation is lowered to <code>{{ report.isolation_policy.min_isolation_high_risk }}</code> on this deployment (the default is <code>gvisor</code>). | 本機放寬：高風險工作的最低隔離已調低。</div>{% endif %}
+
+<section class="grid stats" id="sandbox-status">
+  <div class="stat"><div class="stat-label">Backend | 後端</div><div class="stat-value" data-testid="sandbox-backend">{{ report.configured_backend }}</div></div>
+  <div class="stat"><div class="stat-label">Runtime</div><div class="stat-value" data-testid="sandbox-runtime">{{ runtime if docker_selected else "-" }}</div></div>
+  <div class="stat"><div class="stat-label">Isolation | 隔離等級</div><div class="stat-value" data-testid="sandbox-isolation">{{ caps.isolation_level or "-" }}</div></div>
+  <div class="stat"><div class="stat-label">Execution gate | 執行閘門</div><div class="stat-value"><span class="status {{ 'completed' if gate.ready else 'failed' }}" data-testid="sandbox-gate">{{ "ready" if gate.ready else "closed" }}</span></div></div>
+</section>
+
+<section class="panel" id="sandbox-gate-panel">
+  <h2>Execution gate <span class="heading-note">執行閘門</span></h2>
+  <p class="muted">Nothing runs unless the flag is on, the backend is Docker and the latest conformance run passed for the current configuration. | 開關開啟、後端為 Docker，且最新一致性檢查通過並符合目前設定，才會真的執行。</p>
+  {% if gate.reasons %}
+  <ul data-testid="sandbox-gate-reasons">{% for reason in gate.reasons %}<li><code>{{ reason }}</code></li>{% endfor %}</ul>
+  {% else %}
+  <p data-testid="sandbox-gate-reasons">All conditions hold. | 所有條件都成立。</p>
+  {% endif %}
+  <table>
+    <tbody>
+      <tr><th>Default minimum isolation | 預設最低隔離</th><td>{{ report.isolation_policy.min_isolation_default }}</td></tr>
+      <tr><th>High-risk minimum isolation | 高風險最低隔離</th><td>{{ report.isolation_policy.min_isolation_high_risk }}</td></tr>
+      <tr><th>Policy | 政策</th><td>{{ report.isolation_policy.mode }}</td></tr>
+      <tr><th>Configuration fingerprint | 設定指紋</th><td>{% if gate.fingerprint %}<code>{{ gate.fingerprint[:16] }}…</code>{% else %}-{% endif %}</td></tr>
+      <tr><th>Conformance image | 一致性檢查映像</th><td><code>{{ conformance_image }}</code></td></tr>
+      <tr><th>Sandbox images | 沙箱映像</th><td>{% for name, ref in images.items() %}<div><code>{{ name }}</code> → <code>{{ ref }}</code></div>{% else %}-{% endfor %}</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="panel" id="sandbox-runners">
+  <h2>Runners <span class="heading-note">執行器</span></h2>
+  <table>
+    <thead><tr><th>Runner</th><th>State | 狀態</th><th>Runtime</th><th>Docker</th><th>Current job | 目前工作</th><th>Heartbeat | 心跳</th></tr></thead>
+    <tbody>
+    {% for runner in runners %}
+      <tr data-testid="sandbox-runner-row"><td><code>{{ runner.runner_id }}</code></td><td><span class="status {{ 'completed' if runner.state in ('ready', 'busy') else 'failed' }}">{{ runner.state }}</span></td><td>{{ runner.runtime }}</td><td>{{ runner.docker_server_version or "-" }}</td><td>{% if runner.current_job_id %}<code>{{ runner.current_job_id }}</code>{% else %}-{% endif %}</td><td data-testid="sandbox-runner-age">{{ runner.age_seconds if runner.age_seconds is not none else "?" }} s ago</td></tr>
+    {% else %}
+      <tr><td colspan="6" class="muted" data-testid="sandbox-no-runner">No runner heartbeat. Start one with <code>docker compose --profile sandbox up -d</code>. | 沒有執行器心跳。</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel" id="sandbox-conformance">
+  <h2>Conformance <span class="heading-note">一致性檢查</span></h2>
+  {% if can("sandbox.manage", "sandbox") and docker_selected and execution_enabled %}<form method="post" action="/dashboard/sandbox/conformance">
+    {{ csrf_input() }}
+    <button class="button" type="submit" id="sandbox-conformance-button">Run conformance | 執行一致性檢查</button>
+  </form>{% endif %}
+  {% if latest %}
+  <p>Latest run <code data-testid="sandbox-latest-run">{{ latest.run_id }}</code>: <span class="status {{ 'completed' if latest.passed else 'failed' }}" data-testid="sandbox-latest-status">{{ "passed" if latest.passed else "failed" }}</span> · <span data-testid="sandbox-latest-count">{{ latest.passed_cases }}/{{ latest.total_cases }}</span> cases · {{ latest.runtime }} · Docker {{ latest.docker_server_version or "-" }} · {{ latest.created_at }} · {{ latest.triggered_by }}</p>
+  <table data-testid="sandbox-cases">
+    <thead><tr><th>Case | 檢查項目</th><th>Group | 類別</th><th>Result | 結果</th><th>Duration | 耗時</th><th>Detail | 說明</th></tr></thead>
+    <tbody>
+    {% for case in latest.cases %}
+      <tr><td><code>{{ case.name }}</code></td><td>{{ case.group }}</td><td><span class="status {{ 'completed' if case.passed else 'failed' }}">{{ "passed" if case.passed else "failed" }}</span></td><td>{{ case.duration_ms }} ms</td><td>{{ case.detail or "-" }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted" data-testid="sandbox-no-conformance">No conformance run yet. | 尚未執行一致性檢查。</p>
+  {% endif %}
+  <h3>History <span class="heading-note">歷史紀錄</span></h3>
+  <table data-testid="sandbox-history">
+    <thead><tr><th>Run</th><th>Result | 結果</th><th>Cases | 項目</th><th>Runtime</th><th>Fingerprint | 指紋</th><th>By | 觸發者</th><th>Created | 建立時間</th></tr></thead>
+    <tbody>
+    {% for run in history %}
+      <tr><td><code>{{ run.run_id }}</code></td><td><span class="status {{ 'completed' if run.passed else 'failed' }}">{{ "passed" if run.passed else "failed" }}</span></td><td>{{ run.passed_cases }}/{{ run.total_cases }}</td><td>{{ run.runtime }}</td><td><code>{{ run.config_fingerprint[:16] }}…</code></td><td>{{ run.triggered_by }}</td><td>{{ run.created_at }}</td></tr>
+    {% else %}
+      <tr><td colspan="7" class="muted">No runs yet. | 尚無紀錄。</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel" id="sandbox-jobs">
+  <h2>Recent jobs <span class="heading-note">最近的工作</span></h2>
+  <table>
+    <thead><tr><th>Job</th><th>Kind | 類型</th><th>Status | 狀態</th><th>Attempts | 次數</th><th>Error | 錯誤</th><th>Runner</th><th>Created | 建立時間</th><th>Finished | 完成時間</th></tr></thead>
+    <tbody>
+    {% for job in jobs %}
+      <tr data-testid="sandbox-job-row"><td><code>{{ job.job_id }}</code></td><td>{{ job.kind }}</td><td><span class="status {{ 'completed' if job.status == 'completed' else ('failed' if job.status in ('failed', 'expired') else 'pending') }}">{{ job.status }}</span></td><td>{{ job.attempts }}</td><td>{{ job.error_code or "-" }}</td><td>{{ job.claimed_by or "-" }}</td><td>{{ job.created_at }}</td><td>{{ job.finished_at or "-" }}</td></tr>
+    {% else %}
+      <tr><td colspan="8" class="muted">No jobs yet. | 尚無工作。</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

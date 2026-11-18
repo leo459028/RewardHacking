@@ -6,13 +6,14 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /build
-COPY requirements.txt requirements-otel.txt ./
+COPY requirements.txt requirements-otel.txt requirements-sandbox.txt ./
 
 # Wheels only: no compiler is needed in either stage, and a dependency without a wheel fails the build loudly.
 # v1.6.0 D5: optional OpenTelemetry export; the app stays a no-op unless OTEL_ENABLED=true.
+# v1.6.2 D16: the Docker SDK is used only by sandbox-runner; the API and the worker never import it.
 ARG INSTALL_OTEL=1
 RUN python -m venv --without-pip /opt/venv && \
-    pip --python /opt/venv/bin/python install --no-cache-dir --only-binary=:all: -r requirements.txt && \
+    pip --python /opt/venv/bin/python install --no-cache-dir --only-binary=:all: -r requirements.txt -r requirements-sandbox.txt && \
     if [ "$INSTALL_OTEL" = "1" ]; then \
         pip --python /opt/venv/bin/python install --no-cache-dir --only-binary=:all: -r requirements-otel.txt; \
     fi

@@ -114,6 +114,33 @@ services:
     healthcheck:
       disable: true
 
+  # v1.6.2 D19: the only service with Docker access, which is root-level access to the host. It accepts no requests.
+  # `docker compose --profile sandbox up -d`. On Linux set DOCKER_SOCKET_GID to the group that owns the socket.
+  sandbox-runner:
+    build: .
+    profiles: ["sandbox"]
+    depends_on:
+      api:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DSN: postgresql+asyncpg://app:app@postgres:5432/app
+      REDIS_URL: redis://redis:6379/0
+    group_add:
+      - "${DOCKER_SOCKET_GID:-0}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["python", "-m", "app.workers.sandbox_runner"]
+    restart: unless-stopped
+    # The image health check probes the API port, which the runner does not serve.
+    healthcheck:
+      disable: true
+
   # v1.6.0 D8: optional trace backend. `docker compose --profile observability up -d`, set OTEL_ENABLED=true in .env,
   # rebuild api / worker, then open http://localhost:16686. Pinned to a release at least two weeks old.
   jaeger:

@@ -16,7 +16,7 @@ from app.core.config import Settings
 from app.models import sandbox as models
 from app.models.base import Base
 from app.services import sandbox
-from app.services.sandbox import IsolationLevel, SimulatedBackend, conformance, docker_config, health, policy, registry
+from app.services.sandbox import IsolationLevel, SimulatedBackend, conformance, docker_config, health, policy
 from app.services.sandbox.spec import ExecutionSpec, Limits, image_reference_valid, validate_spec
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -170,15 +170,6 @@ def test_simulated_backend_never_passes_the_full_suite():
 def test_docker_backend_is_unavailable_outside_the_runner():
     with pytest.raises(sandbox.SandboxConfigError, match="sandbox-runner"):
         sandbox.get_backend(_docker_settings())
-
-
-def test_registered_factory_serves_the_docker_backend():
-    marker = SimulatedBackend()
-    registry.register_docker_backend(lambda settings: marker)
-    try:
-        assert sandbox.get_backend(_docker_settings()) is marker
-    finally:
-        registry.register_docker_backend(None)
 
 
 def test_agent_run_tools_stay_simulated_with_the_docker_backend():

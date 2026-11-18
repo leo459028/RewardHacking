@@ -23,6 +23,7 @@ ALLOW_LIST = [
     "!alembic.ini",
     "!requirements.txt",
     "!requirements-otel.txt",
+    "!requirements-sandbox.txt",
     "!README.md",
     "!LICENSE",
     "!config/*.example.yaml",

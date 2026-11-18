@@ -9,6 +9,11 @@ updates:
     labels:
       - "dependencies"
       - "python"
+    # These packages pin each other to the same version, so they can only be upgraded together.
+    groups:
+      opentelemetry:
+        patterns:
+          - "opentelemetry-*"
 
   # Maintain GitHub Actions dependencies
   - package-ecosystem: "github-actions"

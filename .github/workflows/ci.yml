@@ -71,3 +71,95 @@ jobs:
 
       - name: Scan image content
         run: python scripts/image_content_check.py --image rewardhacking:ci
+
+      - name: Build sandbox image (not pushed)
+        run: docker build -t rewardhacking-sandbox-python:ci docker/sandbox-python
+
+      - name: Scan sandbox image content
+        run: python scripts/image_content_check.py --image rewardhacking-sandbox-python:ci
+
+  # v1.6.2 D52(2): every revision must apply and revert on the database used in production.
+  migrations:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d app"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      POSTGRES_DSN: postgresql+asyncpg://app:app@localhost:5432/app
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Upgrade to head
+        run: alembic upgrade head
+
+      - name: Downgrade one revision
+        run: alembic downgrade -1
+
+      - name: Upgrade to head again
+        run: alembic upgrade head
+
+  # v1.6.2 D44 / Q7: the real isolation checks. gVisor is verified only here.
+  sandbox:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [runc, runsc]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt -r requirements-sandbox.txt
+
+      - name: Install gVisor
+        if: matrix.runtime == 'runsc'
+        env:
+          GVISOR_RELEASE: "20261102.0"
+          GVISOR_SHA512: 2e6671bb2d033b871c5811ab57e16ac570988b0e0054c525f911cfaf191bab3ca4efb08e0a98daa4b9e7d248f9e5776ef2ef2f8a6b82d829646a42924c98bb05
+        run: |
+          curl -fsSLo gvisor.tar.bz2 "https://storage.googleapis.com/gvisor/releases/release/${GVISOR_RELEASE}/x86_64/gvisor.tar.bz2"
+          echo "${GVISOR_SHA512}  gvisor.tar.bz2" | sha512sum -c -
+          tar -xjf gvisor.tar.bz2 runsc containerd-shim-runsc-v1
+          sudo install -m 0755 runsc containerd-shim-runsc-v1 /usr/local/bin/
+          sudo /usr/local/bin/runsc install
+          sudo systemctl restart docker
+          docker info --format '{{json .Runtimes}}' | grep -q runsc
+
+      - name: Pull the conformance image
+        run: docker pull "$(python -c "from app.core.config import Settings; print(Settings(_env_file=None).sandbox_conformance_image)")"
+
+      - name: Real Docker conformance
+        env:
+          RH_SANDBOX_LIVE: "1"
+          SANDBOX_DOCKER_RUNTIME: ${{ matrix.runtime }}
+        run: pytest tests/test_v162_docker_live.py -q -W error::DeprecationWarning

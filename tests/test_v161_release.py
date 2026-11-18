@@ -33,7 +33,7 @@ def test_browser_suite_covers_the_v161_scenarios():
     for route in ("/dashboard/admin/users", "/dashboard/change-requests", "/dashboard/audit-chain"):
         assert f'"{route}",' in BROWSER, route
     nav_block = BROWSER.split("nav_routes = [", 1)[1].split("]", 1)[0]
-    assert len(re.findall(r'"/dashboard[^"]*"', nav_block)) == 21  # 18 primary views + Users, Change Requests, Audit Chain
+    assert len(re.findall(r'"/dashboard[^"]*"', nav_block)) == 22  # 18 primary views + Users, Change Requests, Audit Chain, Sandbox
 
 
 def test_browser_suite_reads_credentials_from_the_environment_only(monkeypatch):

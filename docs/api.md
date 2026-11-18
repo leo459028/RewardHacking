@@ -158,7 +158,9 @@ The tombstone is tenant-scoped like the run (another tenant's key gets `403 tena
 | `POST` | `/v1/operations/release-gates` | Creates an auditable release gate snapshot | `admin` |
 | `GET` | `/v1/observability/summary` | Worker, incident, approval, evaluator, SLO and FinOps summary | `viewer`, `operator`, `admin` |
 | `GET` | `/v1/observability/tracing` | `v1.6.0`: W3C propagation and OTel export status (exporter host only), dropped attribute count | `viewer`, `operator`, `admin` |
-| `GET` | `/v1/sandbox/status` | `v1.6.0`: configured sandbox backend, capabilities, record-only isolation policy and conformance smoke results (`status` `pass` / `fail`, never `500`) | `viewer`, `operator`, `admin` |
+| `GET` | `/v1/sandbox/status` | Configured sandbox backend, capabilities, isolation policy and smoke results (`status` `pass` / `fail`, never `500`). `v1.6.2` adds `gate` (`ready`, `reasons`, `fingerprint`, `latest_run_id`, `relaxed_high_risk`) and `runners` (live heartbeats) | `viewer`, `operator`, `admin` |
+| `POST` | `/v1/sandbox/conformance` | `v1.6.2`: queues a full conformance run for `sandbox-runner` (`202` with `job` and `created`; an active run is returned instead of a new one). `409 sandbox_execution_disabled` unless `SANDBOX_BACKEND=docker` and `SANDBOX_EXECUTION_ENABLED=true` | `admin` |
+| `GET` | `/v1/sandbox/conformance` | `v1.6.2`: conformance history with the result of every case (`limit`, default 20) | `admin`, `auditor` |
 | `GET` | `/v1/incidents` | Lists safety incidents and policy denials | `viewer`, `operator`, `admin` |
 | `GET` | `/v1/worker/dlq` | Lists worker attempts routed to dead letter queue | `viewer`, `operator`, `admin` |
 | `POST` | `/v1/worker/dlq/{run_id}/requeue` | Requeues a DLQ run (`status="queued"`) and republishes `agent.requested` | `operator`, `admin` |

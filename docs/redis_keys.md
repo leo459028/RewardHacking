@@ -31,6 +31,7 @@ Redis serves as the high-throughput, low-latency ephemeral datastore in **Reward
 | `breaker:{tool_name}` | String (JSON) | `TOOL_BREAKER_TTL_SECONDS` | Open tool circuit breaker (status, reason, expiry); the key is absent while the breaker is closed |
 | `breaker_failures:{tool_name}:{five_minute_bucket}` | String (Int) | 300s | Worker failures in the current five-minute bucket for automatic circuit breaker tripping (`TOOL_BREAKER_FAILURE_THRESHOLD`) |
 | `tenant:{tenant_id}:quota:mcp:{mcp_server_id}:calls:{YYYYMMDDHHMM}` | String (Int) | 120s | `v1.5.7` per-MCP-server fixed-window (minute bucket) call counter; one increment per requested tool bound to the server (`quota_per_minute` or `MCP_SERVER_CALL_LIMIT_PER_MINUTE`) |
+| `sandbox:runner:{runner_id}:heartbeat` | String (JSON) | 60s | `v1.6.2` `sandbox-runner` heartbeat, written every 15 s: state, runtime, Docker version, current job. No key means no live runner |
 | `circuit:mcp:{mcp_server_id}` | String (JSON) | `TOOL_BREAKER_TTL_SECONDS` | `v1.5.7` MCP server circuit breaker; kept in a separate namespace so tool breaker listings (`breaker:*`) never include MCP servers |
 | `idempotency:run:{run_id}:worker:{attempt}` | String | 86,400s (24h) | Worker execution attempt deduplication lock |
 

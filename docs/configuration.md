@@ -63,12 +63,28 @@ Application configuration is loaded from environment variables and local `.env` 
 | `DUAL_CONTROL_ACTIONS` | *(empty)* | `v1.6.1`: comma list of actions that need a second, signed-in person (Change Requests): `retention.apply`, `legal_hold.release`, `judge.activate`, `evaluation_policy.protected_paths` (relaxations only). Empty = every action runs at once (pre-`v1.6.1` behaviour). Unknown names are ignored and warned about by `dual_control_configured`, which also warns in `APP_ENV=prod` while `retention.apply` or `legal_hold.release` is missing |
 | `DUAL_CONTROL_REQUEST_TTL_HOURS` | `24` | Hours a pending change request stays approvable (`retention.apply` also stops at the plan's own expiry) |
 | `AUDIT_CHAIN_VERIFY_MAX_ENTRIES` | `5000` | Entries checked per online verification call (API / Dashboard); the CLI has no limit |
-| `SANDBOX_BACKEND` | `simulated` | `v1.6.0`: sandbox backend; `simulated` is the only option (nothing is executed). Unknown values fail closed |
+| `SANDBOX_BACKEND` | `simulated` | Sandbox backend. `simulated` executes nothing. `docker` (`v1.6.2`) is used only by `sandbox-runner` for conformance and platform re-runs; agent-run tools stay simulated. Unknown values fail closed |
 | `SANDBOX_HIGH_RISK_THRESHOLD` | *(unset)* | Risk score at or above which `SANDBOX_MIN_ISOLATION_HIGH_RISK` is required; unset or empty uses `DEFAULT_RISK_THRESHOLD` |
-| `SANDBOX_MIN_ISOLATION_DEFAULT` | `container` | Required isolation for other runs (`process`, `container`, `gvisor`, `microvm`); record-only in `v1.6.0` |
-| `SANDBOX_MIN_ISOLATION_HIGH_RISK` | `gvisor` | Required isolation for high-risk runs; record-only in `v1.6.0` |
+| `SANDBOX_MIN_ISOLATION_DEFAULT` | `container` | Required isolation for other runs (`process`, `container`, `gvisor`, `microvm`). Enforced for work that really executes since `v1.6.2`; recorded only for the simulated backend |
+| `SANDBOX_MIN_ISOLATION_HIGH_RISK` | `gvisor` | Required isolation for high-risk runs. With `runc` such work is refused (`isolation_insufficient`); lowering this value is shown on `/dashboard/sandbox` |
 | `SANDBOX_MAX_TIMEOUT_SECONDS` | `300` | Upper bound for a spec's `timeout_seconds`; must be greater than 0 |
 | `SANDBOX_MAX_OUTPUT_BYTES` | `1048576` | Upper bound for a spec's `max_output_bytes`; must be greater than 0 |
+| `SANDBOX_EXECUTION_ENABLED` | `false` | `v1.6.2`: feature flag for real execution. The conformance gate must also pass |
+| `SANDBOX_DOCKER_RUNTIME` | `runc` | OCI runtime: `runc` (isolation `container`) or `runsc` (gVisor, isolation `gvisor`; register it with the Docker daemon first) |
+| `SANDBOX_DOCKER_USER` | `65534:65534` | Numeric `uid:gid` inside sandbox containers; root is refused |
+| `SANDBOX_DOCKER_PULL` | `never` | `never`: images must already exist on the host. `missing`: pull a missing digest-pinned image |
+| `SANDBOX_DOCKER_ALLOW_LOCAL_IMAGE_IDS` | `false` | Local development only: also accept `sha256:<image id>`. Always off when `APP_ENV=prod` |
+| `SANDBOX_CONFORMANCE_IMAGE` | pinned `busybox` | Digest-pinned image for the conformance suite. It needs `sh`, `cat`, `id`, `nc` and `nslookup` |
+| `SANDBOX_CONFORMANCE_MAX_AGE_HOURS` | `168` | The gate closes when the latest passing conformance run is older than this |
+| `SANDBOX_IMAGES` | `{}` | JSON object of allowed sandbox images, for example `{"python": "ghcr.io/<owner>/rewardhacking-sandbox-python@sha256:<digest>"}` |
+| `SANDBOX_ARTIFACT_MAX_BYTES` | `20971520` | Size limit of one stored verification snapshot (used from the verification phase) |
+| `SANDBOX_VERIFY_MODE` | `off` | Platform re-runs: `off`, `sampled` or `all` (used from the verification phase) |
+| `SANDBOX_VERIFY_SAMPLE_RATE`, `SANDBOX_VERIFY_SAMPLE_SECRET` | `0`, *(empty)* | Sampling rate and HMAC secret for `sampled` mode |
+| `SANDBOX_VERIFY_DAILY_CAP_PER_TENANT` | `50` | Maximum platform re-runs per tenant and day |
+| `SANDBOX_VERIFY_FLAKY_RETRIES` | `2` | Extra runs used to recognise flaky tests |
+| `SANDBOX_VERIFY_TIMEOUT_SECONDS` | `300` | Time limit of one re-run |
+| `SANDBOX_COMPUTE_COST_PER_CPU_SECOND` | `0` | Recorded cost per CPU second of a re-run; `0` records usage without charging |
+| `DOCKER_SOCKET_GID` | `0` | Compose only: group added to `sandbox-runner` so it can open the Docker socket. Set it to the socket's group on Linux |
 | `OTEL_ENABLED` | `false` | `v1.6.0`: export spans through OpenTelemetry (needs the `otel` extra). W3C propagation works either way |
 | `OTEL_TRACE_UI_URL_TEMPLATE` | *(empty)* | Run Detail trace link, for example `http://localhost:16686/trace/{trace_id}` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_TRACES_SAMPLER` | *(OTel defaults)* | Standard OpenTelemetry variables (OTLP/HTTP only) |

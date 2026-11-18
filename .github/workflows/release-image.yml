@@ -55,6 +55,18 @@ jobs:
       - name: Scan image content
         run: python scripts/image_content_check.py --image rewardhacking:scan
 
+      - name: Build sandbox image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: docker/sandbox-python
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: rewardhacking-sandbox-python:scan
+
+      - name: Scan sandbox image content
+        run: python scripts/image_content_check.py --image rewardhacking-sandbox-python:scan
+
       # Report only (v1.6.2 Q8): known CVEs do not block a release; the content scan above does.
       - name: CVE report
         id: cve
@@ -119,4 +131,24 @@ jobs:
           IMAGE: ${{ steps.image.outputs.name }}
           TAG: ${{ github.event.release.tag_name }}
           DIGEST: ${{ steps.push.outputs.digest }}
+        run: echo "Published \`$IMAGE:$TAG\` with digest \`$DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build and push sandbox image
+        id: push_sandbox
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: docker/sandbox-python
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}-sandbox-python:${{ github.event.release.tag_name }}
+            ${{ steps.image.outputs.name }}-sandbox-python:latest
+          sbom: true
+          provenance: mode=max
+
+      - name: Record sandbox image digest
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}-sandbox-python
+          TAG: ${{ github.event.release.tag_name }}
+          DIGEST: ${{ steps.push_sandbox.outputs.digest }}
         run: echo "Published \`$IMAGE:$TAG\` with digest \`$DIGEST\`" >> "$GITHUB_STEP_SUMMARY"

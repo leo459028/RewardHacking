@@ -94,6 +94,7 @@ source_modules = [
     "app.services.sandbox.registry",
     "app.services.sandbox.health",
     "app.services.sandbox.gate",
+    "app.services.sandbox.jobs",
 ]
 forbidden_modules = ["app.services.sandbox.docker_backend"]
 
