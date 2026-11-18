@@ -60,7 +60,7 @@ Application configuration is loaded from environment variables and local `.env` 
 | `AUDIT_CHAIN_SIGNING_KEY_FILE` | *(empty)* | Ed25519 private key (unencrypted PEM file) used to sign checkpoints. Keep it apart from the database; empty = checkpoints are `unsigned` (operations check warns, fails in `APP_ENV=prod`) |
 | `AUDIT_CHAIN_SIGNING_KEY` | *(empty)* | The same key as a PEM string (secret); used only when `AUDIT_CHAIN_SIGNING_KEY_FILE` is empty |
 | `AUDIT_CHAIN_PUBLIC_KEYS_FILE` | *(empty)* | PEM file with the public keys accepted when verifying (keep old keys after a rotation); the current signing key is always accepted |
-| `DUAL_CONTROL_ACTIONS` | *(empty)* | `v1.6.1`: comma list of actions that need a second, signed-in person (Change Requests): `retention.apply`, `legal_hold.release`, `judge.activate`, `evaluation_policy.protected_paths` (relaxations only). Empty = every action runs at once (pre-`v1.6.1` behaviour). Unknown names are ignored and warned about by `dual_control_configured`, which also warns in `APP_ENV=prod` while `retention.apply` or `legal_hold.release` is missing |
+| `DUAL_CONTROL_ACTIONS` | *(empty)* | `v1.6.1`: comma list of actions that need a second, signed-in person (Change Requests): `retention.apply`, `legal_hold.release`, `judge.activate`, `evaluation_policy.protected_paths` (relaxations only), `verification_suite.publish` (`v1.6.2`). Empty = every action runs at once (pre-`v1.6.1` behaviour). Unknown names are ignored and warned about by `dual_control_configured`, which also warns in `APP_ENV=prod` while `retention.apply` or `legal_hold.release` is missing |
 | `DUAL_CONTROL_REQUEST_TTL_HOURS` | `24` | Hours a pending change request stays approvable (`retention.apply` also stops at the plan's own expiry) |
 | `AUDIT_CHAIN_VERIFY_MAX_ENTRIES` | `5000` | Entries checked per online verification call (API / Dashboard); the CLI has no limit |
 | `SANDBOX_BACKEND` | `simulated` | Sandbox backend. `simulated` executes nothing. `docker` (`v1.6.2`) is used only by `sandbox-runner` for conformance and platform re-runs; agent-run tools stay simulated. Unknown values fail closed |
@@ -77,13 +77,13 @@ Application configuration is loaded from environment variables and local `.env` 
 | `SANDBOX_CONFORMANCE_IMAGE` | pinned `busybox` | Digest-pinned image for the conformance suite. It needs `sh`, `cat`, `id`, `nc` and `nslookup` |
 | `SANDBOX_CONFORMANCE_MAX_AGE_HOURS` | `168` | The gate closes when the latest passing conformance run is older than this |
 | `SANDBOX_IMAGES` | `{}` | JSON object of allowed sandbox images, for example `{"python": "ghcr.io/<owner>/rewardhacking-sandbox-python@sha256:<digest>"}` |
-| `SANDBOX_ARTIFACT_MAX_BYTES` | `20971520` | Size limit of one stored verification snapshot (used from the verification phase) |
-| `SANDBOX_VERIFY_MODE` | `off` | Platform re-runs: `off`, `sampled` or `all` (used from the verification phase) |
-| `SANDBOX_VERIFY_SAMPLE_RATE`, `SANDBOX_VERIFY_SAMPLE_SECRET` | `0`, *(empty)* | Sampling rate and HMAC secret for `sampled` mode |
-| `SANDBOX_VERIFY_DAILY_CAP_PER_TENANT` | `50` | Maximum platform re-runs per tenant and day |
-| `SANDBOX_VERIFY_FLAKY_RETRIES` | `2` | Extra runs used to recognise flaky tests |
-| `SANDBOX_VERIFY_TIMEOUT_SECONDS` | `300` | Time limit of one re-run |
-| `SANDBOX_COMPUTE_COST_PER_CPU_SECOND` | `0` | Recorded cost per CPU second of a re-run; `0` records usage without charging |
+| `SANDBOX_ARTIFACT_MAX_BYTES` | `20971520` | Size limit of one uploaded and one stored verification snapshot |
+| `SANDBOX_VERIFY_MODE` | `off` | Platform re-runs after an outcome: `off`, `sampled` or `all`. Any other value counts as `off`. Manual re-runs work in every mode |
+| `SANDBOX_VERIFY_SAMPLE_RATE`, `SANDBOX_VERIFY_SAMPLE_SECRET` | `0`, *(empty)* | Sampling rate (0 to 1) and HMAC secret for `sampled` mode. Without a secret the draw changes when the process restarts |
+| `SANDBOX_VERIFY_DAILY_CAP_PER_TENANT` | `50` | Maximum platform re-runs per tenant and UTC day, manual requests included. Further requests are stored as `skipped` with `daily_cap` |
+| `SANDBOX_VERIFY_FLAKY_RETRIES` | `2` | Extra after runs when the first one has failures; tests whose result does not repeat are marked `flaky` |
+| `SANDBOX_VERIFY_TIMEOUT_SECONDS` | `300` | Time limit of each test run inside a re-run (capped by `SANDBOX_MAX_TIMEOUT_SECONDS`) |
+| `SANDBOX_COMPUTE_COST_PER_CPU_SECOND` | `0` | Recorded cost per allocated CPU second of a re-run, in `FINOPS_BASE_CURRENCY`; `0` records usage without charging |
 | `DOCKER_SOCKET_GID` | `0` | Compose only: group added to `sandbox-runner` so it can open the Docker socket. Set it to the socket's group on Linux |
 | `OTEL_ENABLED` | `false` | `v1.6.0`: export spans through OpenTelemetry (needs the `otel` extra). W3C propagation works either way |
 | `OTEL_TRACE_UI_URL_TEMPLATE` | *(empty)* | Run Detail trace link, for example `http://localhost:16686/trace/{trace_id}` |

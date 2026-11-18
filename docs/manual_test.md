@@ -333,11 +333,34 @@ Needs the local sandbox stack: `SANDBOX_BACKEND=docker`, `SANDBOX_EXECUTION_ENAB
 3. As auditor open the same page: everything is visible, there is no button, and a POST to `/dashboard/sandbox/conformance` answers 403.
 4. Set `SANDBOX_EXECUTION_ENABLED=false` and restart: the gate is `closed` with `execution_disabled` and the button is gone. Stop the runner with execution on: `sandbox_runner_health` fails on `/dashboard/operations`.
 
+## 5.17 Scenario 17: Verification Suites (`v1.6.2`)
+
+Needs the sandbox stack of Scenario 16 and `SANDBOX_IMAGES` with the `python` image. Build the demo suite with `python scripts/build_demo_suite.py --out demo_tax.tar.gz`.
+
+1. As admin open `/dashboard/verification` and publish `demo_tax.tar.gz` under a new name (re-authentication is required): the page shows `suite_published:vsu_…` and the suite is listed as version 1 with its digest and test paths.
+2. Upload an archive that holds a symbolic link: the page shows `artifact_symlink_rejected` and no suite is created.
+3. Publish the same name again: version 2 appears next to version 1.
+4. Press **Disable \| 停用**: the status becomes `disabled`, and `POST /v1/agent/submit` naming that suite in `metadata.verification_suite_id` answers `422 verification_suite_invalid`.
+5. As auditor the page is readable without any form, and a POST answers 403. A `tenant_admin` only sees the suites of its own tenant.
+
+## 5.18 Scenario 18: Platform Re-Runs (`v1.6.2`)
+
+Needs `SANDBOX_VERIFY_MODE=all`. Submit a `code_fix` run with `metadata.verification_suite_id`, wait until it is `completed`, then send the evidence printed by `python scripts/build_demo_suite.py --scenario <name>` to `POST /v1/runs/{run_id}/outcome`. Open the record from **Platform re-runs \| 平台重跑紀錄**.
+
+| Scenario | Expected result |
+| --- | --- |
+| `honest` | `completed`, Fail→Pass 3, Pass→Fail 0, changed-line coverage above 0 |
+| `fake_report` | `completed`, Fail→Pass 0, `fail_to_fail` 3: the invented 50/50 report is not what the platform measured |
+| `conftest_rewrite` | `completed`, `fail_to_fail` 3, *Discarded test changes* lists `tests/conftest.py` |
+| `regression` | `completed`, Fail→Pass 3, Pass→Fail 1 |
+
+The verdict and the review of the run do not change in any scenario (results are monitor-only).
+
 ## 6. Browser QA Sign-Off Checklist
 
 Before signing off a release via manual browser testing, verify all items below:
 
-- [ ] All primary navigation tabs (`Overview`, `Runs`, `Approvals`, `Reviews`, `Benchmark`, `Judge Profiles`, `Worker`, `Observability`, `Governance`, `Control Plane`, `Costs`, `Admin FinOps`, `Operations`, `Retention`, `Playground`, since `v1.6.1` `Users`, `Change Requests`, `Audit Chain`, and since `v1.6.2` `Sandbox`: 22 views) return HTTP 200 with zero server tracebacks.
+- [ ] All primary navigation tabs (`Overview`, `Runs`, `Approvals`, `Reviews`, `Benchmark`, `Judge Profiles`, `Worker`, `Observability`, `Governance`, `Control Plane`, `Costs`, `Admin FinOps`, `Operations`, `Retention`, `Playground`, since `v1.6.1` `Users`, `Change Requests`, `Audit Chain`, and since `v1.6.2` `Sandbox` and `Verification`: 23 views) return HTTP 200 with zero server tracebacks.
 - [ ] In session mode the runner reports 0 unexpected re-authentication redirects, and Scenarios 12–15 ran (an off-mode run lists them as skipped).
 - [ ] Browser Developer Tools (`F12` $\rightarrow$ **Console** & **Network**) show `0` unhandled JavaScript errors or broken asset requests (`404`/`500`).
 - [ ] No scientific notation artifacts (`0E-8` or `0E-12`) appear on `/dashboard/costs`, `/dashboard/runs/{run_id}`, `/dashboard/admin/finops/pricing`, or `/dashboard/admin/finops/budgets`.

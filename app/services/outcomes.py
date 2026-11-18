@@ -7,6 +7,7 @@ capped per run, and monotonic safety applies: a run under review can never be re
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -46,6 +47,9 @@ from app.services.evaluation.evidence import (
 )
 from app.services.evaluator import Evaluator
 from app.services.review_queue import RUN_REVIEW_REQUIRED, open_or_merge_review, protected_paths_for
+from app.services.verification import sampling as verification_sampling
+
+logger = logging.getLogger(__name__)
 
 OUTCOME_ACCEPTING_STATUSES = ("completed", RUN_REVIEW_REQUIRED)
 _EVIDENCE_FIELDS = (
@@ -59,6 +63,8 @@ _EVIDENCE_FIELDS = (
     "provenance",
     "attestation",
 )
+# v1.6.2 D25: evidence cut to size cannot be re-run faithfully, so the stored copy says so. Written by the platform only.
+_EVIDENCE_LIMIT_NOTES = ("evidence_truncated", "file_content_dropped")
 
 
 def new_outcome_id() -> str:
@@ -180,6 +186,9 @@ async def submit_outcome(
         protected_paths=protected,
         settings=settings,
     )
+    evidence_limits = sorted({str(note.get("code")) for note in ctx.notes if note.get("code") in _EVIDENCE_LIMIT_NOTES})
+    if evidence_limits:
+        redacted["evidence_limits"] = evidence_limits
     attestation = await verify_ctx_attestation(
         session,
         ctx,
@@ -343,7 +352,22 @@ async def submit_outcome(
     EVALUATION_OUTCOMES_TOTAL.labels(provenance=outcome.provenance, verdict=evaluation.verdict).inc()
     record_finding_metrics(evaluation)
     await refresh_review_queue_gauge(session)
+    await _queue_platform_rerun(session, settings, run=run, outcome=outcome, review=review)
     return outcome, evaluation, review, run
+
+
+async def _queue_platform_rerun(
+    session: AsyncSession, settings: Settings, *, run: AgentRun, outcome: RunOutcome, review: EvaluationReview | None
+) -> None:
+    """v1.6.2 D32: the outcome is already stored, so a queueing problem must not fail the submission."""
+    try:
+        await verification_sampling.maybe_enqueue_for_outcome(session, settings, run=run, outcome=outcome)
+    except Exception:  # noqa: BLE001
+        logger.exception("platform re-run was not queued for outcome %s", outcome.outcome_id)
+        await session.rollback()
+        for row in (outcome, run, review):  # a rollback expires what the caller still has to return
+            if row is not None:
+                await session.refresh(row)
 
 
 async def preview_evaluation(

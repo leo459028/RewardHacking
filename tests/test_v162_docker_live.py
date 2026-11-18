@@ -73,6 +73,13 @@ def test_live_hardening_case(case, factory, settings, client):
     _no_leftovers(client)
 
 
+def test_live_memory_limit_is_reported_every_time(factory, settings, client):
+    """Docker reports an OOM apart from the exit, and gVisor showed the gap only now and then: one pass proves nothing."""
+    results = [conformance.memory_limit_enforced(factory, settings.sandbox_conformance_image) for _ in range(10)]
+    assert all(result.passed for result in results), [result.detail for result in results if not result.passed]
+    _no_leftovers(client)
+
+
 def test_live_full_suite_passes(factory, settings):
     report = conformance.run_full_suite(factory, image=settings.sandbox_conformance_image)
     assert conformance.suite_passed(report), [item for item in report if not item["passed"]]

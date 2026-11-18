@@ -221,6 +221,7 @@
         {% if can("dashboard.view", "change_requests") %}<a class="{{ 'active' if active == 'change-requests' else '' }}" href="/dashboard/change-requests">Change Requests | 變更覆核</a>{% endif %}
         {% if can("audit_chain.read", "audit_chain") %}<a class="{{ 'active' if active == 'audit-chain' else '' }}" href="/dashboard/audit-chain">Audit Chain | 稽核鏈</a>{% endif %}
         {% if can("sandbox.view", "sandbox") %}<a class="{{ 'active' if active == 'sandbox' else '' }}" href="/dashboard/sandbox">Sandbox | 沙箱</a>{% endif %}
+        {% if can("verification.view", "verification") %}<a class="{{ 'active' if active == 'verification' else '' }}" href="/dashboard/verification">Verification | 平台重跑驗證</a>{% endif %}
         {% if can("runs.submit", "playground") %}<a class="{{ 'active' if active == 'playground' else '' }}" href="/dashboard/playground">Playground</a>{% endif %}
         {% if principal_ and not principal_.synthetic and can("users.manage", "users") %}
         <a class="{{ 'active' if active == 'users' else '' }}" href="/dashboard/admin/users">Users | 使用者</a>

@@ -1,8 +1,11 @@
 """Apply an agent's change to the platform's snapshot (v1.6.2 D25). Plain text handling, inside the runner.
 
-Tests, test settings and anything that could replace the test tools always stay the platform's copy. Hunks apply
-strictly: the context must match exactly and there is no fuzz. A change that cannot be applied faithfully is skipped with
-a reason, because running something other than what the agent submitted would prove nothing.
+Tests, test settings and the known test tools always stay the platform's copy. Hunks apply strictly: the context must
+match exactly and there is no fuzz. A change that cannot be applied faithfully is skipped with a reason, because running
+something other than what the agent submitted would prove nothing.
+
+This raises the cost of cheating; it is not a boundary. The agent's code runs in the same process as the tests, so code
+written to forge the report can still do so (``docs/security.md``, Known Boundaries).
 """
 
 from __future__ import annotations
@@ -29,10 +32,11 @@ _HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
 class PatchSkipped(Exception):
-    def __init__(self, reason: str, detail: str = "") -> None:
+    def __init__(self, reason: str, detail: str = "", discarded: tuple[dict[str, str], ...] = ()) -> None:
         super().__init__(reason)
         self.reason = reason
         self.detail = detail
+        self.discarded = discarded
 
 
 @dataclass(frozen=True)
@@ -209,14 +213,15 @@ def apply_evidence(
         tree[path] = after.encode("utf-8")
         record(path, before, after)
 
+    dropped = tuple({"path": path, "reason": reason} for path, reason in sorted(discarded.items()))
     if not applied:
-        raise PatchSkipped(ONLY_TEST_CHANGES if discarded else NO_APPLICABLE_CHANGES)
+        raise PatchSkipped(ONLY_TEST_CHANGES if discarded else NO_APPLICABLE_CHANGES, discarded=dropped)
     if sum(len(content) for content in tree.values()) > max_bytes:
         raise PatchSkipped(PATCH_TOO_LARGE)
     _check_tree(tree)
     return PatchResult(
         files=tree,
         applied=tuple(sorted(set(applied))),
-        discarded=tuple({"path": path, "reason": reason} for path, reason in sorted(discarded.items())),
+        discarded=dropped,
         changed_lines=changed,
     )

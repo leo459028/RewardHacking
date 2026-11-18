@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Platform Verification | 平台重跑驗證{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Platform Verification</h1>
+    <div class="title-note">平台重跑驗證</div>
+    <div class="muted">The platform re-runs its own copy of the tests before and after the agent's change, inside the sandbox. Results are monitor-only and never change a verdict. | 平台在沙箱內用自己保存的測試，於 agent 變更前後各跑一次。結果只供監控，不會改變判定。</div>
+  </div>
+</div>
+
+{% if message %}<div class="success" role="status" data-testid="verification-message">{{ message }}</div>{% endif %}
+{% if error %}<div class="error" role="alert" data-testid="verification-error">{{ error }}</div>{% endif %}
+
+<section class="grid stats" id="verification-status">
+  <div class="stat"><div class="stat-label">Re-run mode | 重跑模式</div><div class="stat-value" data-testid="verification-mode">{{ verify_mode }}</div></div>
+  <div class="stat"><div class="stat-label">Execution gate | 執行閘門</div><div class="stat-value"><span class="status {{ 'completed' if gate.ready else 'failed' }}" data-testid="verification-gate">{{ "ready" if gate.ready else "closed" }}</span></div></div>
+  <div class="stat"><div class="stat-label">Daily cap per tenant | 每租戶每日上限</div><div class="stat-value" data-testid="verification-cap">{{ daily_cap }}</div></div>
+  <div class="stat"><div class="stat-label">Suites | 測試套件</div><div class="stat-value" data-testid="verification-suite-count">{{ suites|length }}</div></div>
+</section>
+
+{% if can("verification_suites.manage", "verification") %}
+<section class="panel" id="verification-upload">
+  <h2>Publish a suite <span class="heading-note">發布測試套件</span></h2>
+  <p class="muted">Upload the code and tests as <code>tar.gz</code> (at most {{ max_upload_mb }} MiB). Links, absolute paths, <code>..</code> and a top-level <code>out/</code> are refused. A suite never changes: uploading the same name creates a new version. | 上傳程式與測試的 <code>tar.gz</code>。連結、絕對路徑、<code>..</code> 與頂層 <code>out/</code> 一律拒絕。套件不可修改，同名再上傳會產生新版本。</p>
+  <form method="post" action="/dashboard/verification/suites" enctype="multipart/form-data" data-testid="verification-upload-form">
+    {{ csrf_input() }}
+    {% if not tenant_locked %}<label>Tenant | 租戶 <input name="tenant_id" value="{{ tenant_id or 'default' }}" maxlength="128"></label>{% endif %}
+    <label>Name | 名稱 <input name="name" required maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"></label>
+    <label>Base ref | 基準版本 <input name="base_ref" maxlength="255"></label>
+    <label>Image | 映像 <select name="image_name">{% for name in images %}<option value="{{ name }}">{{ name }}</option>{% endfor %}</select></label>
+    <label>pytest arguments | pytest 參數 <input name="test_command" placeholder="-q"></label>
+    <label>Test paths | 測試路徑 <input name="test_paths" placeholder="tests/** **/test_*.py **/*_test.py"></label>
+    <label>Snapshot | 快照 <input type="file" name="file" accept=".gz,.tgz,application/gzip" required></label>
+    <button class="button" type="submit" id="verification-upload-button">Publish | 發布</button>
+  </form>
+</section>
+{% endif %}
+
+<section class="panel" id="verification-suites">
+  <h2>Suites <span class="heading-note">測試套件</span></h2>
+  <table data-testid="verification-suites">
+    <thead><tr><th>Suite</th><th>Tenant | 租戶</th><th>Name | 名稱</th><th>Version | 版本</th><th>Digest | 摘要</th><th>Test paths | 測試路徑</th><th>Status | 狀態</th><th>By | 建立者</th><th>Actions | 操作</th></tr></thead>
+    <tbody>
+    {% for suite in suites %}
+      <tr data-testid="verification-suite-row" data-suite-id="{{ suite.suite_id }}" data-suite-name="{{ suite.name }}">
+        <td><code>{{ suite.suite_id }}</code>{% if suite.suite_id in default_suites %} <span class="status completed" data-testid="verification-suite-default">default</span>{% endif %}</td>
+        <td>{{ suite.tenant_id }}</td><td>{{ suite.name }}</td><td data-testid="verification-suite-version">{{ suite.version }}</td>
+        <td><code>{{ suite.artifact_digest[:16] }}…</code></td><td>{% for path in suite.test_paths %}<code>{{ path }}</code> {% endfor %}</td>
+        <td><span class="status {{ 'completed' if suite.status == 'active' else 'failed' }}" data-testid="verification-suite-status">{{ suite.status }}</span></td>
+        <td>{{ suite.created_by }}</td>
+        <td>{% if can("verification_suites.manage", "verification") and suite.status == "active" %}
+          <form method="post" action="/dashboard/verification/suites/{{ suite.suite_id }}/default">{{ csrf_input() }}<input type="hidden" name="enabled" value="{{ '0' if suite.suite_id in default_suites else '1' }}"><button class="button" type="submit">{{ "Clear default | 取消預設" if suite.suite_id in default_suites else "Set default | 設為預設" }}</button></form>
+          <form method="post" action="/dashboard/verification/suites/{{ suite.suite_id }}/disable">{{ csrf_input() }}<button class="button" type="submit" data-testid="verification-suite-disable">Disable | 停用</button></form>
+        {% else %}-{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="9" class="muted" data-testid="verification-no-suites">No suites yet. | 尚無測試套件。</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel" id="verification-runs">
+  <h2>Platform re-runs <span class="heading-note">平台重跑紀錄</span></h2>
+  {% if can("verification.request", "verification") %}
+  <form method="post" action="/dashboard/verification/request" data-testid="verification-request-form">
+    {{ csrf_input() }}
+    <label>Run ID <input name="run_id" required maxlength="64"></label>
+    <button class="button" type="submit" id="verification-request-button">Request re-run | 要求重跑</button>
+  </form>
+  {% endif %}
+  <table data-testid="verification-runs">
+    <thead><tr><th>Verification</th><th>Run</th><th>Trigger | 觸發</th><th>Status | 狀態</th><th>Reason | 原因</th><th>Fail→Pass</th><th>Pass→Fail</th><th>Flaky</th><th>Changed lines | 變更行覆蓋</th><th>Created | 建立時間</th></tr></thead>
+    <tbody>
+    {% for item in runs %}
+      {% set counts = item.classification.counts or {} %}
+      <tr data-testid="verification-run-row" data-run-id="{{ item.run_id }}">
+        <td><a href="/dashboard/verification/runs/{{ item.verification_id }}"><code>{{ item.verification_id }}</code></a></td>
+        <td><a href="/dashboard/runs/{{ item.run_id }}"><code>{{ item.run_id }}</code></a></td>
+        <td>{{ item.trigger }}</td>
+        <td><span class="status {{ 'completed' if item.status == 'completed' else ('failed' if item.status == 'failed' else 'pending') }}" data-testid="verification-run-status">{{ item.status }}</span></td>
+        <td>{{ item.skip_reason or "-" }}</td>
+        <td>{{ counts.fail_to_pass if counts else "-" }}</td><td>{{ counts.pass_to_fail if counts else "-" }}</td><td>{{ counts.flaky if counts else "-" }}</td>
+        <td>{% if item.coverage.status == "measured" and item.coverage.ratio is not none %}{{ item.coverage.changed_lines_executed }}/{{ item.coverage.changed_lines_total }}{% else %}-{% endif %}</td>
+        <td>{{ item.created_at }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="10" class="muted" data-testid="verification-no-runs">No re-runs yet. | 尚無重跑紀錄。</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

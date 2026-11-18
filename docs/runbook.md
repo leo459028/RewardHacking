@@ -226,6 +226,13 @@ docker compose logs --tail=100 -f worker
 - **Scheduled purge**: with `retention.apply` listed, `python -m app.jobs.retention --apply-latest` exits 2 (`second_approval_required`). Keep scheduling `--plan` and request the apply through the API for a person to approve.
 - **`dual_control_configured` warn**: in `APP_ENV=prod`, `retention.apply` or `legal_hold.release` is not listed (advisory outside prod), or `DUAL_CONTROL_ACTIONS` has an unknown name.
 
+### 16a. Platform Re-Runs (`v1.6.2`)
+
+- **Re-runs stay `queued`**: no runner is claiming work. Check `/dashboard/sandbox` for a heartbeat and the gate. While the gate is closed the runner ends queued work as `failed` with `sandbox_not_conformant`.
+- **Many `patch_failed` records**: the agents do not start from the suite's `base_ref`. Publish a suite for the base they use. This is not evidence of cheating.
+- **`before_no_report`**: the suite does not run in the sandbox image. Check its dependencies, because nothing can be installed at run time. **`after_no_report`**: the change hung, ran out of memory or stopped pytest from writing its report.
+- **Switching the sandbox off** leaves queued records as they are. They no longer block a retention purge once they are older than the retention cutoff.
+
 ### 16. Sandbox Runner (`v1.6.2`)
 - **Start**: set `SANDBOX_BACKEND=docker` and `SANDBOX_EXECUTION_ENABLED=true`, pull the image named by `SANDBOX_CONFORMANCE_IMAGE`, then run `docker compose --profile sandbox up -d`. The runner runs the full conformance suite at start-up; `/dashboard/sandbox` shows the result per case.
 - **Gate closed**: read the reasons on `/dashboard/sandbox` or `GET /v1/sandbox/status`. `execution_disabled` / `backend_not_docker`: check the settings. `conformance_missing` / `conformance_stale`: press **Run conformance** or restart the runner. `fingerprint_mismatch`: a setting, an image or the Docker version changed; run conformance again. `conformance_failed`: read the failed case and fix the host. `isolation_below_minimum`: the runtime is weaker than `SANDBOX_MIN_ISOLATION_DEFAULT`.

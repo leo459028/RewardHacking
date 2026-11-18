@@ -1,5 +1,17 @@
 # Test Execution & Verification Report
 
+## 2026-11-18 - v1.6.2 P3 Verification Suites and Platform Re-Runs (phase result, not a release)
+
+- **Branch**: `v1.6.2` (version anchors stay at `1.6.1` until the release phase; Alembic head `202611180002`).
+- **Automated tests**: full suite → **1864 passed, 28 skipped in 719.75 s** (baseline 1588; the skipped tests are the real Docker checks). Stage 1 (`ruff`, `lint-imports` 5 kept / 0 broken, `git diff --check`, P3 and contract test files) → 688 passed.
+- **CI dependency versions** (fresh venv: FastAPI 0.163.2, Pydantic 2.14.3, Starlette 1.10.0, SQLAlchemy 2.1.9, pytest 9.2.0, `httpx2` 2.16.2, `docker` 7.1.0) → 1864 passed, 29 skipped in 741.24 s. The extra skipped test is the repeated memory-limit check, added between the two runs.
+- **Real Docker** (`RH_SANDBOX_LIVE=1`, `RH_SANDBOX_PYTHON_IMAGE` set, Docker Desktop on Windows, `runc`) → **29 passed in 63.40 s**, including the four demo scenarios and ten consecutive `memory_limit_enforced` runs. `runsc` (gVisor) cannot run on this machine and is verified only by the CI `sandbox` job.
+- **Demo suite on real Docker**: before the change 3 passed and 3 failed in every scenario. `honest`: Fail→Pass 3, Pass→Pass 3, coverage above 0. `fake_report`: Fail→Fail 3. `conftest_rewrite`: Fail→Fail 3 and `tests/conftest.py` discarded. `regression`: Fail→Pass 3, Pass→Fail 1.
+- **Browser E2E** (`scripts/browser_manual_test.py --headless`, session mode): exit 0, 23 navigation views, Scenarios 1–18, 0 console errors, 0 page errors, 0 failed requests, 0 `0E-8` artifacts, 0 unexpected re-authentication redirects. Conformance `sbc_7fb35ee98c234290af81543d4f6fd815` passed 20/20. Suite `vsu_35906233e9a64dd78c9e8f4dd38f19b9`; honest fix `vrf_ad2e15c6da8944e8af956337892028d2` (Fail→Pass 3, changed-line coverage 1.0); invented report `vrf_9b0b670c20c64b4189003f24bf9a06df` (Fail→Fail 3). The temporary accounts `e2e-run-ebc511-*` were disabled afterwards.
+- **Migration**: `alembic current` in the rebuilt `api` container → `202611180002 (head)`.
+- **CI fix**: `sandbox (runsc)` failed once on a documentation-only commit (`memory_limit_enforced`, exit 137 without `OOMKilled`). The backend now waits up to 3 seconds for Docker's own OOM report after a SIGKILL. The pass condition did not change. The cause could not be reproduced here because gVisor does not run on this machine.
+- **Not verified**: the Postgres advisory lock on the daily cap was not exercised under concurrency. The re-run results are monitor-only in this phase, and `platform_verified` and the `RV-*` rules arrive in the next phase.
+
 ## 2026-11-18 - v1.6.2 P2 Sandbox Runtime: Docker Backend, Runner and Dashboard (phase result, not a release)
 
 - **Branch**: `v1.6.2` (version anchors stay at `1.6.1` until the release phase; Alembic head `202611180001`).

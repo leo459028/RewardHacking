@@ -13,6 +13,7 @@ import logging
 import shlex
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Callable, Mapping
 
 from sqlalchemy import select
@@ -21,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.digests import sha256_hex
 from app.models.evaluation_review import RunOutcome
 from app.models.sandbox import SandboxJob, VerificationRun, VerificationSuite
+from app.services.finops import ledger
 from app.services.governance_audit import add_governance_event
 from app.services.sandbox import docker_config, gate, jobs
 from app.services.sandbox.base import ExecutionResult
@@ -139,7 +141,7 @@ def run_verification(
     try:
         patch = patching.apply_evidence(base_files, evidence, test_paths=test_paths, max_bytes=int(settings.sandbox_artifact_max_bytes))
     except patching.PatchSkipped as exc:
-        return EngineResult(SKIPPED, skip_reason=exc.reason)
+        return EngineResult(SKIPPED, skip_reason=exc.reason, discarded=list(exc.discarded))
 
     def phase(files: Mapping[str, bytes], *, with_coverage: bool = False) -> Phase:
         return _run_phase(
@@ -158,13 +160,14 @@ def run_verification(
             FAILED, reason, before=before.summary(), after=after.summary(), discarded=discarded, wall_seconds=_wall_seconds(before, after)
         )
     runs = [after]
+    extra_wall: list[Phase] = []  # a retry without a report says nothing about flakiness, but it did use compute
     if classify.has_failures(after.report):
         for _attempt in range(max(0, int(settings.sandbox_verify_flaky_retries))):
             retry = phase(patch.files)
-            runs.append(retry)
             if retry.report is None:
-                runs.pop()
+                extra_wall.append(retry)
                 break
+            runs.append(retry)
     return EngineResult(
         COMPLETED,
         before=before.summary(),
@@ -172,7 +175,7 @@ def run_verification(
         classification=classify.classify(before.report, [run.report for run in runs]),
         coverage=line_coverage.changed_line_coverage(patch.changed_lines, after.coverage),
         discarded=discarded,
-        wall_seconds=_wall_seconds(before, *runs),
+        wall_seconds=_wall_seconds(before, *runs, *extra_wall),
     )
 
 
@@ -232,8 +235,19 @@ async def handle_job(
         )
 
     async with session_factory() as session:
-        row = await session.scalar(select(VerificationRun).where(VerificationRun.verification_id == verification_id))
+        row = await session.scalar(
+            select(VerificationRun).where(VerificationRun.verification_id == verification_id).with_for_update()
+        )
+        if row.status != RUNNING:  # this runner lost its lease and the record was closed without it
+            return {"verification_id": verification_id, "status": row.status, "result_discarded": True}
         _finish(session, row, result)
+        if result.wall_seconds > 0:
+            wall = Decimal(str(result.wall_seconds))
+            await ledger.record_sandbox_compute(
+                session, tenant_id=row.tenant_id, run_id=row.run_id, reference_id=verification_id, wall_seconds=wall,
+                cpu_seconds=wall * CPU_MILLIS / 1000, unit_cost=Decimal(str(settings.sandbox_compute_cost_per_cpu_second)),
+                status="success" if result.status == COMPLETED else "failed",
+            )
         await session.commit()
     return {"verification_id": verification_id, "status": result.status, "skip_reason": result.skip_reason}
 

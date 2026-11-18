@@ -117,6 +117,7 @@ from app.services.quota import (
     check_tool_quotas,
     check_user_request_quota,
 )
+from app.services.verification.metrics import refresh as refresh_sandbox_metrics
 from app.services.run_state import RunStateStore
 from app.services.control_plane import (
     ControlPlanePlanner,
@@ -292,8 +293,11 @@ async def readyz(session: AsyncSession = Depends(get_session)):
 
 
 @router.get("/metrics")
-async def metrics(request: Request, auth_context: AuthContext = Depends(get_auth_context)):
+async def metrics(
+    request: Request, auth_context: AuthContext = Depends(get_auth_context), session: AsyncSession = Depends(get_session)
+):
     require_role(auth_context, "viewer", "operator", "admin")
+    await refresh_sandbox_metrics(session)  # v1.6.2: sandbox-runner has no metrics endpoint of its own
     # v1.6.0 D8: OpenMetrics (with trace exemplars) on request; the default text format is unchanged.
     if "application/openmetrics-text" in request.headers.get("accept", ""):
         from prometheus_client import REGISTRY

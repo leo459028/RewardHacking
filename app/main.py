@@ -14,6 +14,7 @@ from app.api.routers.finops import router as finops_router
 from app.api.routers.operations import router as operations_router
 from app.api.routers.retention import router as retention_router
 from app.api.routers.sandbox import router as sandbox_router
+from app.api.routers.verification import router as verification_router
 from app.api.common import RunPurgedError
 from app.api.routes import router
 from app.core import trace_context, tracing
@@ -34,6 +35,7 @@ from app.ui.routers.operations import router as operations_ui_router
 from app.ui.routers.retention import router as retention_ui_router
 from app.ui.routers.reviews import router as reviews_ui_router
 from app.ui.routers.sandbox import router as sandbox_ui_router
+from app.ui.routers.verification import router as verification_ui_router
 from app.ui.routes import router as ui_router
 from app.ui.security import (
     ACCOUNT_PATH,
@@ -301,6 +303,7 @@ app.include_router(benchmark_router)
 app.include_router(operations_router)
 app.include_router(retention_router)
 app.include_router(sandbox_router)
+app.include_router(verification_router)
 app.include_router(audit_chain_router)
 app.include_router(change_requests_router)
 app.include_router(access_ui_router)
@@ -313,3 +316,4 @@ app.include_router(retention_ui_router)
 app.include_router(audit_chain_ui_router)
 app.include_router(change_requests_ui_router)
 app.include_router(sandbox_ui_router)
+app.include_router(verification_ui_router)

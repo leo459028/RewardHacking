@@ -161,6 +161,14 @@ The tombstone is tenant-scoped like the run (another tenant's key gets `403 tena
 | `GET` | `/v1/sandbox/status` | Configured sandbox backend, capabilities, isolation policy and smoke results (`status` `pass` / `fail`, never `500`). `v1.6.2` adds `gate` (`ready`, `reasons`, `fingerprint`, `latest_run_id`, `relaxed_high_risk`) and `runners` (live heartbeats) | `viewer`, `operator`, `admin` |
 | `POST` | `/v1/sandbox/conformance` | `v1.6.2`: queues a full conformance run for `sandbox-runner` (`202` with `job` and `created`; an active run is returned instead of a new one). `409 sandbox_execution_disabled` unless `SANDBOX_BACKEND=docker` and `SANDBOX_EXECUTION_ENABLED=true` | `admin` |
 | `GET` | `/v1/sandbox/conformance` | `v1.6.2`: conformance history with the result of every case (`limit`, default 20) | `admin`, `auditor` |
+| `POST` | `/v1/verification-suites` | `v1.6.2`: multipart upload of a suite snapshot (`file` as `tar.gz`, `name`, optional `tenant_id`, `base_ref`, `image_name`, `test_command` and `test_paths` as JSON arrays). `201` with the suite, or `202` with a change request while `verification_suite.publish` is in `DUAL_CONTROL_ACTIONS`. Unsafe archives answer `422` with their own code (`artifact_symlink_rejected`, `artifact_hardlink_rejected`, `artifact_special_file_rejected`, `artifact_absolute_path_rejected`, `artifact_path_traversal_rejected`, `artifact_path_too_long`, `artifact_reserved_path`, `artifact_duplicate_path`, `artifact_path_conflict`, `artifact_too_many_files`, `artifact_empty`, `artifact_invalid_archive`); too large answers `413 artifact_too_large` | `admin`, `tenant_admin` |
+| `GET` | `/v1/verification-suites` | `v1.6.2`: suites of the tenant, with `default_suite_id` | `admin`, `tenant_admin`, `reviewer`, `auditor` |
+| `GET` | `/v1/verification-suites/{suite_id}` | `v1.6.2`: one suite | `admin`, `tenant_admin`, `reviewer`, `auditor` |
+| `POST` | `/v1/verification-suites/{suite_id}/disable` | `v1.6.2`: disables a suite and clears it as the tenant default; new runs can no longer name it | `admin`, `tenant_admin` |
+| `POST` | `/v1/verification-suites/{suite_id}/default` | `v1.6.2`: makes the suite the tenant default for `code_fix` runs; `enabled=false` clears it | `admin`, `tenant_admin` |
+| `GET` | `/v1/runs/{run_id}/verifications` | `v1.6.2`: platform re-runs of a run (`signal_usage: "monitor_only"`) | `admin`, `tenant_admin`, `reviewer`, `auditor` |
+| `POST` | `/v1/runs/{run_id}/verifications` | `v1.6.2`: re-runs the latest outcome (`202`). A daily cap or a closed gate answers with a `skipped` record and its `skip_reason`. `409 verification_suite_missing` or `409 verification_outcome_missing` when there is nothing to re-run | `admin`, `tenant_admin`, `reviewer` |
+| `GET` | `/v1/verifications/{verification_id}` | `v1.6.2`: before / after results, test classes, changed-line coverage and discarded test changes | `admin`, `tenant_admin`, `reviewer`, `auditor` |
 | `GET` | `/v1/incidents` | Lists safety incidents and policy denials | `viewer`, `operator`, `admin` |
 | `GET` | `/v1/worker/dlq` | Lists worker attempts routed to dead letter queue | `viewer`, `operator`, `admin` |
 | `POST` | `/v1/worker/dlq/{run_id}/requeue` | Requeues a DLQ run (`status="queued"`) and republishes `agent.requested` | `operator`, `admin` |
@@ -407,3 +415,7 @@ Served by `app/api/routers/evaluations.py` (and the judge option on `POST /v1/be
 | `409` | `legal_hold_not_active` | Release of an already released hold |
 | `413` / `415` / `422` | `inspect_import_too_large` / `inspect_import_unsupported_format` / `inspect_import_invalid_json` | Inspect import limits (`.eval` archives are rejected) |
 | `500` | `internal_error` | Internal server or unhandled exception |
+
+### Binding a Run to a Verification Suite (`v1.6.2`)
+
+`POST /v1/agent/submit` accepts `metadata.verification_suite_id` for a `code_fix` run. The suite must exist, be active and belong to the run's tenant; otherwise the request answers `422 verification_suite_invalid`. Without the field, a `code_fix` run is bound to the tenant default, if one is set. The outcome cannot name or change the suite.

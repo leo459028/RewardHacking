@@ -47,7 +47,8 @@ RETENTION_APPLY = "retention.apply"
 LEGAL_HOLD_RELEASE = "legal_hold.release"
 JUDGE_ACTIVATE = "judge.activate"
 POLICY_PROTECTED_PATHS = "evaluation_policy.protected_paths"
-ACTIONS: tuple[str, ...] = (RETENTION_APPLY, LEGAL_HOLD_RELEASE, JUDGE_ACTIVATE, POLICY_PROTECTED_PATHS)
+VERIFICATION_SUITE_PUBLISH = "verification_suite.publish"  # v1.6.2 D22: a new answer sheet changes the grading standard
+ACTIONS: tuple[str, ...] = (RETENTION_APPLY, LEGAL_HOLD_RELEASE, JUDGE_ACTIVATE, POLICY_PROTECTED_PATHS, VERIFICATION_SUITE_PUBLISH)
 
 # D40: the approver must hold the action's own Dashboard permission (tenant_admin can therefore only decide
 # evaluation-policy requests, feature six).
@@ -56,12 +57,14 @@ ACTION_PERMISSIONS: dict[str, str] = {
     LEGAL_HOLD_RELEASE: "legal_hold.release",
     JUDGE_ACTIVATE: "judge.profile.write",
     POLICY_PROTECTED_PATHS: "evaluation_policy.relax",
+    VERIFICATION_SUITE_PUBLISH: "verification_suites.manage",
 }
 ACTION_LABELS: dict[str, str] = {
     RETENTION_APPLY: "Apply retention purge plan",
     LEGAL_HOLD_RELEASE: "Release legal hold",
     JUDGE_ACTIVATE: "Activate judge profile",
     POLICY_PROTECTED_PATHS: "Remove protected paths",
+    VERIFICATION_SUITE_PUBLISH: "Publish verification suite",
 }
 
 PENDING = "pending"
@@ -380,6 +383,23 @@ def _summary_policy(result: Any) -> dict[str, Any]:
     return {"tenant_id": result.tenant_id, "effective_protected_paths": view["effective_protected_paths"]}
 
 
+async def _prepare_suite_publish(session: AsyncSession, settings: Settings, params: dict[str, Any], requester: Requester) -> Prepared:
+    tenant_id, name = str(params["tenant_id"]), str(params["name"])
+    # Tenant and name can each hold 128 characters, more than target_ref does; the digest keeps the target unique.
+    target_ref = f"verification_suite:{name[:64]}:{sha256_hex([tenant_id, name])[:32]}"
+    return Prepared(target_ref=target_ref, tenant_id=tenant_id, payload=dict(params))
+
+
+async def _execute_suite_publish(session: AsyncSession, settings: Settings, payload: dict[str, Any], ctx: ExecContext) -> Any:
+    from app.services.verification import suites
+
+    return await suites.publish(session, settings, actor=ctx.actor, **payload)
+
+
+def _summary_suite_publish(result: Any) -> dict[str, Any]:
+    return {"suite_id": result.suite_id, "name": result.name, "version": result.version, "artifact_digest": result.artifact_digest}
+
+
 async def _no_check(session: AsyncSession, settings: Settings, payload: dict[str, Any]) -> None:
     """Retention apply and hold release re-check inside the service itself (digest, TTL, mode, hold status)."""
     return None
@@ -403,14 +423,16 @@ SPECS: dict[str, _Spec] = {
     LEGAL_HOLD_RELEASE: _Spec(_prepare_hold_release, _no_check, _execute_hold_release, _summary_hold_release),
     JUDGE_ACTIVATE: _Spec(_prepare_judge_activate, _check_judge_activate, _execute_judge_activate, _summary_judge_activate),
     POLICY_PROTECTED_PATHS: _Spec(_prepare_policy, _check_policy, _execute_policy, _summary_policy, _policy_needs_dual_control),
+    VERIFICATION_SUITE_PUBLISH: _Spec(_prepare_suite_publish, _no_check, _execute_suite_publish, _summary_suite_publish),
 }
 
 # Errors that end a change request as ``failed`` with the service's own code (never retried, D40).
 def _domain_error_code(exc: Exception) -> str | None:
     from app.services.judge_profiles_admin import JudgeProfileAdminError
     from app.services.retention import RetentionError
+    from app.services.verification.errors import VerificationError
 
-    if isinstance(exc, (ChangeRequestError, RetentionError, JudgeProfileAdminError)):
+    if isinstance(exc, (ChangeRequestError, RetentionError, JudgeProfileAdminError, VerificationError)):
         return str(exc.code)
     return None
 

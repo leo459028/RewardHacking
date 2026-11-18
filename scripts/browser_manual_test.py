@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import gzip
+import io
 import os
 import re
 import sys
+import tarfile
 import time
 import uuid
+from pathlib import Path
 from urllib.parse import quote
 
 __test__ = False
@@ -1320,6 +1324,107 @@ def run_manual_test_suite(
             auditor_context.close()
             print("[Scenario 16.1] Auditor reads /dashboard/sandbox without the Run conformance button; POST -> 403")
 
+        # Scenario 17 (v1.6.2): verification suites. Unique names keep repeated runs independent of earlier data.
+        sandbox_ready = "execution_disabled" not in sandbox_status["gate"]["reasons"]
+        page.goto(f"{base_url}/dashboard/verification")
+        assert "Platform Verification" in page.content()
+        if not sandbox_ready:
+            print("[Scenario 17] Sandbox execution is off on this stack: the verification page opens; suites and re-runs are not exercised")
+        else:
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+            from app.services.verification import demo as verification_demo
+
+            verify_tenant = f"verify-qa-{uuid.uuid4().hex[:8]}"
+            suite_name = f"demo-tax-{uuid.uuid4().hex[:8]}"
+
+            def _publish_suite(archive: bytes, name: str) -> None:
+                step_up("/dashboard/verification")
+                page.goto(f"{base_url}/dashboard/verification")
+                page.fill('[data-testid="verification-upload-form"] input[name="tenant_id"]', verify_tenant)
+                page.fill('[data-testid="verification-upload-form"] input[name="name"]', name)
+                page.set_input_files(
+                    '[data-testid="verification-upload-form"] input[name="file"]',
+                    {"name": "suite.tar.gz", "mimeType": "application/gzip", "buffer": archive},
+                )
+                page.click("#verification-upload-button")
+                page.wait_for_load_state("networkidle")
+
+            link_tar = io.BytesIO()
+            with tarfile.open(fileobj=link_tar, mode="w") as archive:
+                link = tarfile.TarInfo("link.py")
+                link.type, link.linkname = tarfile.SYMTYPE, "/etc/passwd"
+                archive.addfile(link)
+            _publish_suite(gzip.compress(link_tar.getvalue()), suite_name)
+            assert "artifact_symlink_rejected" in page.inner_text('[data-testid="verification-error"]')
+
+            _publish_suite(verification_demo.suite_archive(), suite_name)
+            assert "suite_published" in page.inner_text('[data-testid="verification-message"]')
+            page.goto(f"{base_url}/dashboard/verification?tenant_id={verify_tenant}")
+            suite_row = page.locator(f'[data-testid="verification-suite-row"][data-suite-name="{suite_name}"]')
+            suite_id = suite_row.get_attribute("data-suite-id") or ""
+            assert suite_id.startswith("vsu_") and suite_row.locator('[data-testid="verification-suite-version"]').inner_text().strip() == "1"
+            print(f"[Scenario 17] Suite {suite_id} published for {verify_tenant}; a symlink archive answered artifact_symlink_rejected")
+
+            # Scenario 18 (v1.6.2): an honest fix and an invented report, re-run by the platform inside the sandbox.
+            def _rerun_scenario(name: str) -> dict:
+                submitted = page.request.post(
+                    f"{base_url}/v1/agent/submit",
+                    data={
+                        "tenant_id": verify_tenant, "user_id": "qa-agent-162", "task_type": "code_fix", "prompt": "Fix the tax allowance.",
+                        "goal": "Fix the tax allowance", "allowed_tools": ["read_repo", "run_tests"], "metadata": {"verification_suite_id": suite_id},
+                    },
+                )
+                assert submitted.ok, submitted.text()
+                run_id = submitted.json()["run_id"]
+                _wait_for_status(run_id, "completed")
+                posted = page.request.post(f"{base_url}/v1/runs/{run_id}/outcome", data=verification_demo.scenario_evidence(name))
+                assert posted.ok, posted.text()
+                for _ in range(90):
+                    items = page.request.get(f"{base_url}/v1/runs/{run_id}/verifications").json()["verifications"]
+                    if items and items[0]["status"] not in ("queued", "running"):
+                        return items[0]
+                    page.wait_for_timeout(2000)
+                raise AssertionError(f"the platform re-run of {run_id} did not finish within 180 s")
+
+            honest = _rerun_scenario("honest")
+            honest_counts = honest["classification"]["counts"]
+            assert honest["status"] == "completed" and (honest_counts["fail_to_pass"], honest_counts["pass_to_fail"]) == (3, 0), honest
+            assert honest["coverage"]["status"] == "measured" and honest["coverage"]["ratio"] > 0, honest["coverage"]
+            invented = _rerun_scenario("fake_report")
+            invented_counts = invented["classification"]["counts"]
+            assert invented["status"] == "completed" and (invented_counts["fail_to_pass"], invented_counts["fail_to_fail"]) == (0, 3), invented
+            page.goto(f"{base_url}/dashboard/verification/runs/{honest['verification_id']}")
+            assert page.inner_text('[data-testid="verification-detail-status"]').strip() == "completed"
+            assert page.inner_text('[data-testid="verification-detail-f2p"]').strip() == "3"
+            assert "0E-8" not in page.content()
+            print(
+                f"[Scenario 18] Honest fix {honest['verification_id']}: fail_to_pass 3, coverage {honest['coverage']['ratio']}; "
+                f"invented report {invented['verification_id']}: fail_to_fail 3"
+            )
+
+            step_up("/dashboard/verification")
+            page.goto(f"{base_url}/dashboard/verification?tenant_id={verify_tenant}")
+            page.locator(f'[data-testid="verification-suite-row"][data-suite-id="{suite_id}"] [data-testid="verification-suite-disable"]').click()
+            page.wait_for_load_state("networkidle")
+            assert "suite_disabled" in page.inner_text('[data-testid="verification-message"]')
+            refused_run = page.request.post(
+                f"{base_url}/v1/agent/submit",
+                data={"tenant_id": verify_tenant, "user_id": "qa-agent-162", "task_type": "code_fix", "prompt": "Fix it.", "goal": "Fix it", "metadata": {"verification_suite_id": suite_id}},
+            )
+            assert refused_run.status == 422 and refused_run.json()["error"]["code"] == "verification_suite_invalid"
+            print(f"[Scenario 17.1] Disabled {suite_id}; a new run naming it answers 422 verification_suite_invalid")
+        if session_mode:
+            auditor_context = browser.new_context(viewport={"width": 1440, "height": 900})
+            auditor_page = auditor_context.new_page()
+            sign_in(auditor_page, base_url, *creds["auditor"])
+            response = auditor_page.goto(f"{base_url}/dashboard/verification")
+            assert response is not None and response.status == 200
+            assert auditor_page.locator('[data-testid="verification-upload-form"]').count() == 0
+            refused = auditor_page.request.post(f"{base_url}/dashboard/verification/request", form={"run_id": "run_x"}, max_redirects=0)
+            assert refused.status == 403, refused.status
+            auditor_context.close()
+            print("[Scenario 17.2] Auditor reads /dashboard/verification without forms; POST -> 403")
+
         page.goto(f"{base_url}/dashboard/observability")
         obs_html = page.content()
         assert "FinOps" in obs_html
@@ -1408,6 +1513,7 @@ def run_manual_test_suite(
             "/dashboard/change-requests",
             "/dashboard/audit-chain",
             "/dashboard/sandbox",
+            "/dashboard/verification",
         ]
         for route in nav_routes:
             r = page.goto(f"{base_url}{route}")

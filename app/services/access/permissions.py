@@ -96,6 +96,10 @@ PERMISSIONS: dict[str, frozenset[str]] = {
     # v1.6.2 D40: sandbox runtime (platform view)
     "sandbox.view": frozenset({ADMIN, OPERATOR, AUDITOR}),
     "sandbox.manage": _ADMIN,  # queue a conformance run; no step-up, it changes no setting
+    # v1.6.2 D40: platform re-runs (tenant view)
+    "verification.view": frozenset({ADMIN, TENANT_ADMIN, REVIEWER, AUDITOR}),
+    "verification.request": _REVIEWERS,
+    "verification_suites.manage": _ADMIN_TENANT_ADMIN,  # a new suite changes the grading standard (step-up)
 }
 
 # D26 / feature seven: permissions that need a recent re-authentication (applied in P4).
@@ -111,6 +115,7 @@ STEP_UP_PERMISSIONS = frozenset(
         "pricing.import_apply",
         "change_requests.decide",
         "audit_chain.checkpoint",
+        "verification_suites.manage",
     }
 )
 
@@ -128,6 +133,7 @@ READ_PERMISSIONS = frozenset(
         "audit_chain.read",
         "audit_chain.verify",
         "sandbox.view",
+        "verification.view",
     }
 )
 
@@ -151,6 +157,7 @@ TENANT_VIEW_ALLOWLIST = frozenset(
         "playground",
         "change_requests",
         "account",
+        "verification",
     }
 )
 

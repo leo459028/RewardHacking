@@ -334,6 +334,21 @@ def test_a_test_that_does_not_repeat_is_flaky_and_counts_nowhere_else():
     assert result["counts"]["pass_to_pass"] == 0 and result["after_attempts"] == 3
 
 
+def test_a_module_that_no_longer_imports_is_a_regression_not_a_missing_test():
+    before = {"tests.test_tax::test_ok": "passed", "tests.test_tax::test_bug": "failed", "tests.test_other::test_fine": "passed"}
+    after = {"::tests.test_tax": "failed", "tests.test_other::test_fine": "passed"}
+    result = classify.classify(before, [after])
+    assert result["tests"]["pass_to_fail"] == ["tests.test_tax::test_ok"] and result["tests"]["fail_to_fail"] == ["tests.test_tax::test_bug"]
+    assert result["tests"]["missing_in_after"] == [] and result["tests"]["new_in_after"] == ["::tests.test_tax"]
+
+
+def test_a_removed_test_in_a_healthy_module_stays_missing():
+    before = {"tests.test_tax::test_gone": "passed", "tests.test_taxes::test_other": "passed"}
+    after = {"::tests.test_tax": "failed", "tests.test_taxes::test_other": "passed"}
+    assert classify.classify(before, [{"tests.test_taxes::test_other": "passed"}])["tests"]["missing_in_after"] == ["tests.test_tax::test_gone"]
+    assert classify.classify(before, [after])["tests"]["pass_to_pass"] == ["tests.test_taxes::test_other"]
+
+
 def test_a_long_listing_is_cut_but_the_count_stays_true():
     before = {f"t::{index}": "passed" for index in range(classify.MAX_LISTED + 5)}
     result = classify.classify(before, [dict(before)])
@@ -421,6 +436,11 @@ def test_publishing_again_makes_a_new_version_and_an_audit_event(session_factory
     assert event.details["suite_id"] == first.suite_id and event.details["artifact_digest"] == first.artifact_digest
 
 
+@pytest.mark.parametrize("args", [["-q"], ["-x", "-v"], ["-k", "tax and not slow"], ["-m", "unit"], ["tests/unit", "--maxfail=1"]])
+def test_ordinary_pytest_arguments_are_accepted(args):
+    assert suites.clean_test_command(args) == args
+
+
 def test_a_suite_gets_the_documented_defaults(session_factory):
     suite = _publish(session_factory)
     assert (suite.framework, suite.test_command, suite.test_paths) == ("pytest", ["-q"], list(suites.DEFAULT_TEST_PATHS))
@@ -435,6 +455,13 @@ def test_a_suite_gets_the_documented_defaults(session_factory):
         ({"test_command": ["--junitxml=/tmp/fake.xml"]}, "suite_test_command_invalid"),
         ({"test_command": ["-o", "junit_suite_name=x"]}, "suite_test_command_invalid"),
         ({"test_command": ["-p", "evil"]}, "suite_test_command_invalid"),
+        ({"test_command": ["-pevil"]}, "suite_test_command_invalid"),
+        ({"test_command": ["-qpevil"]}, "suite_test_command_invalid"),
+        ({"test_command": ["-ojunit_family=legacy"]}, "suite_test_command_invalid"),
+        ({"test_command": ["-cother.ini"]}, "suite_test_command_invalid"),
+        ({"test_command": ["--junit-xml=/tmp/fake.xml"]}, "suite_test_command_invalid"),
+        ({"test_command": ["--override-ini=x=y"]}, "suite_test_command_invalid"),
+        ({"test_command": ["--rootdir=/tmp"]}, "suite_test_command_invalid"),
         ({"test_command": "pytest -q"}, "suite_test_command_invalid"),
         ({"test_paths": "tests/**"}, "suite_test_paths_invalid"),
     ],
@@ -655,10 +682,11 @@ def test_the_number_of_retries_is_configurable():
     assert _run(backend, settings=_settings(sandbox_verify_flaky_retries=0)).after["attempts"] == 1
 
 
-def test_a_retry_without_a_report_does_not_count():
+def test_a_retry_without_a_report_does_not_count_but_its_compute_does():
     backend = FakeBackend(FAILING, FAILING, ("timeout", None, {}))
     result = _run(backend)
     assert result.status == "completed" and result.after["attempts"] == 1 and len(backend.specs) == 3
+    assert result.wall_seconds == 4.5
 
 
 @pytest.mark.parametrize("evidence", [{"changed_files": [{"path": "tests/test_app.py", "after": "x = 1\n"}]}, {}])
@@ -666,6 +694,12 @@ def test_a_skipped_change_starts_no_container(evidence):
     backend = FakeBackend()
     result = _run(backend, evidence=evidence)
     assert result.status == "skipped" and result.skip_reason and backend.specs == []
+
+
+def test_a_change_to_tests_only_still_lists_what_was_discarded():
+    result = _run(FakeBackend(), evidence={"changed_files": [{"path": "tests/conftest.py", "after": "x = 1\n"}]})
+    assert (result.status, result.skip_reason) == ("skipped", patching.ONLY_TEST_CHANGES)
+    assert result.discarded == [{"path": "tests/conftest.py", "reason": "test_config"}]
 
 
 def test_discarded_test_changes_are_recorded():
@@ -754,6 +788,25 @@ def test_a_finished_record_is_not_run_again(session_factory):
     _handle(session_factory, job, FakeBackend(FAILING, FIXED))
     backend = FakeBackend()
     assert _handle(session_factory, job, backend)["status"] == "completed" and backend.specs == []
+
+
+def test_a_runner_that_lost_its_lease_cannot_reopen_a_closed_record(session_factory):
+    _suite, job = _queued(session_factory, evidence={"changed_files": [{"path": "app.py", "after": "x = 1\n"}]})
+
+    class ClosingBackend(FakeBackend):
+        def run_with_outputs(self, spec, *, artifacts=None):
+            async def close(session):
+                row = await session.scalar(select(VerificationRun).where(VerificationRun.verification_id == "vrf_1"))
+                row.status, row.skip_reason = "failed", "lease_expired"
+                await session.commit()
+
+            _in_session(session_factory, close)
+            return super().run_with_outputs(spec, artifacts=artifacts)
+
+    answer = _handle(session_factory, job, ClosingBackend(FAILING, FIXED))
+    row = _row(session_factory)
+    assert answer["result_discarded"] is True and (row.status, row.skip_reason) == ("failed", "lease_expired")
+    assert _events(session_factory, "sandbox.verification_completed") == []
 
 
 def test_a_missing_image_setting_fails_without_starting_a_container(session_factory):

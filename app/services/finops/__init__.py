@@ -50,6 +50,7 @@ from app.services.finops.leases import (
 from app.services.finops.ledger import (
     extract_allocation,
     list_usage_events,
+    record_sandbox_compute,
     record_usage_event,
     resolve_fx_rate,
 )
@@ -118,6 +119,7 @@ __all__ = [
     "record_checkpoint_usage",
     "record_replay_usage",
     "record_submit_usage",
+    "record_sandbox_compute",
     "record_usage_event",
     "release_run_budget_lease",
     "render_cost_ledger_csv",

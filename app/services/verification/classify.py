@@ -75,15 +75,29 @@ def _class_of(before: str | None, after: str | None) -> str:
     }[(before, after)]
 
 
+def _broken_modules(before: Mapping[str, str], after: Mapping[str, str]) -> set[str]:
+    """pytest reports a module that fails to import as one failure with an empty class name: ``::tests.test_tax``."""
+    return {test_id[2:] for test_id, outcome in after.items() if test_id.startswith("::") and outcome == FAILED and test_id not in before}
+
+
+def _in_module(test_id: str, modules: set[str]) -> bool:
+    classname = test_id.split("::", 1)[0]
+    return any(classname == module or classname.startswith(f"{module}.") for module in modules)
+
+
 def classify(before: Mapping[str, str], after_runs: Sequence[Mapping[str, str]]) -> dict[str, Any]:
     """``after_runs[0]`` is the first run after the change; later entries are the flaky retries."""
     flaky = flaky_tests(after_runs)
     after = after_runs[0]
+    broken = _broken_modules(before, after)
     groups: dict[str, list[str]] = {name: [] for name in CLASSES}
     groups["flaky"] = sorted(flaky)
     for test_id in sorted(set(before) | set(after)):
-        if test_id not in flaky:
-            groups[_class_of(before.get(test_id), after.get(test_id))].append(test_id)
+        if test_id in flaky:
+            continue
+        # A test that could not even be collected did not pass: the change broke its module.
+        outcome = FAILED if test_id not in after and _in_module(test_id, broken) else after.get(test_id)
+        groups[_class_of(before.get(test_id), outcome)].append(test_id)
     return {
         "counts": {name: len(items) for name, items in groups.items()},
         "tests": {name: items[:MAX_LISTED] for name, items in groups.items()},

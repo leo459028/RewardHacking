@@ -33,11 +33,18 @@ MAX_ARGS = 32
 MAX_ARG_CHARS = 256
 MAX_TEST_PATHS = 50
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-_REPORT_OPTIONS = ("--junitxml", "--junit-xml", "--junit-prefix", "-o", "--override-ini", "-c", "--rootdir", "-p")
+_REPORT_LONG_OPTIONS = ("--junit", "--override", "--root", "--confcutdir", "--basetemp")
+_REPORT_SHORT_FLAGS = frozenset("poc")  # -p plugin, -o override, -c config, also when attached or grouped (-qpfoo)
 
 
 def _invalid(code: str, message: str, status_code: int = 422) -> VerificationError:
     return VerificationError(code, message, status_code)
+
+
+def _changes_the_report(item: str) -> bool:
+    if item.startswith("--"):
+        return item.startswith(_REPORT_LONG_OPTIONS)
+    return item.startswith("-") and bool(_REPORT_SHORT_FLAGS.intersection(item[1:]))
 
 
 def clean_test_command(values: Any) -> list[str]:
@@ -46,7 +53,7 @@ def clean_test_command(values: Any) -> list[str]:
     if not isinstance(args, list) or len(args) > MAX_ARGS or any(not isinstance(item, str) for item in args):
         raise _invalid("suite_test_command_invalid", f"test_command must be a list of at most {MAX_ARGS} strings.")
     for item in args:
-        if not item or len(item) > MAX_ARG_CHARS or "\x00" in item or item.split("=", 1)[0] in _REPORT_OPTIONS:
+        if not item or len(item) > MAX_ARG_CHARS or "\x00" in item or _changes_the_report(item):
             raise _invalid("suite_test_command_invalid", f"test_command may not contain {item[:64]!r}.")
     return list(args)
 

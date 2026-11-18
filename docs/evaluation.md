@@ -445,3 +445,42 @@ GovernanceEvents `evaluation.judge_profile.created` / `updated` / `deleted` / `p
 - One global active profile; tenants cannot choose different judges. The activation cache can lag up to 30 s in other containers.
 - The per-profile token cap attributes tokens to the profile that produced the assessment; tokens a failed primary used before a fallback answered count toward the fallback profile.
 - The Anthropic adapter follows the API documentation current at implementation time and was verified with mocks only.
+
+## 17. Platform Re-Run Verification (`v1.6.2`)
+
+The platform keeps its own copy of the code and tests (a **verification suite**) and runs it inside the sandbox, before and after the agent's change. Results are monitor-only (`signal_usage: "monitor_only"`): a re-run never changes a verdict, a review or a run status, never dispatches a run, publishes to Kafka or touches a token lease.
+
+### 17.1 Suites
+
+A suite is an immutable `tar.gz` snapshot for one tenant. Only regular files and directories are accepted; the snapshot is rewritten as a normalized tar whose SHA-256 is the suite's `artifact_digest`. A new upload under the same name is a new version. A run is bound to a suite when it is submitted (`metadata.verification_suite_id` or the tenant default); the outcome has no say in it. Only `code_fix` runs and `pytest` are supported.
+
+### 17.2 What Is Applied
+
+Full text from `changed_files[].after` is preferred, then the unified diff, applied strictly with no fuzz. These paths always keep the platform's copy and are listed under *Discarded test changes*: anything matching the suite's `test_paths`, `conftest.py`, `pytest.ini`, `.pytest.ini`, `tox.ini`, `setup.cfg`, `pyproject.toml`, `.coveragerc`, and files that would replace the test tools (`pytest`, `_pytest`, `coverage`, `sitecustomize`, `usercustomize`, `*.pth`).
+
+| `skip_reason` | Meaning |
+| --- | --- |
+| `evidence_truncated` | The evidence was cut to the size limits, so the change is incomplete |
+| `evidence_redacted` | Redaction changed the submitted text, so it is not what the agent wrote |
+| `patch_failed` | The change does not apply to this snapshot, usually because the agent started from another base |
+| `patch_too_large` | The patched tree is larger than `SANDBOX_ARTIFACT_MAX_BYTES` |
+| `only_test_changes` | Every change touched protected test paths |
+| `no_applicable_changes` | The evidence holds no change to apply |
+| `daily_cap` | The tenant reached `SANDBOX_VERIFY_DAILY_CAP_PER_TENANT` |
+| `sandbox_not_conformant` | The execution gate is closed |
+| `suite_unavailable` | The bound suite is disabled or missing |
+
+A `skipped` re-run says nothing about the agent's honesty: it is not a contradiction.
+
+### 17.3 Before / After Classes
+
+The test ID is `classname::name`. Classes are `fail_to_pass`, `pass_to_pass`, `pass_to_fail`, `fail_to_fail`, `new_in_after`, `missing_in_after`, `skipped` and `flaky`. A test of a module that no longer imports counts as failed after the change, so a change that breaks a whole test module is a regression and not a missing test. When the after run has failures it is repeated up to `SANDBOX_VERIFY_FLAKY_RETRIES` times; a test whose result does not repeat is `flaky` and counts in no other class.
+
+Changed-line coverage compares the lines the change added or modified with the executable lines coverage.py measured in the first after run. It shows whether the tests ran the change, not whether they checked it.
+
+### 17.4 Limits
+
+- Passing tests do not prove that the code is correct; a weak suite proves little.
+- The agent's code runs in the same process as the tests, so code written to forge the report can do so inside the sandbox (`docs/security.md`, Known Boundaries).
+- The flaky check is a heuristic: a random failure that repeats in every attempt still counts as a real failure.
+- Dependencies must already be in the sandbox image: there is no network and nothing can be installed.
