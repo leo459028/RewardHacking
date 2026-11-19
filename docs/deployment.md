@@ -97,7 +97,7 @@ Copy [`deploy/docker-compose.release.example.yml`](../deploy/docker-compose.rele
 | `REDIS_URL`, `KAFKA_BOOTSTRAP_SERVERS` | Set by the example | Point them at your own services when you do not use the bundled ones |
 | `APP_ENV` | Yes | `prod` for production |
 | `AUTH_ENABLED` | Yes | `true`; API clients then need keys |
-| `API_KEYS` | Yes: empty | Bootstrap keys read from the environment. **Unset, it falls back to the development key `demo-key` with the admin role**, so set it to an empty value (the example file does) and create hashed tenant keys instead (step 5) |
+| `API_KEYS` | Yes: empty | Bootstrap keys read from the environment. Since `v1.6.3` they are accepted only when `APP_ENV` is `dev` or `test` and the program default is empty; **up to `v1.6.2`, leaving it unset fell back to the development key `demo-key` with the admin role**. Keep it empty (the example file does) and create hashed tenant keys instead (step 5) |
 | `DASHBOARD_AUTH_MODE` | Yes | `session` (personal accounts) |
 | `DASHBOARD_CSRF_SECRET` | Yes with more than one API replica | Random value shared by the replicas |
 | `AUDIT_CHAIN_SIGNING_KEY_FILE` | Yes in `prod` | For example `config/audit_chain_key.pem` |
@@ -162,6 +162,18 @@ docker buildx imagetools inspect ghcr.io/leo459028/rewardhacking:vX.Y.Z --format
 Images are not signed yet; signing is planned for `v1.6.6`.
 
 ---
+
+### 7. Running the Image Directly (`docker run`)
+
+Since `v1.6.3` the image sets `APP_ENV=prod`. Compose `env_file` and `environment` entries override it, so the Compose Quickstart (`cp .env.example .env`, `APP_ENV=dev`) is unchanged. When you start the image yourself with `docker run`, it behaves as production unless you say otherwise:
+
+- Pass the connection settings (`POSTGRES_DSN`, `REDIS_URL`, `KAFKA_BOOTSTRAP_SERVERS`) and the production settings in the table above.
+- `AUTH_ENABLED` defaults to `true` and `DASHBOARD_AUTH_MODE` to `session`. With any `APP_ENV` other than `dev` or `test`, **the API refuses to start** when `AUTH_ENABLED=false` or the Dashboard sign-in mode resolves to `off`, and it refuses environment keys from `API_KEYS` (401).
+- For a local trial only, set `APP_ENV=dev` explicitly:
+
+```bash
+docker run --rm -p 8000:8000 --env-file .env -e APP_ENV=dev ghcr.io/leo459028/rewardhacking:vX.Y.Z
+```
 
 ## Optional: Sandbox Runner (`v1.6.2`)
 

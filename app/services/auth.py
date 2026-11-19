@@ -36,6 +36,11 @@ def _api_key_map(raw: str) -> dict[str, tuple[str, str]]:
     return mapping
 
 
+def configured_env_api_key_count(raw: str) -> int:
+    """Number of well-formed entries in API_KEYS (never the keys themselves; v1.6.3 D2 startup log)."""
+    return len(_api_key_map(raw or ""))
+
+
 def auth_error(status_code: int, code: str, message: str) -> HTTPException:
     return HTTPException(
         status_code=status_code,
@@ -77,7 +82,9 @@ async def get_auth_context(
     if not x_api_key:
         raise auth_error(401, "auth_required", "X-API-Key header is required.")
 
-    legacy_key = _api_key_map(settings.api_keys).get(x_api_key)
+    # v1.6.3 D2 / D3: environment keys count only in dev / test. Elsewhere a configured key is not even compared, so
+    # it falls through to the database lookup and fails exactly like a wrong key (401 invalid_api_key).
+    legacy_key = _api_key_map(settings.api_keys).get(x_api_key) if settings.env_api_keys_allowed else None
     if legacy_key is not None:
         tenant_id, role = legacy_key
         return AuthContext(

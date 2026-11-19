@@ -441,6 +441,30 @@ async def _dashboard_auth_mode_check(session: AsyncSession, *, settings: Setting
     )
 
 
+def _api_auth_enabled_check(settings: Settings) -> OperationsCheck:
+    """v1.6.3 D4: the /v1 API must require API keys outside dev / test (the API also refuses to start then)."""
+    production_like = settings.is_production_like
+    if settings.auth_enabled:
+        status = "pass"
+        detail = "The /v1 API requires an API key (AUTH_ENABLED=true)."
+    elif production_like:
+        status = "fail"
+        detail = (
+            f"AUTH_ENABLED=false with APP_ENV={settings.app_env!r}: the /v1 API would accept requests without an API key. "
+            "Set AUTH_ENABLED=true (the API refuses to start otherwise); for a local trial only, set APP_ENV=dev."
+        )
+    else:
+        status = "pass"
+        detail = "AUTH_ENABLED=false: the /v1 API needs no API key (APP_ENV is dev or test; local development only)."
+    return OperationsCheck(
+        check_key="api_auth_enabled",
+        status=status,
+        title="API authentication",
+        detail=detail,
+        metadata={"auth_enabled": settings.auth_enabled, "app_env": settings.app_env, "production_like": production_like},
+    )
+
+
 AUDIT_CHAIN_TAIL_ENTRIES = 1000
 AUDIT_CHAIN_CHECKPOINT_MAX_AGE_HOURS = 48
 
@@ -796,14 +820,23 @@ async def compute_operations_readiness(
         await _evaluation_sampling_health_check(session, settings=settings, now=now),
     ]
 
-    if settings.app_env.lower() == "prod" and settings.release_gate_fail_on_bootstrap_keys_in_prod:
+    checks.append(_api_auth_enabled_check(settings))
+    # v1.6.3 D5: "production" is every APP_ENV other than dev / test (it used to be only the exact value "prod").
+    if settings.is_production_like and settings.release_gate_fail_on_bootstrap_keys_in_prod:
+        api_keys_configured = bool((settings.api_keys or "").strip())
         checks.append(
             OperationsCheck(
                 check_key="bootstrap_keys_in_prod",
-                status="fail" if settings.api_keys else "pass",
+                status="fail" if api_keys_configured else "pass",
                 title="No bootstrap API keys in production",
-                detail="APP_ENV=prod should not rely on API_KEYS bootstrap fallback.",
-                metadata={"api_keys_configured": bool(settings.api_keys)},
+                detail=(
+                    f"API_KEYS is set, but environment API keys are refused when APP_ENV is not dev or test "
+                    f"(APP_ENV={settings.app_env!r}); every request with them gets 401. Remove API_KEYS and use database "
+                    "API keys."
+                    if api_keys_configured
+                    else "No environment API keys are configured; production uses database API keys only."
+                ),
+                metadata={"api_keys_configured": api_keys_configured, "app_env": settings.app_env},
             )
         )
 

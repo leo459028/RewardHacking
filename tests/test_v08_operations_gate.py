@@ -10,6 +10,7 @@ from app.infra.postgres import get_session
 from app.main import app
 from app.services.events import InMemoryEventPublisher
 from app.services.run_state import InMemoryRunStateStore
+from tests.auth_helpers import seed_db_api_key
 
 
 @contextmanager
@@ -46,6 +47,8 @@ def reset_v08_settings(monkeypatch, **env):
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)
+    # v1.6.3 D16: AUTH_ENABLED now defaults to true; these tests were written for the old default (off).
+    env.setdefault("AUTH_ENABLED", "false")
     for key, value in env.items():
         monkeypatch.setenv(key, str(value))
     get_settings.cache_clear()
@@ -100,13 +103,17 @@ def test_admin_can_create_operations_evidence_and_readiness_uses_it(monkeypatch,
 
 
 def test_release_gate_snapshot_persists_check_items(monkeypatch, session_factory):
+    # v1.6.3 D2: environment keys are refused in production, so the admin key is a database key here. API_KEYS still
+    # holds a (refused) bootstrap key, which keeps bootstrap_keys_in_prod failing; D17: production needs sign-in mode.
     reset_v08_settings(
         monkeypatch,
         AUTH_ENABLED="true",
-        API_KEYS="admin-key:default:admin",
+        API_KEYS="bootstrap-key:default:admin",
         APP_ENV="prod",
+        DASHBOARD_AUTH_MODE="session",
         RELEASE_GATE_FAIL_ON_BOOTSTRAP_KEYS_IN_PROD="true",
     )
+    seed_db_api_key(session_factory, "admin-key")
 
     with operations_client(session_factory) as client:
         created = client.post(

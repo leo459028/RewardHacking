@@ -13,7 +13,7 @@ Application configuration is loaded from environment variables and local `.env` 
 | Variable | Default Value | Description |
 | --- | --- | --- |
 | `APP_NAME` | `reward-hacking-guardrail` | Service name identifier in OpenAPI and log streams |
-| `APP_ENV` | `dev` | Target runtime environment (`dev`, `staging`, `prod`) |
+| `APP_ENV` | `dev` (the published image sets `prod`) | Target runtime environment. Since `v1.6.3` only `dev` and `test` are development environments; every other value (`prod`, `production`, `staging`, empty, ...) is treated as production: environment API keys are refused, and the API refuses to start with `AUTH_ENABLED=false` or Dashboard sign-in mode `off` |
 | `LOG_LEVEL` | `INFO` | Structlog level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 | `API_HOST` | `0.0.0.0` | Ingress binding host interface |
 | `API_PORT` | `8000` | Ingress HTTP port |
@@ -34,10 +34,10 @@ Application configuration is loaded from environment variables and local `.env` 
 | `WORKER_COMPLETION_LATENCY_TARGET_SECONDS` | `300` | SLO target for worker execution turnaround |
 | `INCIDENT_RESPONSE_TARGET_SECONDS` | `900` | SLO target for incident acknowledgment and resolution |
 | `LLM_JUDGE_ENABLED` | `false` | Enables external LLM judge; uses deterministic rubrics if false |
-| `AUTH_ENABLED` | `false` | Enables mandatory `X-API-Key` authentication |
-| `API_KEYS` | `demo-key:default` (role admin) | Bootstrap fallback API keys (`key:tenant:role`, role defaults to `admin`). The default is a public development key: in production set it to an empty value, because leaving it unset keeps `demo-key` working whenever `AUTH_ENABLED=true` (the `bootstrap_keys_in_prod` operations check fails) |
-| `DASHBOARD_AUTH_ENABLED` | `false` | `v1.6.1`: only used to derive `DASHBOARD_AUTH_MODE` when that is unset (`true` → `session`, `false` → `off`). HTTP Basic Auth was removed |
-| `DASHBOARD_AUTH_MODE` | *(derived)* | `v1.6.1`: `off` (no sign-in; a synthetic `local-admin`; local development only, the operations check fails in `APP_ENV=prod`) or `session` (personal accounts and server-side sessions). Create the first admin with `python -m app.jobs.users create --username <name> --role admin --password-env <VAR>` |
+| `AUTH_ENABLED` | `true` (since `v1.6.3`) | Enables mandatory `X-API-Key` authentication. `false` is accepted only when `APP_ENV` is `dev` or `test`; elsewhere the API refuses to start (`api_auth_enabled` operations check) |
+| `API_KEYS` | *(empty)* (since `v1.6.3`; `demo-key:default` up to `v1.6.2`) | Environment API keys (`key:tenant:role`, role defaults to `admin`) for local development. Accepted only when `APP_ENV` is `dev` or `test`; elsewhere they are refused with the same 401 `invalid_api_key` as a wrong key, the API logs how many were refused, and the `bootstrap_keys_in_prod` operations check fails until the setting is removed. Production uses database API keys |
+| `DASHBOARD_AUTH_ENABLED` | *(unset)* | `v1.6.1`: only used to derive `DASHBOARD_AUTH_MODE` when that is unset and this flag is set explicitly (`true` → `session`, `false` → `off`). HTTP Basic Auth was removed |
+| `DASHBOARD_AUTH_MODE` | *(derived; `session` when neither setting is set, since `v1.6.3`)* | `v1.6.1`: `off` (no sign-in; a synthetic `local-admin`; local development only: outside `APP_ENV=dev` / `test` the API refuses to start, since `v1.6.3`) or `session` (personal accounts and server-side sessions). Create the first admin with `python -m app.jobs.users create --username <name> --role admin --password-env <VAR>` |
 | `DASHBOARD_COOKIE_SECURE` | `auto` | `auto` sets the `Secure` attribute on the `rh_session` cookie unless `APP_ENV=dev`; `true` / `false` force it |
 | `DASHBOARD_SESSION_IDLE_MINUTES` | `30` | A session ends after this much inactivity |
 | `DASHBOARD_SESSION_MAX_HOURS` | `8` | A session ends this long after sign-in, active or not |

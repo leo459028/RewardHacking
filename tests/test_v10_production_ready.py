@@ -15,6 +15,9 @@ from app.services.policy_engine import PolicyEngine
 from app.services.prompt_sanitizer import sanitize_prompt
 from app.services.risk_scoring import compute_risk_score
 from app.services.run_state import InMemoryRunStateStore
+from tests.auth_helpers import seed_db_api_key
+
+PROD_ADMIN_KEY = "rg_" + "v10-prod-admin-test-key"
 
 
 @contextmanager
@@ -49,6 +52,8 @@ def reset_v10_settings(monkeypatch, **env):
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)
+    # v1.6.3 D16: AUTH_ENABLED now defaults to true; these tests were written for the old default (off).
+    env.setdefault("AUTH_ENABLED", "false")
     for key, value in env.items():
         monkeypatch.setenv(key, str(value))
     get_settings.cache_clear()
@@ -140,15 +145,19 @@ def test_prod_readiness_fails_when_safety_regression_evidence_is_missing(
     monkeypatch,
     session_factory,
 ):
+    # v1.6.3 D4 / D17: production refuses AUTH_ENABLED=false and Dashboard off, so authenticate with a database key.
     reset_v10_settings(
         monkeypatch,
         APP_ENV="prod",
-        AUTH_ENABLED="false",
+        AUTH_ENABLED="true",
         API_KEYS="",
         QUOTA_ENABLED="false",
+        DASHBOARD_AUTH_MODE="session",
     )
+    seed_db_api_key(session_factory, PROD_ADMIN_KEY, tenant_id="ops")
 
     with v10_client(session_factory) as client:
+        client.headers["X-API-Key"] = PROD_ADMIN_KEY
         _create_active_tenant_key(client)
         _post_evidence(client, "backup_restore_drill")
         _post_evidence(client, "secret_rotation")
@@ -171,7 +180,7 @@ def test_prod_readiness_passes_with_fresh_safety_regression_evidence(
     reset_v10_settings(
         monkeypatch,
         APP_ENV="prod",
-        AUTH_ENABLED="false",
+        AUTH_ENABLED="true",  # v1.6.3 D4: production refuses AUTH_ENABLED=false
         API_KEYS="",
         QUOTA_ENABLED="false",
         # v1.6.1 D9: a production gate also needs Dashboard sign-in with an active admin account.
@@ -182,8 +191,10 @@ def test_prod_readiness_passes_with_fresh_safety_regression_evidence(
     )
     _use_audit_chain_key(monkeypatch)
     _seed_dashboard_admin(session_factory)
+    seed_db_api_key(session_factory, PROD_ADMIN_KEY, tenant_id="ops")
 
     with v10_client(session_factory) as client:
+        client.headers["X-API-Key"] = PROD_ADMIN_KEY
         _create_active_tenant_key(client)
         _post_evidence(client, "backup_restore_drill")
         _post_evidence(client, "secret_rotation")

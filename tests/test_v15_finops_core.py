@@ -44,6 +44,8 @@ def reset_v15_settings(monkeypatch, **env):
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)
+    # v1.6.3 D16: AUTH_ENABLED now defaults to true; these tests were written for the old default (off).
+    env.setdefault("AUTH_ENABLED", "false")
     for key, value in env.items():
         monkeypatch.setenv(key, str(value))
     get_settings.cache_clear()
