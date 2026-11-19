@@ -62,6 +62,8 @@ alembic current
 alembic downgrade -1
 ```
 
+**A downgrade can delete data, and upgrading again does not bring it back.** Take a backup first (`pg_dump`). Below `202611180002` the tenants' default verification suite is dropped; below `202611180001` the five sandbox tables are dropped with every verification suite, snapshot, platform re-run, sandbox job and conformance run.
+
 ### Generating a New Migration
 When altering SQLAlchemy models under `app/models/`:
 ```bash
