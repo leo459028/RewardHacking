@@ -35,7 +35,7 @@
     <thead><tr><th>Status</th><th>Check</th><th>Detail</th></tr></thead>
     <tbody>
       {% for check in readiness.checks %}
-      <tr>
+      <tr data-testid="operations-check" data-check-key="{{ check.check_key }}">
         <td><span class="status {{ check.status }}">{{ check.status }}</span></td>
         <td>{{ check.title }}<br><span class="muted">{{ check.check_key }}</span></td>
         <td>{{ check.detail }}</td>

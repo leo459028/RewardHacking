@@ -734,7 +734,7 @@ async def post_tenant_api_key(
         event_type="api_key.created",
         decision="created",
         reason=f"API key {api_key.key_id} created.",
-        details={"role": api_key.role, "actor_key_id": auth_context.key_id},
+        details={"key_id": api_key.key_id, "role": api_key.role, "actor_key_id": auth_context.key_id},
     )
     key_payload = ApiKeyRecord.model_validate(api_key).model_dump()
     return ApiKeyCreateResponse(**key_payload, plaintext_key=plaintext_key)

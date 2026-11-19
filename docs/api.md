@@ -146,7 +146,7 @@ The tombstone is tenant-scoped like the run (another tenant's key gets `403 tena
 | `GET` | `/v1/tenants` | Lists configured tenants and quota overrides | `admin` |
 | `POST` | `/v1/tenants` | Provisions a new tenant | `admin` |
 | `GET` | `/v1/tenants/{tenant_id}/api-keys`| Lists hashed API keys for a tenant | `admin` |
-| `POST` | `/v1/tenants/{tenant_id}/api-keys`| Generates new API key (plaintext returned once) | `admin` |
+| `POST` | `/v1/tenants/{tenant_id}/api-keys`| Generates new API key (plaintext returned once). Since `v1.6.3` the `api_key.created` governance event carries `details.key_id` next to `actor_key_id` (`legacy` = an environment key); the response is unchanged. The CLI `python -m app.jobs.api_keys create` is the alternative for the first key | `admin` |
 | `GET` | `/v1/governance/events` | Queries tenant policy and quota event log (role enforced since `v1.6.1`; before, any valid key could read it) | `viewer`, `operator`, `admin` (and the roles treated as `viewer`) |
 
 ---

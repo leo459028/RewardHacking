@@ -18,7 +18,7 @@ from app.models.incident import Incident
 from app.models.operations import OperationsEvidence, ReleaseGateItem, ReleaseGateRun
 from app.models.tenant import TenantApiKey
 from app.models.worker_attempt import WorkerAttempt
-from app.services import audit_chain, retention
+from app.services import api_key_provenance, audit_chain, retention
 from app.services.finops import ensure_default_pricing
 from app.services.sandbox import docker_config
 from app.services.sandbox import gate as sandbox_gate
@@ -467,6 +467,48 @@ def _api_auth_enabled_check(settings: Settings) -> OperationsCheck:
     )
 
 
+ENV_CREATED_KEYS_SHOWN = 10
+
+
+async def _env_created_api_keys_check(session: AsyncSession) -> OperationsCheck:
+    """v1.6.3 D7: active database API keys that an environment API key created. ``warn`` in every environment.
+
+    The legacy documents told people to create the first keys with an environment key, so most of them are
+    legitimate; the check asks for each to be confirmed or rotated. It never fails and never revokes anything."""
+    keys = await api_key_provenance.active_env_created_keys(session)
+    key_ids = [key.key_id for key in keys]
+    metadata = {
+        "count": len(key_ids),
+        "key_ids": key_ids,
+        "tenants": sorted({key.tenant_id for key in keys}),
+        "runbook": api_key_provenance.RUNBOOK_SECTION,
+    }
+    if not key_ids:
+        return OperationsCheck(
+            check_key="env_created_api_keys",
+            status="pass",
+            title="API keys created with an environment key",
+            detail="No active database API key was created with an environment API key (actor key:legacy).",
+            metadata=metadata,
+        )
+    shown = ", ".join(key_ids[:ENV_CREATED_KEYS_SHOWN])
+    more = f" and {len(key_ids) - ENV_CREATED_KEYS_SHOWN} more" if len(key_ids) > ENV_CREATED_KEYS_SHOWN else ""
+    return OperationsCheck(
+        check_key="env_created_api_keys",
+        status="warn",
+        title="API keys created with an environment key",
+        detail=(
+            f"{len(key_ids)} active database API key(s) were created with an environment API key (actor key:legacy): "
+            f"{shown}{more}. Which environment key was used cannot be told afterwards (every environment key is "
+            "recorded as legacy, demo-key included). If this deployment ever ran without API_KEYS or with demo-key, "
+            "treat all of them as exposed and rotate them; otherwise confirm each one. Rotate: issue a replacement on "
+            "/dashboard/governance and revoke the old key; the check passes when none is left. "
+            f"See {api_key_provenance.RUNBOOK_SECTION}."
+        ),
+        metadata=metadata,
+    )
+
+
 AUDIT_CHAIN_TAIL_ENTRIES = 1000
 AUDIT_CHAIN_CHECKPOINT_MAX_AGE_HOURS = 48
 
@@ -825,6 +867,7 @@ async def compute_operations_readiness(
     ]
 
     checks.append(_api_auth_enabled_check(settings))
+    checks.append(await _env_created_api_keys_check(session))
     # v1.6.3 D5: "production" is every APP_ENV other than dev / test (it used to be only the exact value "prod").
     if settings.is_production_like and settings.release_gate_fail_on_bootstrap_keys_in_prod:
         api_keys_configured = bool((settings.api_keys or "").strip())

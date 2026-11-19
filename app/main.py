@@ -32,6 +32,7 @@ from app.ui.routers.access import router as access_ui_router
 from app.ui.routers.audit_chain import router as audit_chain_ui_router
 from app.ui.routers.benchmark import router as benchmark_ui_router
 from app.ui.routers.change_requests import router as change_requests_ui_router
+from app.ui.routers.governance import router as governance_ui_router
 from app.ui.routers.judges import router as judges_ui_router
 from app.ui.routers.operations import router as operations_ui_router
 from app.ui.routers.replay import router as replay_ui_router
@@ -316,6 +317,7 @@ app.include_router(audit_chain_router)
 app.include_router(change_requests_router)
 app.include_router(access_ui_router)
 app.include_router(ui_router)
+app.include_router(governance_ui_router)
 app.include_router(reviews_ui_router)
 app.include_router(benchmark_ui_router)
 app.include_router(judges_ui_router)

@@ -379,6 +379,16 @@ As auditor the block is readable and **Request re-run \| 要求重跑** is missi
 2. Close the gate (`SANDBOX_EXECUTION_ENABLED=false`) and reload: the tick box is gone, and `POST /v1/runs/{run_id}/replay` with `sandbox_rerun: true` answers `409 sandbox_rerun_unavailable`.
 3. Open Review Detail of the `conftest_rewrite` run and press **Request re-run \| 要求重跑**: the page returns to the review with `verification_queued:vrf_…`, and a new re-run with trigger `manual` appears. The review status and priority do not change.
 
+## 5.21 Scenario 21: Who Created Each API Key (`v1.6.3`)
+
+The runner names its keys `e2e-keys-<run id>-env` / `-dash` on tenant `manual-qa-tenant`, revokes them at the end and touches no other key.
+
+1. **Environment key** (needs `/v1` authentication on, `APP_ENV=dev`, and the environment admin key in `E2E_ENV_API_KEY`; otherwise the runner lists this part as skipped): create a key with `POST /v1/tenants/manual-qa-tenant/api-keys` and that key. On `/dashboard/governance?tenant_id=manual-qa-tenant` its **Created by \| 建立者** cell shows the **environment key (legacy)** badge, and the notice above the table lists its `key_id`. `/dashboard/operations` shows `env_created_api_keys` as `warn` with that `key_id`. Press **Revoke Key**: the check no longer lists it (it is `pass` when no other such key exists).
+2. **Dashboard key**: create a key with the **Create API Key** form. Its creator is your account (`user:<name>`; `dashboard-admin` in `off` mode) and `env_created_api_keys` does not list it.
+3. **Auditor** (session mode): sign in as the auditor and open the same page: the **Created by** column is shown and there is no **Revoke Key** button.
+4. Revoke the Dashboard key: the row shows **Revoked**.
+5. `python -m app.jobs.api_keys list --created-by env` lists the same `key_id`s as the `env_created_api_keys` check.
+
 ## 6. Browser QA Sign-Off Checklist
 
 Before signing off a release via manual browser testing, verify all items below:

@@ -149,6 +149,7 @@ def run_manual_test_suite(
         # 1.2 (v1.6.1) Dashboard sign-in: detect the mode and sign in as the QA admin in session mode.
         creds = e2e_credentials()
         skipped: list[str] = []
+        skipped_other: list[str] = []  # v1.6.3: parts that need a stack setting rather than sign-in
         page.goto(f"{base_url}/dashboard")
         session_mode = "/dashboard/login" in page.url
         if session_mode:
@@ -1495,6 +1496,81 @@ def run_manual_test_suite(
             auditor_context.close()
             print("[Scenario 17.2] Auditor reads /dashboard/verification and the Run Detail block without forms; POST -> 403")
 
+        # Scenario 21 (v1.6.3 P2, plan D6-D8): who created each API key. Keys carry this run's prefix and are revoked at
+        # the end; no other key on the stack is touched.
+        key_prefix_tag = f"e2e-keys-{uuid.uuid4().hex[:8]}"
+        key_tenant = "manual-qa-tenant"
+        governance_url = f"/dashboard/governance?tenant_id={key_tenant}"
+
+        def _key_row(name: str):
+            return page.locator(f'tr:has(td:text-is("{name}"))')
+
+        def _revoke_key_on_dashboard(key_id: str) -> None:
+            step_up(governance_url)
+            page.goto(f"{base_url}{governance_url}")
+            page.locator(f'form[action="/dashboard/governance/tenants/{key_tenant}/api-keys/{key_id}/revoke"] button').click()
+            page.wait_for_load_state("networkidle")
+
+        def _env_check_row() -> str:
+            page.goto(f"{base_url}/dashboard/operations")
+            row = page.locator('[data-testid="operations-check"][data-check-key="env_created_api_keys"]')
+            assert row.count() == 1, "the env_created_api_keys check is missing from /dashboard/operations"
+            return row.inner_text()
+
+        env_key = os.environ.get("E2E_ENV_API_KEY", "")
+        anonymous = p.request.new_context(base_url=base_url)
+        api_auth_on = anonymous.get("/v1/operations/readiness").status == 401
+        anonymous.dispose()
+        if api_auth_on and env_key:
+            env_api = p.request.new_context(base_url=base_url, extra_http_headers={"X-API-Key": env_key})
+            created = env_api.post(f"/v1/tenants/{key_tenant}/api-keys", data={"name": f"{key_prefix_tag}-env", "role": "viewer"})
+            assert created.status == 200, f"creating a key with E2E_ENV_API_KEY answered {created.status}"
+            env_key_id = created.json()["key_id"]
+            env_api.dispose()
+            page.goto(f"{base_url}{governance_url}")
+            creator = _key_row(f"{key_prefix_tag}-env").locator('[data-testid="api-key-creator"]')
+            assert creator.get_attribute("data-creator-kind") == "env" and "environment key (legacy)" in creator.inner_text()
+            assert env_key_id in page.inner_text('[data-testid="env-created-keys-ids"]')
+            ops_row = _env_check_row()
+            assert "warn" in ops_row and env_key_id in ops_row, ops_row
+            _revoke_key_on_dashboard(env_key_id)
+            assert env_key_id not in _env_check_row()
+            print(f"[Scenario 21] {env_key_id} created with the environment key shows 'environment key (legacy)' and env_created_api_keys warns; revoked, no longer listed")
+        else:
+            skipped_other.append("Scenario 21 environment-key part (/v1 authentication off or E2E_ENV_API_KEY unset)")
+            print("[Scenario 21] Environment-key part skipped: /v1 authentication is off on this stack or E2E_ENV_API_KEY is unset")
+
+        step_up(governance_url)
+        page.goto(f"{base_url}{governance_url}")
+        page.fill('form[action="/dashboard/governance/api-keys"] input[name="tenant_id"]', key_tenant)
+        page.fill('form[action="/dashboard/governance/api-keys"] input[name="name"]', f"{key_prefix_tag}-dash")
+        page.select_option('form[action="/dashboard/governance/api-keys"] select[name="role"]', "viewer")
+        page.click('form[action="/dashboard/governance/api-keys"] button[type="submit"]')
+        page.wait_for_load_state("networkidle")
+        page.goto(f"{base_url}{governance_url}")
+        dash_row = _key_row(f"{key_prefix_tag}-dash")
+        assert dash_row.count() == 1, f"{key_prefix_tag}-dash is not listed"
+        dash_creator = dash_row.locator('[data-testid="api-key-creator"]')
+        expected_actor = f"user:{admin_user}" if session_mode else "dashboard-admin"
+        assert dash_creator.get_attribute("data-creator-kind") == "user" and expected_actor in dash_creator.inner_text()
+        assert "Created by | 建立者" in page.content()
+        revoke_action = dash_row.locator('form[action$="/revoke"]').get_attribute("action") or ""
+        dash_key_id = revoke_action.rstrip("/").split("/")[-2]
+        assert dash_key_id.startswith("key_") and dash_key_id not in _env_check_row()
+        if session_mode:
+            auditor_context = browser.new_context(viewport={"width": 1440, "height": 900})
+            auditor_page = auditor_context.new_page()
+            sign_in(auditor_page, base_url, *creds["auditor"])
+            auditor_page.goto(f"{base_url}{governance_url}")
+            auditor_row = auditor_page.locator(f'tr:has(td:text-is("{key_prefix_tag}-dash"))')
+            assert auditor_row.locator('[data-testid="api-key-creator"]').get_attribute("data-creator-kind") == "user"
+            assert auditor_row.locator('form[action$="/revoke"]').count() == 0
+            auditor_context.close()
+        _revoke_key_on_dashboard(dash_key_id)
+        page.goto(f"{base_url}{governance_url}")
+        assert "Revoked" in _key_row(f"{key_prefix_tag}-dash").inner_text()
+        print(f"[Scenario 21.1] {dash_key_id} issued on the Dashboard shows creator {expected_actor}; auditor sees it without Revoke; revoked")
+
         page.goto(f"{base_url}/dashboard/observability")
         obs_html = page.content()
         assert "FinOps" in obs_html
@@ -1543,6 +1619,7 @@ def run_manual_test_suite(
         assert "evaluation_judge_health" in ops_html and "evaluation_sampling_health" in ops_html
         assert "retention_policy" in ops_html and "sandbox_backend_health" in ops_html and "sandbox_runner_health" in ops_html
         assert "dashboard_auth_mode" in ops_html and "audit_chain_integrity" in ops_html and "dual_control_configured" in ops_html
+        assert "api_auth_enabled" in ops_html and "env_created_api_keys" in ops_html  # v1.6.3
         release_ver = page.input_value('input[name="release_version"]')
         assert release_ver == "v1.6.2"
 
@@ -1605,6 +1682,8 @@ def run_manual_test_suite(
             print(f"  [reauth] {url[:300]}")
         if skipped:
             print(f"[Section 6 Checklist] Skipped (sign-in off): {', '.join(skipped)}")
+        if skipped_other:
+            print(f"[Section 6 Checklist] Skipped (stack settings): {', '.join(skipped_other)}")
 
         browser.close()
 
