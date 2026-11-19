@@ -177,6 +177,15 @@ def test_release_workflow_scans_before_it_pushes():
     assert jobs["publish"]["needs"] == "verify"
 
 
+def test_release_builds_check_out_the_tag_not_a_branch_of_the_same_name():
+    """Release branches carry the version as their name, and a bare ``v1.6.2`` checks out the branch (v1.6.2 rebuild)."""
+    jobs = _workflow("release-image.yml")["jobs"]
+    refs = [step["with"]["ref"] for job in ("verify", "publish") for step in jobs[job]["steps"] if "actions/checkout" in step.get("uses", "")]
+    assert len(refs) == 2
+    assert "format('refs/tags/{0}', github.event.release.tag_name)" in refs[0] and "github.event.inputs.ref" in refs[0]
+    assert refs[1] == "refs/tags/${{ github.event.release.tag_name }}"
+
+
 def test_publish_job_pushes_only_the_images_it_scanned():
     steps = _workflow("release-image.yml")["jobs"]["publish"]["steps"]
     scans = [index for index, step in enumerate(steps) if "image_content_check.py" in step.get("run", "")]
