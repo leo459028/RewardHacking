@@ -479,7 +479,8 @@ def test_compose_gives_docker_access_to_the_runner_only():
 
 def test_sandbox_python_image_is_pinned_and_not_root():
     text = (ROOT / "docker/sandbox-python/Dockerfile").read_text(encoding="utf-8")
-    assert "@sha256:" in text and "USER 65534:65534" in text and "pytest==" in text and "coverage==" in text
+    pins = (ROOT / "docker/sandbox-python/requirements.txt").read_text(encoding="utf-8")
+    assert "@sha256:" in text and "USER 65534:65534" in text and "pytest==" in pins and "coverage==" in pins
     assert "build-essential" not in text and "gcc" not in text
 
 

@@ -5,7 +5,8 @@ FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 
-RUN pip install --no-cache-dir --only-binary=:all: pytest==9.0.3 coverage==7.10.7
+COPY requirements.txt /tmp/sandbox-requirements.txt
+RUN pip install --no-cache-dir --only-binary=:all: -r /tmp/sandbox-requirements.txt && rm /tmp/sandbox-requirements.txt
 
 # The sandbox has no network and installs nothing, so pip is only attack surface.
 RUN python -m pip uninstall -y pip && rm -rf /usr/local/lib/python3.12/ensurepip

@@ -78,6 +78,44 @@ jobs:
       - name: Scan sandbox image content
         run: python scripts/image_content_check.py --image rewardhacking-sandbox-python:ci
 
+      # Report only: most operating-system advisories have no fix yet and depend on the base image. Python packages are
+      # checked, and block, in the dependencies job.
+      - name: Vulnerability report (does not block)
+        id: cve
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        continue-on-error: true
+        with:
+          image: rewardhacking:ci
+          fail-build: false
+          output-format: json
+
+      - name: Upload the vulnerability report
+        if: always() && steps.cve.outputs.json != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vulnerability-report
+          path: ${{ steps.cve.outputs.json }}
+
+  # v1.6.2 P5: a known vulnerability in a Python dependency of either image fails the pull request. Exceptions need a
+  # reason and an expiry date (scripts/dependency_audit_exceptions.json).
+  dependencies:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-audit
+        run: pip install pip-audit==2.10.1
+
+      - name: Audit Python dependencies
+        run: python scripts/dependency_audit.py
+
   # v1.6.2 D52(2): every revision must apply and revert on the database used in production.
   migrations:
     runs-on: ubuntu-latest
