@@ -155,9 +155,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Image name
+      # `latest` moves only for the release GitHub marks as Latest: never for a prerelease or a later fix of an older
+      # series. If the lookup fails or disagrees, only the version tag is pushed.
+      - name: Image name and latest tag
         id: image
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/rewardhacking" >> "$GITHUB_OUTPUT"
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/rewardhacking" >> "$GITHUB_OUTPUT"
+          latest_release=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name || true)
+          if [ "$latest_release" = "$TAG" ]; then latest=true; else latest=false; fi
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "Moves \`latest\`: $latest (Latest release: ${latest_release:-none})" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build and push
         id: push
@@ -168,7 +178,7 @@ jobs:
           push: true
           tags: |
             ${{ steps.image.outputs.name }}:${{ github.event.release.tag_name }}
-            ${{ steps.image.outputs.name }}:latest
+            ${{ steps.image.outputs.latest == 'true' && format('{0}:latest', steps.image.outputs.name) || '' }}
           sbom: true
           provenance: mode=max
 
@@ -188,7 +198,7 @@ jobs:
           push: true
           tags: |
             ${{ steps.image.outputs.name }}-sandbox-python:${{ github.event.release.tag_name }}
-            ${{ steps.image.outputs.name }}-sandbox-python:latest
+            ${{ steps.image.outputs.latest == 'true' && format('{0}-sandbox-python:latest', steps.image.outputs.name) || '' }}
           sbom: true
           provenance: mode=max
 

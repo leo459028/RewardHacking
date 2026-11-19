@@ -81,7 +81,7 @@ ghcr.io/leo459028/rewardhacking:vX.Y.Z
 ghcr.io/leo459028/rewardhacking:latest
 ```
 
-`vX.Y.Z` names one release. `latest` moves with every release, so production deployments should pin a version or, better, a digest (`ghcr.io/leo459028/rewardhacking@sha256:...`).
+`vX.Y.Z` names one release. `latest` follows the release GitHub marks as Latest (never a prerelease or a later fix of an older series), so production deployments should pin a version or, better, a digest (`ghcr.io/leo459028/rewardhacking@sha256:...`).
 
 **The image contains no secrets, signing keys, default accounts, local configuration or tests.** It runs as UID / GID `10001`, and root owns the program files. `scripts/image_content_check.py` scans every image before it is pushed.
 

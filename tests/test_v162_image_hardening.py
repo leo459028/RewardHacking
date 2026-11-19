@@ -203,6 +203,15 @@ def test_publish_job_tags_sbom_and_provenance():
     assert "github.event.release.tag_name" in step["with"]["tags"] and ":latest" in step["with"]["tags"]
 
 
+def test_latest_moves_only_for_the_latest_release():
+    steps = _workflow("release-image.yml")["jobs"]["publish"]["steps"]
+    lookup = next(step for step in steps if step.get("id") == "image")
+    assert "releases/latest" in lookup["run"] and 'latest_release" = "$TAG"' in lookup["run"] and "|| true" in lookup["run"]
+    for step in (s for s in steps if s.get("with", {}).get("push") is True):
+        latest = [line for line in step["with"]["tags"].splitlines() if ":latest" in line]
+        assert latest and all("steps.image.outputs.latest == 'true'" in line for line in latest)
+
+
 def test_release_tag_must_match_the_project_version():
     steps = _workflow("release-image.yml")["jobs"]["verify"]["steps"]
     check = next(step for step in steps if step.get("name") == "Check release tag")
