@@ -239,6 +239,7 @@ async def persist_sandbox_replay(
         raise VerificationError(
             SANDBOX_RERUN_UNAVAILABLE, "A sandbox re-run needs an open execution gate, a bound suite and an outcome.", 409
         )
+    await sampling.lock_new_reruns(session, run.tenant_id)
     row = await sampling.active_for_outcome(session, outcome.outcome_id, lock=True) or await sampling.stage(
         session, settings, run=run, outcome=outcome, suite_id=suite_id, trigger=sampling.TRIGGER_REPLAY, requested_by=requested_by
     )

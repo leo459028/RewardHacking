@@ -1,6 +1,6 @@
 # Manual QA & Interactive Browser Testing Guide
 
-> **Testing Baseline**: `v1.6.1`
+> **Testing Baseline**: `v1.6.2`
 > **Target Environment**: Local Docker Compose Stack (`http://localhost:8000`)
 > **Primary Interface**: Web Browser (`/dashboard`) & REST API (`/v1`)
 > **Automated Browser Runner**: `python scripts/browser_manual_test.py` (supports `--qa-currency TWD|USD|CNY`, default `TWD`)

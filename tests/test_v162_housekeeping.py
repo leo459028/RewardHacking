@@ -48,8 +48,8 @@ def test_skills_point_to_the_release_and_phase_rules():
 
 def test_roadmap_moves_capability_gates_to_the_next_release():
     roadmap = _read("docs/roadmap.md")
-    current = _section(roadmap, "### `v1.6.2` (Next)", "### `v1.6.3` (tentative number)")
-    following = roadmap.split("### `v1.6.3` (tentative number)", 1)[1].split("\n### ", 1)[0]
+    current = _section(roadmap, "### `v1.6.2` (Current)", "### `v1.6.3` (Next)")
+    following = roadmap.split("### `v1.6.3` (Next)", 1)[1].split("\n### ", 1)[0]
     assert "Capability-Derived Gates" not in current and "`stdio` MCP" not in current
     assert "Capability-Derived Gates" in following and "`stdio` MCP" in following
 

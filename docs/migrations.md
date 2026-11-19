@@ -1,6 +1,6 @@
 # Database Migrations Guide
 
-> **Migration Baseline**: `v1.5.2`  
+> **Migration Baseline**: `v1.6.2`
 > **Tool**: Alembic  
 > **Current Head Revision**: `202611180002` (`add_default_verification_suite`)
 

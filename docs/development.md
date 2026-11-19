@@ -1,6 +1,6 @@
 # Developer Guide & Local Setup
 
-> **Guide Version**: `v1.5.3`
+> **Guide Version**: `v1.6.2`
 > **Python Version**: `>=3.11`
 > **Linter**: `ruff`
 > **Test Runner**: `pytest` & `scripts/browser_manual_test.py`

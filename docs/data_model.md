@@ -1,8 +1,8 @@
 # Database Schema & Audit Models
 
-> **Data Model Version**: `v1.6.0`
+> **Data Model Version**: `v1.6.2`
 > **ORM**: SQLAlchemy (asyncio)  
-> **Migration Baseline**: Alembic revision `202611120002` (head)
+> **Migration Baseline**: Alembic revision `202611180002` (head)
 
 This specification details the relational data models and audit schemas maintained in PostgreSQL for the **RewardHacking** platform.
 

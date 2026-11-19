@@ -1,6 +1,6 @@
 # Configuration & Environment Variables
 
-> **Configuration Version**: `v1.6.0`
+> **Configuration Version**: `v1.6.2`
 > **Source Model**: `app/core/config.py` (`Settings`) via `pydantic-settings`  
 > **Template**: `.env.example`
 

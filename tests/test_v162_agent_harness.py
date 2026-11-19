@@ -274,6 +274,18 @@ def test_pre_commit_allows_other_paths(path):
     assert not pre_commit.is_forbidden(path)
 
 
+@pytest.mark.parametrize("path", ["config/signing.key", "certs/a.P12", "certs/a.pfx", "keys/store.jks", "keys/a.keystore", "home/id_rsa", "home/id_rsa.pub"])
+def test_pre_commit_refuses_key_files(path):
+    assert pre_commit.is_forbidden(path)
+
+
+def test_pre_commit_refuses_an_added_home_directory_path():
+    home = "C:" + "\\Users\\someone\\project"
+    assert pre_commit.names_local_home(f"+saved to {home}\n")
+    assert not pre_commit.names_local_home(f"-saved to {home}\n")
+    assert not pre_commit.names_local_home("+path = 'C:" + "\\\\Users\\\\me'\n")
+
+
 def test_pre_commit_shell_wrapper_calls_the_python_check():
     wrapper = (ROOT / "scripts" / "git-hooks" / "pre-commit").read_text(encoding="utf-8")
     assert wrapper.startswith("#!/bin/sh\n") and "pre_commit.py" in wrapper

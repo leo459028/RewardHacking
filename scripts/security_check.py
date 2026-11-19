@@ -135,7 +135,7 @@ def check_working_tree() -> list[str]:
 
 
 def main() -> int:
-    print("Running RewardHacking Security & Secret Scan (v1.6.1)...")
+    print("Running RewardHacking Security & Secret Scan (v1.6.2)...")
     git_findings = check_git_history()
     tree_findings = check_working_tree()
 

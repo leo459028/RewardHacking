@@ -79,6 +79,11 @@ async def _lock_tenant_day(session: AsyncSession, tenant_id: str, day: str) -> N
         await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": key})
 
 
+async def lock_new_reruns(session: AsyncSession, tenant_id: str) -> None:
+    """Take this before looking for an active re-run, so concurrent requests for one outcome create only one (until commit)."""
+    await _lock_tenant_day(session, tenant_id, _now().strftime("%Y-%m-%d"))
+
+
 async def used_today(session: AsyncSession, tenant_id: str, now: datetime) -> int:
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     stmt = select(func.count()).select_from(VerificationRun).where(
@@ -179,6 +184,7 @@ async def request_manual(session: AsyncSession, settings: Settings, *, run: Agen
     outcome = await latest_outcome(session, run.run_id)
     if outcome is None:
         raise VerificationError("verification_outcome_missing", "This run has no outcome evidence to re-run.", 409)
+    await lock_new_reruns(session, run.tenant_id)
     active = await active_for_outcome(session, outcome.outcome_id)
     if active is not None:
         return active, False

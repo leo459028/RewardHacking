@@ -1,6 +1,6 @@
 # REST API Specification
 
-> **API Version**: `v1.6.0`
+> **API Version**: `v1.6.2`
 > **Base Path**: `/v1`  
 > **Interactive Documentation**: `http://localhost:8000/docs` (Swagger UI) or `http://localhost:8000/redoc` (ReDoc)
 

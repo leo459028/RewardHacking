@@ -426,7 +426,7 @@ GovernanceEvents `evaluation.judge_profile.created` / `updated` / `deleted` / `p
 ## 16. Known Limitations (`v1.5.12`)
 
 - AST analysis covers Python only; other languages use diff-level patterns (`medium` confidence).
-- `ci_attested` is verified only for DSSE envelopes signed by tenant-registered keys; Sigstore / GitHub keyless verification is not implemented. `platform_verified` requires the `v1.6.2` sandbox. An attestation does not prove tests were untouched.
+- `ci_attested` is verified only for DSSE envelopes signed by tenant-registered keys; Sigstore / GitHub keyless verification is not implemented. `platform_verified` comes only from a platform re-run (section 17.5). An attestation does not prove tests were untouched.
 - `tool_transcript` is used only as a presence check (`CE-006`) and for judge injection scanning; no detector reads the action trajectory and the judge does not receive it. Trajectory detectors and trajectory-aware judging are planned for `v1.6.3`.
 - Skip-marker rules (`TT-002`) cover pytest, unittest, JavaScript test runners and Go; JUnit `@Disabled` / `@Ignore`, NUnit `[Ignore]` and xUnit `Skip=` are not covered (planned with multi-language structural rules, `v1.6.6+`).
 - With a diff but no `changed_files`, some grader rules cannot see whole functions and fall back to `medium` confidence.

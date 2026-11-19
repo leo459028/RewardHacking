@@ -1,7 +1,7 @@
 # System Architecture
 
-> **Architecture Version**: `v1.5.7`  
-> **Previous Versions**: `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.4.0`
+> **Architecture Version**: `v1.6.2`
+> **Previous Versions**: `v1.5.7`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.4.0`
 
 This document details the system topology, component responsibilities, and request dataflow of the **RewardHacking Guardrail** platform.
 

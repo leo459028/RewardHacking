@@ -1544,20 +1544,22 @@ def run_manual_test_suite(
         assert "retention_policy" in ops_html and "sandbox_backend_health" in ops_html and "sandbox_runner_health" in ops_html
         assert "dashboard_auth_mode" in ops_html and "audit_chain_integrity" in ops_html and "dual_control_configured" in ops_html
         release_ver = page.input_value('input[name="release_version"]')
-        assert release_ver == "v1.6.1"
+        assert release_ver == "v1.6.2"
 
         page.select_option('select[name="evidence_type"]', "safety_regression")
         page.select_option('select[name="status"]', "pass")
         page.fill('input[name="reference_url"]', "docs/manual_test.md")
-        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.6.1")
+        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.6.2")
         page.click('button:has-text("Save Evidence")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
+        gates_before = set(re.findall(r"gate_[0-9a-f]{12}", page.content()))
         page.click('button:has-text("Create Release Gate Snapshot")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
-        assert "v1.6.1" in page.content()
-        print("[Scenario 4.3] Operations evidence saved & v1.6.1 Release Gate snapshot created via browser")
+        assert "v1.6.2" in page.content()
+        assert set(re.findall(r"gate_[0-9a-f]{12}", page.content())) - gates_before, "the release gate snapshot was not stored"
+        print("[Scenario 4.3] Operations evidence saved & v1.6.2 Release Gate snapshot created via browser")
 
         # 6. Check all primary navigation tabs for 0E-8 and HTTP 200
         nav_routes = [

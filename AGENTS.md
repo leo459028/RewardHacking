@@ -1,10 +1,10 @@
 # Project Working Guidelines (`AGENTS.md`)
 
-Rules for AI agents and engineers working on **RewardHacking**. They apply to the whole repository unless a subdirectory has its own `AGENTS.md`. This file holds what the code cannot tell you; `README.md` and `docs/` hold the rest.
+Rules for AI agents and engineers on **RewardHacking**, for the whole repository unless a subdirectory has its own `AGENTS.md`. This file holds what the code cannot tell you; `README.md` and `docs/` hold the rest.
 
 ## Session Start: Read the Handoff File First
 
-- At the start of every session (new or resumed), read `docs/handoff.md` if it exists. It holds the current state, next steps, local environment notes and known pitfalls. It is a local, git-ignored file in Traditional Chinese; a fresh clone will not have it.
+- At the start of every session (new or resumed), read `docs/handoff.md` if it exists. It holds the current state, next steps, local environment notes and known pitfalls. It is local and git-ignored, in Traditional Chinese.
 - Then check it against `git status`, `git log --oneline -3` and `git branch --show-current`. If they disagree, git wins: continue from the real state and correct the handoff.
 - Update it after each phase commit, before ending a session, and whenever the state changes (push, PR, merge, new version). Keep it to about 100 lines: current state, next steps and pitfalls. Details belong in the version plan and `docs/test_report.md`.
 
@@ -19,7 +19,7 @@ Rules for AI agents and engineers working on **RewardHacking**. They apply to th
 | Evaluation, review, benchmark, honeypots | `app/services/evaluation/`, `app/services/{outcomes,review_queue,benchmark,honeypot,cheat_rates,attestation_keys,inspect_import}.py` | `docs/evaluation.md` |
 | Judges and sampling | `app/services/evaluation/judges/`, `app/services/{judge_triage,judge_activation,judge_background,review_sampling}.py` | `docs/evaluation.md` §10–§15 |
 | Retention and legal holds | `app/services/retention.py`, `app/jobs/retention.py` | `docs/security.md`, `docs/runbook.md` |
-| Sandbox | `app/services/sandbox/` | `docs/security.md`, `docs/architecture.md` |
+| Sandbox, platform re-runs | `app/services/{sandbox,verification}/`, `app/workers/sandbox_runner.py`, `app/{api,ui}/routers/{verification,replay}.py` | `docs/security.md`, `docs/architecture.md`, `docs/evaluation.md` §17 |
 | Access and audit integrity | `app/services/access/`, `app/services/{change_requests,audit_chain,governance_audit}.py` | `docs/security.md` |
 | FinOps | `app/services/finops/`, `app/services/pricing_import.py` | `docs/finops_core.md` |
 | Control plane, checkpoints, audit, DLQ, operations, tracing | `app/services/{control_plane,checkpoint,audit_log,operations}.py`, `app/workers/consumer.py`, `app/core/{trace_context,tracing}.py` | `docs/architecture.md`, `docs/runbook.md`, `docs/observability.md` |
@@ -27,7 +27,7 @@ Rules for AI agents and engineers working on **RewardHacking**. They apply to th
 | Image and delivery | `Dockerfile`, `.dockerignore`, `deploy/`, `scripts/image_content_check.py`, `.github/workflows/` | `docs/deployment.md` |
 | Development guardrails | `.claude/settings.json`, `scripts/hooks/`, `scripts/git-hooks/` | `docs/testing_guide.md` |
 
-Current Alembic head: `202611120003`. New revision IDs follow `docs/migrations.md` § Revision ID Rule (real creation date, never earlier than the current head). Check whether existing columns or JSONB fields suffice before adding a migration.
+Current Alembic head: `202611180002`. New revision IDs follow `docs/migrations.md` § Revision ID Rule (real creation date, never earlier than the current head). Prefer existing columns or JSONB fields over a new migration.
 
 ## 1. Planning Requirements
 
@@ -55,7 +55,7 @@ Version plans live in `docs/plan/v1_x_yplan.md` (Traditional Chinese, git-ignore
 - `UsageEventCreateRequest.status` is `success`, `failed`, `timeout`, `cancelled` or `skipped` (not `completed`). **Budget Policy API**: `POST /v1/budgets` (`policy_name`, alias `name`); UI route `/dashboard/admin/finops/budgets`.
 - **Approval Decision API**: `POST /v1/approvals/{run_id}/decision` (`approve_once`, `deny`, `request_changes`); only for `awaiting_approval` runs, otherwise `409 run_not_awaiting_approval`.
 - **Review Decision API**: `POST /v1/reviews/{review_id}/decision` (`confirmed_hacking`, `false_positive`, `accepted`, `needs_info`). Error bodies use `{"error": {"code": ...}}`.
-- **Entity ID Prefixes**: `plan_` (`ExecutionPlan`), `ckpt_` (`RunCheckpoint`), `replay_` (`ReplayAttempt`), `usage_` (`UsageEvent`), `cost_` / `cost_adj_` (`CostEvent` / adjustment), `budget_` (`BudgetPolicy`), `bv_` (`BudgetViolation`), `pib_` (`PricingImportBatch`), `outcome_` (`RunOutcome`), `review_` (`EvaluationReview`), `fnd_` (evaluation finding, deterministic), `bms_` (`BenchmarkSample`, deterministic), `bmr_` (`BenchmarkRun`), `hp_` (`HoneypotProbe`), `attk_` (`TenantAttestationKey`), `jdg_` (`JudgeAssessment`), `smp_` (`ReviewSamplingDecision`), `usr_` (`DashboardUser`), `chg_` (`ChangeRequest`), `ace_` (`AuditChainEntry`), `acp_` (`AuditChainCheckpoint`).
+- **Entity ID Prefixes**: `plan_` (`ExecutionPlan`), `ckpt_` (`RunCheckpoint`), `replay_` (`ReplayAttempt`), `usage_` (`UsageEvent`), `cost_` / `cost_adj_` (`CostEvent` / adjustment), `budget_` (`BudgetPolicy`), `bv_` (`BudgetViolation`), `pib_` (`PricingImportBatch`), `outcome_` (`RunOutcome`), `review_` (`EvaluationReview`), `fnd_` (evaluation finding, deterministic), `bms_` (`BenchmarkSample`, deterministic), `bmr_` (`BenchmarkRun`), `hp_` (`HoneypotProbe`), `attk_` (`TenantAttestationKey`), `jdg_` (`JudgeAssessment`), `smp_` (`ReviewSamplingDecision`), `usr_` (`DashboardUser`), `chg_` (`ChangeRequest`), `ace_` (`AuditChainEntry`), `acp_` (`AuditChainCheckpoint`), `sbj_` (`SandboxJob`), `sbc_` (`SandboxConformanceRun`), `vsu_` (`VerificationSuite`), `vrf_` (`VerificationRun`).
 - **Tests**: how to reach `review_required`, `awaiting_approval`, honeypot, attestation, judge and sampling paths is in `docs/testing_guide.md` § Agent Test Conventions. Read it before writing tests for those paths.
 
 ### 2.3 Evaluation & Review Invariants (Apply From `v1.5.8` Onward)
@@ -76,7 +76,7 @@ These rules protect the project's core purpose (reward-hacking detection). A cha
 
 **Stage 2 (release gate, once Stage 1 passes)**: `python scripts/release_gate.py --out <summary.md>` runs steps 1–3 and writes a summary to review.
 1. Secret scan, ruff, `git diff --check` and full pytest.
-2. `docker compose up -d --build`, `docker compose ps`, `alembic upgrade head` and `alembic current` in the `api` container. Ask the user to start Docker Desktop if it is not running.
+2. `docker compose --profile sandbox up -d --build`, `docker compose ps`, `alembic upgrade head` and `alembic current` in the `api` container. Ask the user to start Docker Desktop if it is not running.
 3. Browser E2E: every change to routes, forms, APIs or Dashboard views updates `docs/manual_test.md` and `scripts/browser_manual_test.py`, and `python scripts/browser_manual_test.py` must report 0 console errors, 0 page errors, 0 failed requests (`>=400`) and 0 `0E-8` artifacts.
 4. Prepend the actual results (counts, container status, live IDs) to `docs/test_report.md`. Record only what really ran.
 

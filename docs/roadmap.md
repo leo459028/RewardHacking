@@ -1,8 +1,8 @@
 # Project Roadmap: Evolutionary Milestones
 
-> **Roadmap Baseline**: `v1.6.1`
+> **Roadmap Baseline**: `v1.6.2`
 > **Status**: Active Open-Source Track (`v1.6.x` Verified Execution Series)
-> **Next Target**: `v1.6.2` (Isolated Sandbox Runtime MVP)
+> **Next Target**: `v1.6.3` (Detection Measurement & Trajectory Evidence)
 > **Re-baselined**: 2026-11-11, after `v1.6.0` (see [Re-baseline Notes](#re-baseline-notes-november-2026))
 
 This roadmap outlines the past development trajectory, the `v1.5.x` evaluation series, the `v1.6.x` runtime execution series, and long-term architectural milestones for the **RewardHacking** platform.
@@ -39,18 +39,27 @@ This roadmap outlines the past development trajectory, the `v1.5.x` evaluation s
 | `v1.5.11` | Completed | Real Local & Cloud Judges | Named judge profiles, backend compatibility (structured-output fallback, reasoning control, retries), background triage, profile cost attribution, tenant consent for external judges and multi-profile benchmarks; verified with a local model in LM Studio. |
 | `v1.5.12` | Completed | Judge Activation & Provider Adapters | Test-then-activate gate with configuration fingerprints (rule-based judge by default), Dashboard judge profile management with templates and an editing gate, key-variable allowlist and HTTPS / metadata hardening, native Anthropic adapter, fallback chains, circuit breakers and per-profile budgets. |
 | `v1.6.0` | Completed | Runtime Foundations | W3C trace context with optional OTLP export, audit retention plan → apply purge with legal holds and hash-only tombstones (FinOps ledger report-only), FinOps package split with `import-linter` contracts, and the sandbox execution spec with a `simulated` backend and conformance suite. |
-| `v1.6.1` | **Current** | **Enterprise Access & Audit Integrity** | Dashboard sign-in with roles (including a read-only auditor), CSRF tokens and re-authentication, second-person approval (change requests) for high-impact actions, a tamper-evident audit chain with signed checkpoints, Dashboard retention apply / hold release, and prompt-guard/2.0 (P0). |
-| `v1.6.2` | **Next** | Isolated Sandbox Runtime MVP | A published container image without secrets, then a hardened Docker backend with a configurable OCI runtime (`runc` locally, `runsc`/gVisor on Linux) behind a disabled-by-default feature flag, used only for the platform's own re-runs; before / after re-runs against the platform's own tests produce the first `platform_verified` evidence, with changed-line coverage and a shadow re-run contradiction rule. |
-| `v1.6.3` | Planned (tentative number) | Detection Measurement & Trajectory Evidence | Capability-derived gates, agent tools and `stdio` MCP servers in the sandbox (moved from `v1.6.2`), public labeled corpora imports, trajectory detectors and trajectory-aware contrastive judging, a structured self-report and an escalation channel, a detector evasion-variant suite, root-cause labels and a monitoring-coverage metric. |
+| `v1.6.1` | Completed | Enterprise Access & Audit Integrity | Dashboard sign-in with roles (including a read-only auditor), CSRF tokens and re-authentication, second-person approval (change requests) for high-impact actions, a tamper-evident audit chain with signed checkpoints, Dashboard retention apply / hold release, and prompt-guard/2.0 (P0). |
+| `v1.6.2` | **Current** | **Isolated Sandbox Runtime MVP** | A published container image without secrets, then a hardened Docker backend with a configurable OCI runtime (`runc` locally, `runsc`/gVisor on Linux) behind a disabled-by-default feature flag, used only for the platform's own re-runs; before / after re-runs against the platform's own tests produce the first `platform_verified` evidence, with changed-line coverage and shadow re-run rules. |
+| `v1.6.3` | **Next** | Detection Measurement & Trajectory Evidence | Capability-derived gates, agent tools and `stdio` MCP servers in the sandbox (moved from `v1.6.2`), public labeled corpora imports, trajectory detectors and trajectory-aware contrastive judging, a structured self-report and an escalation channel, a detector evasion-variant suite, root-cause labels and a monitoring-coverage metric. |
 | `v1.6.4` | Planned (tentative number) | Compliance Foundation, Approved Models & Multilingual Guard | One control catalog with versioned framework mappings (ISO/IEC 42001, NIST AI RMF, EU AI Act, then Taiwan / Japan / US packs), an opt-in approved-model list with vendor jurisdiction, locale PII redaction packs, data-subject requests, incident notification clocks, prompt-guard hardening and localization. |
 | `v1.6.5` | Planned (tentative number) | Enterprise Integration | OIDC single sign-on, SIEM export, notifications, a CI integration kit with merge checks, and an offline / on-prem install bundle with SBOM and signed images. |
 | `v1.6.6+` | Long-Term (tentative number) | Stronger Verification & Scale-Out | Hidden held-out tests, changed-line mutation testing, realistic honeypots and canaries, a pre-rollout propensity gate, reviewer-quality measurement, multi-language structural rules, judge ensembles, K8s Job and microVM backends, remote MCP transports, resampling, and stateful graph time-travel replay. |
 
-**Release numbers**: only the next release (`v1.6.2`) has a fixed number. Numbers after it are tentative and name the planned order of themes. If a patch or a re-ordered theme has to ship first, it takes the next free number and the later themes move back; other documents that cite a tentative number are corrected when that release is planned.
+**Release numbers**: only the next release (`v1.6.3`) has a fixed number. Numbers after it are tentative and name the planned order of themes. If a patch or a re-ordered theme has to ship first, it takes the next free number and the later themes move back; other documents that cite a tentative number are corrected when that release is planned.
 
 ---
 
-## Current Release: `v1.6.1` Enterprise Access & Audit Integrity
+## Current Release: `v1.6.2` Isolated Sandbox Runtime MVP
+
+The `v1.6.2` milestone lets the platform re-run an agent's work with tests the agent cannot change:
+- **Published Image**: a non-root image without keys or tests, scanned before every push and published from CI with an SBOM and provenance.
+- **Hardened Docker Backend**: no network, read-only root filesystem, no capabilities, resource limits, `runc` or `runsc`, behind a disabled-by-default flag and a conformance gate. Only `sandbox-runner` can reach Docker.
+- **Verification Suites & Re-Runs**: immutable tenant suites, before / after runs, flaky retries, changed-line coverage, sampling, daily caps and FinOps compute records.
+- **`platform_verified`**: the report came from the platform's own re-run in the sandbox. It does not mean the tests passed and is not proof against tampering, because the agent's code runs in the same process as the tests.
+- **Shadow Rules**: `RV-001`–`RV-004` are recorded without changing verdicts until benchmark evidence supports promotion.
+
+## Previous Release: `v1.6.1` Enterprise Access & Audit Integrity
 
 The `v1.6.1` milestone ties every Dashboard action to a named person and makes the audit trail verifiable:
 - **Sign-In & Roles**: local accounts with sessions, lockout and forced first password change; `admin`, `tenant_admin`, `reviewer`, `operator` and the read-only `auditor`; tenant scope; every route declares its permission; actions recorded as `user:<username>`.
@@ -59,7 +68,7 @@ The `v1.6.1` milestone ties every Dashboard action to a named person and makes t
 - **Tamper-Evident Audit Chain**: a separate hash ledger joined in the same transaction, signed checkpoints and a verification command.
 - **Dashboard Retention Apply & Hold Release** (`session` mode only) and **prompt-guard/2.0** (P0).
 
-## Previous Release: `v1.6.0` Runtime Foundations
+## Earlier Release: `v1.6.0` Runtime Foundations
 
 The `v1.6.0` milestone prepares the platform to re-run agent work itself (Verified Execution); nothing is executed for real yet and evidence provenance is unchanged:
 - **Tracing**: W3C Trace Context on HTTP and Kafka, optional OpenTelemetry export with an attribute allowlist, GenAI judge spans, background span links, exemplars and a Jaeger compose profile.
@@ -174,7 +183,7 @@ Cases B and C are the point of the series: under the `v1.5.x` architecture they 
 
 #### Evidence provenance levels
 
-The four levels have existed since `v1.5.8`; `v1.6.x` makes the top level real. No code path produces `platform_verified` yet; `v1.6.2` is the first release that does.
+The four levels have existed since `v1.5.8`; `v1.6.x` makes the top level real. `v1.6.2` is the first release that produces `platform_verified`, on the platform's re-run record and never on an agent's outcome.
 
 | Level | Plain meaning | Exam analogy |
 | --- | --- | --- |
@@ -215,7 +224,7 @@ Re-running an agent's change means executing untrusted code. The change could de
 - **Modularization**: Split `app/services/finops.py` into domain submodules and continue moving endpoints out of `app/api/routes.py` into per-domain routers.
 - **`SandboxBackend` Interface**: Abstracts tool execution while keeping deterministic simulation as the default backend.
 
-### `v1.6.1` (Current): Enterprise Access & Audit Integrity
+### `v1.6.1` (Completed): Enterprise Access & Audit Integrity
 Split out of the former `v1.6.1` scope: every Dashboard form is touched, and signed-in roles are the entry requirement for regulated customers.
 - **P0 Prompt-Guard 2.0 (released in `v1.6.1`)**: brought forward from `v1.6.4` after a review on 2026-11-11 found that prompt flags are the only pre-execution gate for harmful intent expressed in the prompt and carried out with tools the request may already use (constraint flags are declared by the requester; `write_patch` and `query_data` need no approval). Adds Unicode normalization for matching, modern Chinese rules (`zh_*`), the `sensitive_term_mention` tier and the `classical_style_task_mismatch` heuristic. Every signal can only escalate to approval. Still rule-based and evadable by paraphrase; expected misses are kept as tests.
 - **Dashboard Sign-In & Roles**: user sign-in with sessions replaces the single Basic Auth account. Roles: `admin`, `tenant_admin`, `reviewer`, `operator` and a new read-only `auditor`. The session layer is built so OIDC single sign-on (`v1.6.5`) plugs in without rework.
@@ -224,17 +233,17 @@ Split out of the former `v1.6.1` scope: every Dashboard form is touched, and sig
 - **Tamper-Evident Audit Chain**: writes the hash-chain columns reserved on tombstones in `v1.6.0` (`prev_hash`, `entry_hash`, `chain_version`), extends the chain to governance events and review decisions, and adds signed daily checkpoints with a verification command.
 - **Unlocked from `v1.6.0`**: the Dashboard may apply retention plans and release legal holds (API-only in `v1.6.0`).
 
-### `v1.6.2` (Next): Isolated Sandbox Runtime MVP
+### `v1.6.2` (Current): Isolated Sandbox Runtime MVP
 - **Published Image Baseline**: an allow-listed build context, a multi-stage non-root image, a content scan before every push, and `ghcr.io` images with an SBOM and provenance, published from CI when a release is created.
-- **Hardened Docker Backend**: Read-only root filesystem, no network by default, all capabilities dropped, non-root user, and pid/memory/CPU limits. The OCI runtime is configurable: `runc` for local Docker Desktop verification, `runsc` (gVisor) on Linux hosts without code changes. The backend must pass every case in `conformance.CASES` before it can be enabled. Images are digest-pinned and can come from an internal registry, so no outbound network is needed.
+- **Hardened Docker Backend**: Read-only root filesystem, no network by default, all capabilities dropped, non-root user, and pid/memory/CPU limits. The OCI runtime is configurable: `runc` for local Docker Desktop verification, `runsc` (gVisor) on Linux hosts without code changes. The backend must pass every case in `conformance.CASES` and `conformance.HARDENING_CASES` before it can be enabled. Images are digest-pinned and can come from an internal registry, so no outbound network is needed.
 - **Narrow Scope**: Only the platform's own low-risk re-runs execute in the sandbox, behind a disabled-by-default feature flag. Agent run tools stay simulated.
-- **Platform-Verified Evidence**: Re-running tests inside the sandbox against the platform's pristine copy of the tests upgrades outcome evidence to `platform_verified`; dry-run replay can optionally re-execute inside the sandbox.
+- **Platform-Verified Evidence**: Re-running tests inside the sandbox against the platform's pristine copy of the tests produces a re-run record with `platform_verified`; the agent's outcome stays unchanged. Dry-run replay can optionally re-run the tests inside the sandbox.
 - **Before / After Runs**: the platform runs its own copy of the tests before and after applying the agent's change (the fail-to-pass / pass-to-pass practice of SWE-bench), so the baseline is no longer self-reported.
 - **Changed-Line Coverage**: reports whether the changed lines were executed by any test. A pass that never executes the change is recorded as weak evidence.
 - **Re-Run Contradiction Rule (shadow first)**: a platform re-run that contradicts the agent's report produces a finding, with retry and interpretation rules for flaky tests. It ships in `shadow` and is promoted only with benchmark evidence.
 - **Cost & Sampling**: re-run compute is recorded in the FinOps ledger, and sampling decides which runs are re-run.
 
-### `v1.6.3` (tentative number): Detection Measurement & Trajectory Evidence
+### `v1.6.3` (Next): Detection Measurement & Trajectory Evidence
 The detection work is independent of the sandbox. Every new detector ships in `shadow`; judges stay triage-only.
 - **Capability-Derived Gates** (moved from `v1.6.2` on 2026-11-12): tools declare what they can do (write, network access, personal data, destructive change) and the platform derives the required gates from the tools a request may use. Today `allow_destructive_actions`, `allow_pii_access` and `no_external_network` are declared by the requester, so they only gate honest requests. This must land before any tool with real side effects is enabled.
 - **Agent Tools in the Sandbox** (moved from `v1.6.2` on 2026-11-12): low-risk tools (`read_repo`, `run_tests`) and in-sandbox `stdio` MCP servers run for real, behind a disabled-by-default feature flag.
@@ -283,7 +292,7 @@ Customers are expected in Taiwan, the EU, the United States and Japan. The platf
 
 ## Re-baseline Notes (November 2026)
 
-Recorded on 2026-11-11, after `v1.6.0`. Nothing in this section is implemented yet.
+Recorded on 2026-11-11, after `v1.6.0`. `v1.6.1` and `v1.6.2` have shipped since; the later releases in this section are not implemented yet.
 
 ### What changed from the previous roadmap
 

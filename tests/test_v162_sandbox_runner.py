@@ -499,8 +499,11 @@ def test_ci_runs_both_runtimes_and_the_postgres_migration():
 def test_release_workflow_scans_the_sandbox_image_before_pushing_it():
     workflow = yaml.safe_load((ROOT / ".github/workflows/release-image.yml").read_text(encoding="utf-8"))["jobs"]
     assert any("rewardhacking-sandbox-python:scan" in step.get("run", "") for step in workflow["verify"]["steps"])
-    pushed = [step for step in workflow["publish"]["steps"] if step.get("with", {}).get("context") == "docker/sandbox-python"]
-    assert len(pushed) == 1 and pushed[0]["with"]["push"] is True and "-sandbox-python:" in pushed[0]["with"]["tags"]
+    steps = workflow["publish"]["steps"]
+    pushed = [step for step in steps if step.get("with", {}).get("context") == "docker/sandbox-python" and step["with"]["push"] is True]
+    assert len(pushed) == 1 and "-sandbox-python:" in pushed[0]["with"]["tags"]
+    scan = next(step for step in steps if "rewardhacking-sandbox-python:publish" in step.get("run", "") and "image_content_check.py" in step["run"])
+    assert steps.index(scan) < steps.index(pushed[0])
 
 
 def test_dependabot_upgrades_opentelemetry_packages_together():

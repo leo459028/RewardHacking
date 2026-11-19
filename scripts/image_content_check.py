@@ -10,6 +10,9 @@ on stdout. Exit codes: 0 no findings, 1 findings, 2 the image could not be read.
 Rules:
     secret_file      private key material, .env files or .git, in any layer
     secret_content   text under /app that matches the rules of scripts/security_check.py, in any layer
+    local_path       text under /app that names a developer's home directory, in any layer
+    unscanned_file   a file under /app too large for the two content rules, in any layer
+    config_secret    the image settings or build history match the rules of scripts/security_check.py
     app_tests        /app/tests in the final filesystem
     app_config       anything in /app/config except *.example.yaml in the final filesystem
     root_user        the image config runs as root (or names no user)
@@ -25,6 +28,7 @@ import argparse
 import fnmatch
 import json
 import posixpath
+import re
 import subprocess
 import sys
 import tarfile
@@ -37,7 +41,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from security_check import line_findings  # noqa: E402
 
-SECRET_NAME_PATTERNS = ("*.pem", "*.key", "*.p12", "id_rsa*", ".env*")
+SECRET_NAME_PATTERNS = ("*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore", "id_rsa*", ".env*")
+LOCAL_HOME = re.compile(r"(?:\b[A-Za-z]:[\\/]+|(?<![\w./-])/)Users[\\/]+[A-Za-z0-9._-]+")
 # Public CA bundles shipped by the base image and by certifi. They are checked for private keys instead.
 PUBLIC_CA_PREFIXES = ("/etc/ssl/certs/", "/usr/share/ca-certificates/")
 PUBLIC_CA_SUFFIXES = ("/certifi/cacert.pem",)
@@ -58,6 +63,7 @@ class Entry:
     layer: int
     is_dir: bool
     content: bytes | None = None
+    oversized: bool = False
 
 
 def normalize(name: str) -> str:
@@ -65,7 +71,7 @@ def normalize(name: str) -> str:
 
 
 def is_secret_name(path: str) -> bool:
-    name = PurePosixPath(path).name
+    name = PurePosixPath(path).name.lower()
     return any(fnmatch.fnmatchcase(name, pattern) for pattern in SECRET_NAME_PATTERNS)
 
 
@@ -94,7 +100,7 @@ def _read_layer(handle: Any, layer: int) -> tuple[list[Entry], list[str], list[s
                 if member.isreg() and member.size <= MAX_TEXT_BYTES and _keeps_content(path):
                     extracted = layer_tar.extractfile(member)
                     content = extracted.read() if extracted else None
-                entries.append(Entry(path, layer, member.isdir(), content))
+                entries.append(Entry(path, layer, member.isdir(), content, member.isreg() and member.size > MAX_TEXT_BYTES))
     return entries, whiteouts, opaque
 
 
@@ -163,9 +169,13 @@ def check_secrets(all_entries: list[Entry], view: dict[str, Entry]) -> list[dict
                 findings.append(_finding("secret_file", entry.path, "secret file name", **location))
             elif entry.content and PRIVATE_KEY_MARKER in entry.content:
                 findings.append(_finding("secret_file", entry.path, "private key in a CA bundle path", **location))
+        if entry.oversized and entry.path.startswith("/app/"):
+            findings.append(_finding("unscanned_file", entry.path, "too large to scan", **location))
         if entry.content and entry.path.startswith("/app/"):
             for line_no, name in _secret_rule_names(entry.content):
                 findings.append(_finding("secret_content", entry.path, f"line {line_no}: {name}", **location))
+            if b"\0" not in entry.content and LOCAL_HOME.search(entry.content.decode("utf-8", errors="ignore")):
+                findings.append(_finding("local_path", entry.path, "names a developer's home directory", **location))
     return findings
 
 
@@ -189,9 +199,21 @@ def check_user(config: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def check_config(config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Settings and build steps are published with the image, so a secret there leaks like one in a file."""
+    settings = config.get("config") or {}
+    labels = settings.get("Labels") or {}
+    values = {
+        **{f"Env[{index}]": str(item) for index, item in enumerate(settings.get("Env") or [])},
+        **{f"Labels[{key}]": str(value) for key, value in labels.items()},
+        **{f"history[{index}]": str(item.get("created_by") or "") for index, item in enumerate(config.get("history") or [])},
+    }
+    return [_finding("config_secret", "image config", f"{where}: {name}") for where, text in values.items() for name in line_findings(text)]
+
+
 def scan_archive(archive: Path, image: str = "") -> dict[str, Any]:
     config, all_entries, view = read_image(archive)
-    findings = check_secrets(all_entries, view) + check_final_filesystem(view) + check_user(config)
+    findings = check_secrets(all_entries, view) + check_final_filesystem(view) + check_user(config) + check_config(config)
     return {
         "image": image or archive.name,
         "status": "fail" if findings else "pass",

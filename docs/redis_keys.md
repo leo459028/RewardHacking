@@ -1,6 +1,6 @@
 # Redis Keyspace & Rate Limiting
 
-> **Specification Version**: `v1.5.7`
+> **Specification Version**: `v1.6.2`
 > **Redis Client**: `redis-py` (asyncio)
 > **Default URI**: `redis://localhost:6379/0`
 

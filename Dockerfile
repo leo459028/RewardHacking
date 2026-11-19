@@ -34,6 +34,9 @@ ENV HOME=/tmp
 RUN groupadd --gid 10001 app && \
     useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin app
 
+# Nothing installs packages at run time, so the base image's pip is only attack surface.
+RUN python -m pip uninstall -y pip && rm -rf /usr/local/lib/python3.12/ensurepip
+
 # Root owns the program files, so the application user cannot change them.
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /staging/ /app/

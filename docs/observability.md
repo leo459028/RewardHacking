@@ -1,6 +1,6 @@
 # Observability, Metrics & SLOs
 
-> **Observability Baseline**: `v1.6.0` (W3C Trace Context, optional OpenTelemetry export)
+> **Observability Baseline**: `v1.6.2` (W3C Trace Context, optional OpenTelemetry export, sandbox gauges)
 > **Metrics Engine**: Prometheus Client  
 > **Endpoint**: `GET /v1/metrics`
 

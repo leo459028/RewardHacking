@@ -176,6 +176,16 @@ def test_release_workflow_scans_before_it_pushes():
     assert jobs["publish"]["needs"] == "verify"
 
 
+def test_publish_job_pushes_only_the_images_it_scanned():
+    steps = _workflow("release-image.yml")["jobs"]["publish"]["steps"]
+    scans = [index for index, step in enumerate(steps) if "image_content_check.py" in step.get("run", "")]
+    pushes = [index for index, step in enumerate(steps) if step.get("with", {}).get("push") is True]
+    assert len(scans) == 2 and len(pushes) == 2 and max(scans) < min(pushes)
+    assert not [step["name"] for step in steps if "cache-from" in step.get("with", {})]
+    confirm = next(step for step in steps if step.get("name") == "Confirm the published images are the scanned images")
+    assert steps.index(confirm) > max(pushes) and ".RootFS.Layers" in confirm["run"]
+
+
 def test_manual_runs_never_push():
     jobs = _workflow("release-image.yml")["jobs"]
     assert jobs["publish"]["if"] == "github.event_name == 'release'"
@@ -187,8 +197,8 @@ def test_manual_runs_never_push():
 def test_publish_job_tags_sbom_and_provenance():
     publish = _workflow("release-image.yml")["jobs"]["publish"]
     assert publish["permissions"] == {"contents": "read", "packages": "write"}
-    step = next(s for s in publish["steps"] if "build-push-action" in s.get("uses", ""))
-    assert step["with"]["push"] is True and step["with"]["sbom"] is True
+    step = next(s for s in publish["steps"] if s.get("with", {}).get("push") is True)
+    assert step["with"]["sbom"] is True
     assert step["with"]["provenance"] == "mode=max"
     assert "github.event.release.tag_name" in step["with"]["tags"] and ":latest" in step["with"]["tags"]
 
@@ -224,6 +234,7 @@ def test_release_compose_uses_the_image_read_only():
         service = services[name]
         assert "build" not in service and service["image"].startswith("${RH_IMAGE:-ghcr.io/")
         assert service["read_only"] is True and service["tmpfs"] == ["/tmp"]
+        assert service["cap_drop"] == ["ALL"] and service["security_opt"] == ["no-new-privileges:true"]
         assert "./config:/app/config:ro" in service["volumes"]
 
 
@@ -333,6 +344,40 @@ MOCK_PASSWORD_LINE = "password" + " = 'mock-value-123'"
 def test_mock_password_and_binary_content_pass(tmp_path):
     files = {**CLEAN, "app/fixture.py": MOCK_PASSWORD_LINE.encode(), "app/blob.bin": b"\0" + FAKE_ACCESS_KEY.encode()}
     assert scan.scan_archive(_archive(tmp_path, [files]))["findings"] == []
+
+
+@pytest.mark.parametrize("name", ["app/signing.pfx", "app/store.jks", "app/release.keystore", "app/UPPER.PEM"])
+def test_more_key_file_types_fail_the_image_scan(tmp_path, name):
+    assert "secret_file" in _rules(scan.scan_archive(_archive(tmp_path, [{**CLEAN, name: b"x"}])))
+
+
+@pytest.mark.parametrize("path", ["C:" + "\\Users\\someone\\project", "D:" + "/Users/someone/x", "/Users/someone/x"])
+def test_a_developer_home_path_fails_the_image_scan(tmp_path, path):
+    files = {**CLEAN, "app/report.md": f"saved to {path}\n".encode()}
+    assert "local_path" in _rules(scan.scan_archive(_archive(tmp_path, [files])))
+
+
+def test_an_app_file_too_large_to_read_fails_the_image_scan(tmp_path):
+    files = {**CLEAN, "app/huge.txt": b"x" * (scan.MAX_TEXT_BYTES + 1)}
+    assert "unscanned_file" in _rules(scan.scan_archive(_archive(tmp_path, [files])))
+
+
+@pytest.mark.parametrize(
+    "section",
+    [{"Env": [f"OPENAI_API_KEY={FAKE_TOKEN}"]}, {"Labels": {"note": FAKE_TOKEN}}],
+)
+def test_a_secret_in_the_image_config_fails_the_scan(section):
+    assert [item["rule"] for item in scan.check_config({"config": section})] == ["config_secret"]
+
+
+def test_a_secret_in_the_build_history_fails_the_scan():
+    config = {"config": {}, "history": [{"created_by": f"RUN /bin/sh -c echo {FAKE_TOKEN}"}]}
+    assert [item["rule"] for item in scan.check_config(config)] == ["config_secret"]
+
+
+def test_the_base_image_settings_pass_the_config_scan():
+    config = {"config": {"Env": ["PATH=/usr/bin", "GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305"], "Labels": None}, "history": [{"created_by": "RUN pip install x"}]}
+    assert scan.check_config(config) == []
 
 
 def test_a_token_marked_as_mock_still_fails_the_image_scan(tmp_path):
