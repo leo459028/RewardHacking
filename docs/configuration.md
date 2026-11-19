@@ -35,7 +35,7 @@ Application configuration is loaded from environment variables and local `.env` 
 | `INCIDENT_RESPONSE_TARGET_SECONDS` | `900` | SLO target for incident acknowledgment and resolution |
 | `LLM_JUDGE_ENABLED` | `false` | Enables external LLM judge; uses deterministic rubrics if false |
 | `AUTH_ENABLED` | `false` | Enables mandatory `X-API-Key` authentication |
-| `API_KEYS` | `demo-key:default:admin` | Bootstrap fallback API keys (`key:tenant:role`) |
+| `API_KEYS` | `demo-key:default` (role admin) | Bootstrap fallback API keys (`key:tenant:role`, role defaults to `admin`). The default is a public development key: in production set it to an empty value, because leaving it unset keeps `demo-key` working whenever `AUTH_ENABLED=true` (the `bootstrap_keys_in_prod` operations check fails) |
 | `DASHBOARD_AUTH_ENABLED` | `false` | `v1.6.1`: only used to derive `DASHBOARD_AUTH_MODE` when that is unset (`true` → `session`, `false` → `off`). HTTP Basic Auth was removed |
 | `DASHBOARD_AUTH_MODE` | *(derived)* | `v1.6.1`: `off` (no sign-in; a synthetic `local-admin`; local development only, the operations check fails in `APP_ENV=prod`) or `session` (personal accounts and server-side sessions). Create the first admin with `python -m app.jobs.users create --username <name> --role admin --password-env <VAR>` |
 | `DASHBOARD_COOKIE_SECURE` | `auto` | `auto` sets the `Secure` attribute on the `rh_session` cookie unless `APP_ENV=dev`; `true` / `false` force it |

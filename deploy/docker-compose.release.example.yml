@@ -9,6 +9,9 @@ x-app: &app
     POSTGRES_DSN: postgresql+asyncpg://app:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/app
     REDIS_URL: redis://redis:6379/0
     KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    # Unset, API_KEYS falls back to the well-known development key `demo-key` (tenant `default`, role admin).
+    # Keep it empty and create hashed tenant keys from the Dashboard or /v1/tenants/{tenant_id}/api-keys.
+    API_KEYS: ${API_KEYS:-}
   read_only: true
   cap_drop:
     - ALL

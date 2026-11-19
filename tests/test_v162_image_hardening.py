@@ -263,6 +263,15 @@ def test_release_compose_has_no_literal_password():
     assert "${POSTGRES_PASSWORD:?" in services["api"]["environment"]["POSTGRES_DSN"]
 
 
+def test_release_compose_keeps_bootstrap_api_keys_empty():
+    # Unset, API_KEYS falls back to the public development key, so the example must pass an empty default.
+    services = yaml.safe_load(_read("deploy/docker-compose.release.example.yml"))["services"]
+    for name in ("api", "worker"):
+        assert services[name]["environment"]["API_KEYS"] == "${API_KEYS:-}"
+    guide = _read("docs/deployment.md")
+    assert "| `API_KEYS` | Yes: empty |" in guide and "bootstrap_keys_in_prod" in guide
+
+
 def test_deployment_guide_covers_the_published_image():
     guide = _read("docs/deployment.md")
     for phrase in ("## Using the Published Image", "RH_AUTO_MIGRATE", "AUDIT_CHAIN_SIGNING_KEY_FILE", "app.jobs.users create",

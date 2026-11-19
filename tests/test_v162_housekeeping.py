@@ -49,14 +49,15 @@ def test_skills_point_to_the_release_and_phase_rules():
 def test_roadmap_moves_capability_gates_to_the_next_release():
     roadmap = _read("docs/roadmap.md")
     current = _section(roadmap, "### `v1.6.2` (Current)", "### `v1.6.3` (Next)")
-    following = roadmap.split("### `v1.6.3` (Next)", 1)[1].split("\n### ", 1)[0]
+    # The v1.6.3 security patch (2026-11-19) moved the detection theme, with the gates, to v1.6.4.
+    following = roadmap.split("### `v1.6.4`: Detection Measurement", 1)[1].split("\n### ", 1)[0]
     assert "Capability-Derived Gates" not in current and "`stdio` MCP" not in current
     assert "Capability-Derived Gates" in following and "`stdio` MCP" in following
 
 
 def test_security_known_boundary_names_the_new_release_for_capability_gates():
     security = _read("docs/security.md")
-    assert "instead of requester-declared constraints for `v1.6.3`" in security
+    assert "instead of requester-declared constraints for `v1.6.4`" in security
 
 
 def test_starlette_httpx_deprecation_is_an_error():
