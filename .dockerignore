@@ -8,5 +8,6 @@
 !README.md
 !LICENSE
 !config/*.example.yaml
+!docker/sandbox-python/third_party_notices.py
 **/__pycache__
 **/*.pyc

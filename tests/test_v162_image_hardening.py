@@ -28,6 +28,7 @@ ALLOW_LIST = [
     "!README.md",
     "!LICENSE",
     "!config/*.example.yaml",
+    "!docker/sandbox-python/third_party_notices.py",  # v1.6.2: builds the third-party notices; removed after use
 ]
 SHA_PINNED = re.compile(r"^[\w.-]+/[\w.-]+@[0-9a-f]{40}$")
 

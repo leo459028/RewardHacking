@@ -41,6 +41,16 @@ RUN python -m pip uninstall -y pip && rm -rf /usr/local/lib/python3.12/ensurepip
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /staging/ /app/
 
+# Third-party notices of exactly what ships (docs/third_party_licenses.md); fails on an unreviewed copyleft package.
+COPY docker/sandbox-python/third_party_notices.py /tmp/third_party_notices.py
+RUN /opt/venv/bin/python /tmp/third_party_notices.py --image rewardhacking --out /licenses/THIRD_PARTY_NOTICES.txt && \
+    rm /tmp/third_party_notices.py && ln -s /licenses/THIRD_PARTY_NOTICES.txt /app/THIRD_PARTY_NOTICES.txt
+
+LABEL org.opencontainers.image.title="RewardHacking" \
+      org.opencontainers.image.description="Guardrail and governance control plane for autonomous AI agents. Contains third-party open-source software: see /licenses/THIRD_PARTY_NOTICES.txt." \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.source="https://github.com/leo459028/RewardHacking"
+
 WORKDIR /app
 USER 10001:10001
 
