@@ -360,7 +360,7 @@ def test_more_key_file_types_fail_the_image_scan(tmp_path, name):
     assert "secret_file" in _rules(scan.scan_archive(_archive(tmp_path, [{**CLEAN, name: b"x"}])))
 
 
-@pytest.mark.parametrize("path", ["C:" + "\\Users\\someone\\project", "D:" + "/Users/someone/x", "/Users/someone/x"])
+@pytest.mark.parametrize("path", ["C:" + "\\Users\\someone\\project", "D:" + "/Users/" + "someone/x", "/Users/" + "someone/x", "/home/" + "someone/x"])
 def test_a_developer_home_path_fails_the_image_scan(tmp_path, path):
     files = {**CLEAN, "app/report.md": f"saved to {path}\n".encode()}
     assert "local_path" in _rules(scan.scan_archive(_archive(tmp_path, [files])))

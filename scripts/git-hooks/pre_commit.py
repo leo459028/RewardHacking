@@ -16,7 +16,11 @@ ALLOWED_ENV_FILES = (".env.example",)
 KEY_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".jks", ".keystore")
 _ENV_RE = re.compile(r"(^|/)\.env(\.[^/]+)?$")
 _KEY_NAME_RE = re.compile(r"(^|/)id_rsa[^/]*$")
-_HOME_RE = re.compile(r"\b[A-Za-z]:[\\/]+Users[\\/]+(?!me\b)[A-Za-z0-9._-]+")
+# Windows, Git Bash, macOS and Linux home directories; placeholder names pass.
+_HOME_RE = re.compile(
+    r"(?:\b[A-Za-z]:[\\/]+Users[\\/]+|(?<![\w.-])/c/Users/|(?<![\w.-])/Users/|(?<![\w.-])/home/)"
+    r"(?!(?:me|runner|user|username|app)\b)[A-Za-z0-9._-]+"
+)
 
 
 def is_forbidden(path: str) -> bool:
@@ -33,7 +37,7 @@ def is_forbidden(path: str) -> bool:
 
 
 def names_local_home(diff: str) -> bool:
-    """True when an added line holds a Windows home directory: the repository is public."""
+    """True when an added line holds a developer's home directory: the repository is public."""
     return any(line.startswith("+") and not line.startswith("+++") and _HOME_RE.search(line) for line in diff.splitlines())
 
 

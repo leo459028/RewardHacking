@@ -84,7 +84,10 @@ def test_agents_md_has_the_review_table_and_hook_setup():
 # ---------------------------------------------------------------------------
 
 DENIED_COMMANDS = ["git reset --hard *", "git clean *", "git checkout -- *", "git push --force*", "git push -f *",
-                   "git stash drop *", "git stash clear *", "git branch -D *"]
+                   "git stash drop *", "git stash clear *", "git branch -D *",
+                   # v1.6.2 P5: a "+" refspec forces a push without --force; deleting remote refs, the repository or a release
+                   "git push * +*", "git push --mirror*", "git push * --mirror*", "git push * --delete *", "git push * -d *",
+                   "git push * :*", "gh repo delete*", "gh release delete*"]
 
 
 @pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
@@ -106,7 +109,7 @@ def test_push_and_merge_ask_first(tool):
 
 def test_release_creation_stays_authorized():
     permissions = _settings()["permissions"]
-    assert not [rule for rule in permissions["deny"] + permissions["ask"] if "gh release" in rule]
+    assert not [rule for rule in permissions["deny"] + permissions["ask"] if "gh release create" in rule or rule.endswith("(gh release *)")]
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +287,16 @@ def test_pre_commit_refuses_an_added_home_directory_path():
     assert pre_commit.names_local_home(f"+saved to {home}\n")
     assert not pre_commit.names_local_home(f"-saved to {home}\n")
     assert not pre_commit.names_local_home("+path = 'C:" + "\\\\Users\\\\me'\n")
+
+
+@pytest.mark.parametrize("path", ["/Users/" + "alice/project", "/home/" + "alice/project", "/c/Users/" + "alice/x"])
+def test_pre_commit_refuses_macos_linux_and_git_bash_homes(path):
+    assert pre_commit.names_local_home(f"+saved to {path}\n")
+
+
+@pytest.mark.parametrize("path", ["/home/" + "runner/work", "/Users/" + "me/x", "https://example.com/Users/" + "alice", "/app/home/" + "x"])
+def test_pre_commit_allows_placeholders_and_non_home_paths(path):
+    assert not pre_commit.names_local_home(f"+see {path}\n")
 
 
 def test_pre_commit_shell_wrapper_calls_the_python_check():

@@ -125,11 +125,11 @@ These checks run around coding agents and commits. Product behaviour does not de
 
 | Check | When it runs | What it does |
 | :--- | :--- | :--- |
-| `.claude/settings.json` deny rules | Claude Code tool calls | Refuses destructive git commands (`git reset --hard`, `git clean`, `git checkout -- <path>`, force pushes, `git stash drop` / `clear`, `git branch -D`) and reading `.env.e2e` or `config/*.pem` |
+| `.claude/settings.json` deny rules | Claude Code tool calls | Refuses destructive git commands (`git reset --hard`, `git clean`, `git checkout -- <path>`, force pushes including `+` refspecs, pushes that delete or mirror remote refs, `git stash drop` / `clear`, `git branch -D`, `gh repo delete`, `gh release delete`) and reading `.env.e2e` or `config/*.pem` |
 | `.claude/settings.json` ask rules | Claude Code tool calls | Asks before `git push`, `gh pr merge` and reading or editing `.env` |
 | `scripts/hooks/post_edit_lint.py` | After `Edit` / `Write` on a Python file under `app/`, `tests/` or `scripts/` | Runs `ruff check` on that file and shows errors to the agent (exit 2) |
 | `scripts/hooks/stop_check.py` | When the agent ends a turn with Python changes | Runs `ruff check` on the changed files, `git diff --check` and, when `app/` changed, `lint-imports`; exit 2 keeps the agent working. It passes when `stop_hook_active` is set or after 30 seconds |
-| `scripts/git-hooks/pre-commit` | Every `git commit` in a clone that enabled it | Refuses `docs/plan/`, `docs/handoff.md`, `.env*` (except `.env.example`), private key files (`*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `id_rsa*`), `config/judge_profiles.yaml` and added lines that name a Windows home directory, and runs `git diff --cached --check` |
+| `scripts/git-hooks/pre-commit` | Every `git commit` in a clone that enabled it | Refuses `docs/plan/`, `docs/handoff.md`, `.env*` (except `.env.example`), private key files (`*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `id_rsa*`), `config/judge_profiles.yaml` and added lines that name a home directory (Windows, Git Bash, macOS or Linux; placeholder names pass), and runs `git diff --cached --check` |
 
 Enable the pre-commit check once per clone:
 

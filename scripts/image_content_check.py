@@ -42,7 +42,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from security_check import line_findings  # noqa: E402
 
 SECRET_NAME_PATTERNS = ("*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore", "id_rsa*", ".env*")
-LOCAL_HOME = re.compile(r"(?:\b[A-Za-z]:[\\/]+|(?<![\w./-])/)Users[\\/]+[A-Za-z0-9._-]+")
+LOCAL_HOME = re.compile(
+    r"(?:\b[A-Za-z]:[\\/]+Users[\\/]+|(?<![\w./-])/Users/|(?<![\w./-])/home/)(?!(?:me|runner|user|username|app)\b)[A-Za-z0-9._-]+"
+)
 # Public CA bundles shipped by the base image and by certifi. They are checked for private keys instead.
 PUBLIC_CA_PREFIXES = ("/etc/ssl/certs/", "/usr/share/ca-certificates/")
 PUBLIC_CA_SUFFIXES = ("/certifi/cacert.pem",)

@@ -137,7 +137,10 @@ def test_opentelemetry_pins_match_and_include_the_traceparent_fix():
 def test_tracked_files_hold_no_local_user_paths():
     """The repository is public: a developer's home directory must not reach it through reports or logs."""
     tracked = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True).stdout.decode("utf-8").split("\0")
-    home = re.compile(r"(?:\b[A-Za-z]:[\\/]+|(?<![\w.-])/c/)Users[\\/]+(?!me\b)[A-Za-z0-9._-]+")
+    home = re.compile(
+        r"(?:\b[A-Za-z]:[\\/]+Users[\\/]+|(?<![\w.-])/c/Users/|(?<![\w.-])/Users/|(?<![\w.-])/home/)"
+        r"(?!(?:me|runner|user|username|app)\b)[A-Za-z0-9._-]+"
+    )
     leaks = []
     for name in filter(None, tracked):
         path = ROOT / name
