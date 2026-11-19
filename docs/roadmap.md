@@ -271,7 +271,7 @@ Customers are expected in Taiwan, the EU, the United States and Japan. The platf
 - **SIEM Export**: governance events, incidents and review decisions as syslog, CEF or JSON webhooks.
 - **Notifications**: SMTP, Microsoft Teams and a generic HMAC-signed webhook. Messages carry IDs and priority only, never evidence.
 - **CI Integration Kit**: templates for self-managed GitLab CI, Jenkins, Azure DevOps and GitHub Actions plus a CLI that collects the diff and test report, signs a DSSE attestation, submits the outcome and writes the verdict back as a merge check. The check can only block a merge; it never approves one.
-- **Offline / On-Prem Bundle**: image archive, pinned packages, SBOM, signed images and a backup / restore drill script.
+- **Offline / On-Prem Bundle**: image archive, hash-locked Python dependencies for reproducible images, SBOM, signed images, a separate database account for migrations, and a backup / restore drill script.
 
 ---
 

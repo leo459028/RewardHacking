@@ -137,6 +137,8 @@ docker compose run --rm -e RH_AUTO_MIGRATE=false api alembic upgrade head
 
 The `worker` never runs migrations.
 
+Automatic migration means the API's database account can change the schema. Where that is not acceptable, set `RH_AUTO_MIGRATE=false` everywhere, run the one-off job above with an account that owns the schema, and give the API and the worker an account that can only read and write rows. A separate migration account is planned for the `v1.6.5` installer.
+
 ### 5. Create the First Administrator
 
 There is no default account. Create the first admin from the command line ([`runbook.md`](runbook.md) §13); the password is read from an environment variable and must be changed at first sign-in:
