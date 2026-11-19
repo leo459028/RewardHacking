@@ -74,16 +74,18 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 ## Using the Published Image
 
-Each GitHub Release publishes one image for `linux/amd64`:
+Each GitHub Release publishes two public images for `linux/amd64`: the application, and the sandbox image that platform re-runs execute in.
 
 ```text
 ghcr.io/leo459028/rewardhacking:vX.Y.Z
 ghcr.io/leo459028/rewardhacking:latest
+ghcr.io/leo459028/rewardhacking-sandbox-python:vX.Y.Z
+ghcr.io/leo459028/rewardhacking-sandbox-python:latest
 ```
 
 `vX.Y.Z` names one release. `latest` follows the release GitHub marks as Latest (never a prerelease or a later fix of an older series), so production deployments should pin a version or, better, a digest (`ghcr.io/leo459028/rewardhacking@sha256:...`).
 
-**The image contains no secrets, signing keys, default accounts, local configuration or tests.** It runs as UID / GID `10001`, and root owns the program files. `scripts/image_content_check.py` scans every image before it is pushed.
+**The image contains no secrets, signing keys, default accounts, local configuration or tests.** It runs as UID / GID `10001`, and root owns the program files. `scripts/image_content_check.py` scans every image before it is pushed. The images also contain third-party open-source software; [`third_party_licenses.md`](third_party_licenses.md) lists where its license texts are and how to obtain its source.
 
 ### 1. Prepare a Directory
 

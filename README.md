@@ -278,4 +278,4 @@ We welcome contributions! Please review our:
 
 ## License
 
-This project is licensed under the [Apache License, Version 2.0](LICENSE).
+This project is licensed under the [Apache License, Version 2.0](LICENSE). The published container images also contain third-party open-source software under its own licenses; see [`docs/third_party_licenses.md`](docs/third_party_licenses.md).
