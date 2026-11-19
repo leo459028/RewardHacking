@@ -294,3 +294,8 @@ CHANGE_REQUESTS_TOTAL = Counter(
     "Change request transitions (created, approved, rejected, executed, failed, expired, cancelled), by action",
     ["action", "status"],
 )
+
+# v1.6.2 sandbox runtime: read from the database at scrape time (app/services/verification/metrics.py)
+SANDBOX_JOBS = Gauge("sandbox_jobs", "Sandbox jobs currently stored, by kind and status", ["kind", "status"])
+VERIFICATION_RUNS = Gauge("verification_runs", "Platform re-runs currently stored, by status", ["status"])
+SANDBOX_CONFORMANCE_PASSED = Gauge("sandbox_conformance_passed", "1 when the latest sandbox conformance run passed")

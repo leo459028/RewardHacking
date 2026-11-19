@@ -1,6 +1,6 @@
 # REST API Specification
 
-> **API Version**: `v1.6.0`
+> **API Version**: `v1.6.2`
 > **Base Path**: `/v1`  
 > **Interactive Documentation**: `http://localhost:8000/docs` (Swagger UI) or `http://localhost:8000/redoc` (ReDoc)
 
@@ -63,7 +63,9 @@ All REST API endpoints are exposed under the `/v1` route prefix. The service ret
 | `GET` | `/v1/runs/{run_id}/replay-bundle` | Exports a self-contained, reproducible replay bundle for offline audit | `viewer`, `operator`, `admin` |
 | `GET` | `/v1/runs/{run_id}/checkpoints` | Lists submit/resume checkpoints associated with the run | `viewer`, `operator`, `admin` |
 | `POST` | `/v1/runs/{run_id}/resume` | Creates a resume checkpoint and re-publishes the run to Kafka queue | `operator`, `admin` |
-| `POST` | `/v1/runs/{run_id}/replay` | Triggers a dry-run replay attempt without external side-effects | `operator`, `admin` |
+| `POST` | `/v1/runs/{run_id}/replay` | Triggers a dry-run replay attempt without external side-effects. `v1.6.2`: `sandbox_rerun: true` also re-runs the tests in the sandbox (see below) | `operator`, `admin` |
+
+**Sandbox re-run on replay** (`v1.6.2`): send `{"mode": "dry_run", "sandbox_rerun": true}`. The field is accepted by the API but is not listed in the generated OpenAPI schema, which keeps the published `v1.5.12` contract of this endpoint unchanged. The replay creates a platform re-run with `trigger: "replay"`: the attempt is `queued` with `result_payload.verification_id` and ends as `completed` (or `failed` when the re-run failed). A re-run held back by the daily cap completes the attempt at once with `result_payload.verification_status: "skipped"` and its `skip_reason`. Only the platform's tests run again: agent tool calls are not repeated (`limitations.automatic_external_execution: false`), nothing is dispatched or published, and no token lease is touched. `409 sandbox_rerun_unavailable` when the execution gate is closed, or the run has no bound suite or no outcome.
 
 Since `v1.6.0`, `GET /v1/runs/{run_id}` and its sub-resources (`trace`, `replay-bundle`, `execution-plan`, `checkpoints`, `worker-attempts`, `tool-executions`, `incidents`, `outcome(s)`, `resume`, `replay`, DLQ `requeue` / `resolve`) answer **`410`** for a run removed by a retention purge:
 
@@ -158,7 +160,17 @@ The tombstone is tenant-scoped like the run (another tenant's key gets `403 tena
 | `POST` | `/v1/operations/release-gates` | Creates an auditable release gate snapshot | `admin` |
 | `GET` | `/v1/observability/summary` | Worker, incident, approval, evaluator, SLO and FinOps summary | `viewer`, `operator`, `admin` |
 | `GET` | `/v1/observability/tracing` | `v1.6.0`: W3C propagation and OTel export status (exporter host only), dropped attribute count | `viewer`, `operator`, `admin` |
-| `GET` | `/v1/sandbox/status` | `v1.6.0`: configured sandbox backend, capabilities, record-only isolation policy and conformance smoke results (`status` `pass` / `fail`, never `500`) | `viewer`, `operator`, `admin` |
+| `GET` | `/v1/sandbox/status` | Configured sandbox backend, capabilities, isolation policy and smoke results (`status` `pass` / `fail`, never `500`). `v1.6.2` adds `gate` (`ready`, `reasons`, `fingerprint`, `latest_run_id`, `relaxed_high_risk`) and `runners` (live heartbeats) | `viewer`, `operator`, `admin` |
+| `POST` | `/v1/sandbox/conformance` | `v1.6.2`: queues a full conformance run for `sandbox-runner` (`202` with `job` and `created`; an active run is returned instead of a new one). `409 sandbox_execution_disabled` unless `SANDBOX_BACKEND=docker` and `SANDBOX_EXECUTION_ENABLED=true` | `admin` |
+| `GET` | `/v1/sandbox/conformance` | `v1.6.2`: conformance history with the result of every case (`limit`, default 20) | `admin`, `auditor` |
+| `POST` | `/v1/verification-suites` | `v1.6.2`: multipart upload of a suite snapshot (`file` as `tar.gz`, `name`, optional `tenant_id`, `base_ref`, `image_name`, `test_command` and `test_paths` as JSON arrays). `201` with the suite, or `202` with a change request while `verification_suite.publish` is in `DUAL_CONTROL_ACTIONS`. Unsafe archives answer `422` with their own code (`artifact_symlink_rejected`, `artifact_hardlink_rejected`, `artifact_special_file_rejected`, `artifact_absolute_path_rejected`, `artifact_path_traversal_rejected`, `artifact_path_too_long`, `artifact_reserved_path`, `artifact_duplicate_path`, `artifact_path_conflict`, `artifact_too_many_files`, `artifact_empty`, `artifact_invalid_archive`); too large answers `413 artifact_too_large` | `admin`, `tenant_admin` |
+| `GET` | `/v1/verification-suites` | `v1.6.2`: suites of the tenant, with `default_suite_id` | `admin`, `tenant_admin`, `reviewer`, `auditor` |
+| `GET` | `/v1/verification-suites/{suite_id}` | `v1.6.2`: one suite | `admin`, `tenant_admin`, `reviewer`, `auditor` |
+| `POST` | `/v1/verification-suites/{suite_id}/disable` | `v1.6.2`: disables a suite and clears it as the tenant default; new runs can no longer name it | `admin`, `tenant_admin` |
+| `POST` | `/v1/verification-suites/{suite_id}/default` | `v1.6.2`: makes the suite the tenant default for `code_fix` runs; `enabled=false` clears it | `admin`, `tenant_admin` |
+| `GET` | `/v1/runs/{run_id}/verifications` | `v1.6.2`: platform re-runs of a run with `assurance_level`, `assurance_note` and the shadow `RV-*` `findings` (`signal_usage: "monitor_only"`). `platform_verified` means the platform produced the report inside the sandbox from the tests it keeps; it is not tamper-proof evidence and does not mean the tests passed (`docs/evaluation.md` section 17.5). `GET /v1/runs/{run_id}/outcomes` keeps its `v1.5.12` shape and does not carry this level | `admin`, `tenant_admin`, `reviewer`, `auditor` |
+| `POST` | `/v1/runs/{run_id}/verifications` | `v1.6.2`: re-runs the latest outcome (`202`). A daily cap or a closed gate answers with a `skipped` record and its `skip_reason`. `409 verification_suite_missing` or `409 verification_outcome_missing` when there is nothing to re-run | `admin`, `tenant_admin`, `reviewer` |
+| `GET` | `/v1/verifications/{verification_id}` | `v1.6.2`: before / after results, test classes, changed-line coverage and discarded test changes | `admin`, `tenant_admin`, `reviewer`, `auditor` |
 | `GET` | `/v1/incidents` | Lists safety incidents and policy denials | `viewer`, `operator`, `admin` |
 | `GET` | `/v1/worker/dlq` | Lists worker attempts routed to dead letter queue | `viewer`, `operator`, `admin` |
 | `POST` | `/v1/worker/dlq/{run_id}/requeue` | Requeues a DLQ run (`status="queued"`) and republishes `agent.requested` | `operator`, `admin` |
@@ -405,3 +417,7 @@ Served by `app/api/routers/evaluations.py` (and the judge option on `POST /v1/be
 | `409` | `legal_hold_not_active` | Release of an already released hold |
 | `413` / `415` / `422` | `inspect_import_too_large` / `inspect_import_unsupported_format` / `inspect_import_invalid_json` | Inspect import limits (`.eval` archives are rejected) |
 | `500` | `internal_error` | Internal server or unhandled exception |
+
+### Binding a Run to a Verification Suite (`v1.6.2`)
+
+`POST /v1/agent/submit` accepts `metadata.verification_suite_id` for a `code_fix` run. The suite must exist, be active and belong to the run's tenant; otherwise the request answers `422 verification_suite_invalid`. Without the field, a `code_fix` run is bound to the tenant default, if one is set. The outcome cannot name or change the suite.

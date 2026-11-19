@@ -36,7 +36,7 @@ All contributors and participants are expected to adhere to our [Code of Conduct
 
 3. **Install dependencies**:
    ```bash
-   pip install -r requirements.txt
+   pip install -r requirements-dev.txt
    ```
 
 4. **Set up local environment variables**:

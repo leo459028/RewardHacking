@@ -1,6 +1,6 @@
 # Redis Keyspace & Rate Limiting
 
-> **Specification Version**: `v1.5.7`
+> **Specification Version**: `v1.6.2`
 > **Redis Client**: `redis-py` (asyncio)
 > **Default URI**: `redis://localhost:6379/0`
 
@@ -28,9 +28,10 @@ Redis serves as the high-throughput, low-latency ephemeral datastore in **Reward
 | `tenant:{tenant_id}:user:{user_id}:quota:requests:{YYYYMMDDHHMM}` | String (Int) | 120s | Sliding-window per-user request counter per minute (`USER_REQUEST_LIMIT_PER_MINUTE`) |
 | `tenant:{tenant_id}:tool:{tool_name}:quota:calls:{YYYYMMDDHHMM}` | String (Int) | 120s | Sliding-window per-tool invocation counter per minute (`TOOL_CALL_LIMIT_PER_MINUTE`) |
 | `tenant:{tenant_id}:lease:{run_id}` | String (JSON) | 900s (default) | Dynamic Token Broker pre-execution budget lease (`FINOPS_TOKEN_LEASE_TTL_SECONDS`) |
-| `circuit:tool:{tool_name}` | String (`open`/`closed`) | 300s (default) | Tool circuit breaker state (`TOOL_BREAKER_TTL_SECONDS`) |
-| `breaker:{tool_name}:failures` | String (Int) | 300s | Consecutive worker failure counter for automatic circuit breaker tripping (`TOOL_BREAKER_FAILURE_THRESHOLD`) |
+| `breaker:{tool_name}` | String (JSON) | `TOOL_BREAKER_TTL_SECONDS` | Open tool circuit breaker (status, reason, expiry); the key is absent while the breaker is closed |
+| `breaker_failures:{tool_name}:{five_minute_bucket}` | String (Int) | 300s | Worker failures in the current five-minute bucket for automatic circuit breaker tripping (`TOOL_BREAKER_FAILURE_THRESHOLD`) |
 | `tenant:{tenant_id}:quota:mcp:{mcp_server_id}:calls:{YYYYMMDDHHMM}` | String (Int) | 120s | `v1.5.7` per-MCP-server fixed-window (minute bucket) call counter; one increment per requested tool bound to the server (`quota_per_minute` or `MCP_SERVER_CALL_LIMIT_PER_MINUTE`) |
+| `sandbox:runner:{runner_id}:heartbeat` | String (JSON) | 60s | `v1.6.2` `sandbox-runner` heartbeat, written every 15 s: state, runtime, Docker version, current job. No key means no live runner |
 | `circuit:mcp:{mcp_server_id}` | String (JSON) | `TOOL_BREAKER_TTL_SECONDS` | `v1.5.7` MCP server circuit breaker; kept in a separate namespace so tool breaker listings (`breaker:*`) never include MCP servers |
 | `idempotency:run:{run_id}:worker:{attempt}` | String | 86,400s (24h) | Worker execution attempt deduplication lock |
 
@@ -49,5 +50,6 @@ The circuit breaker halts unsupervised invocations of a malfunctioning or abused
 - **Tripping Condition**: Automatically tripped when consecutive worker failures for a given tool reach `TOOL_BREAKER_FAILURE_THRESHOLD` (default `3`), or manually tripped via `POST /v1/control-plane/tools/{tool_name}/breaker/open` or `/dashboard/control-plane`.
 - **Resetting Condition**: Automatically cleared on successful worker execution or manually reset via `POST /v1/control-plane/tools/{tool_name}/breaker/close` or `/dashboard/control-plane`:
   ```bash
-  redis-cli del "circuit:tool:{tool_name}" "breaker:{tool_name}:failures"
+  redis-cli del "breaker:{tool_name}"
+  redis-cli --scan --pattern "breaker_failures:{tool_name}:*" | xargs -r redis-cli del
   ```

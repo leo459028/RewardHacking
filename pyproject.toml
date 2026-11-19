@@ -1,6 +1,6 @@
 [project]
 name = "reward-hacking-guardrail"
-version = "1.6.1"
+version = "1.6.2"
 description = "Production-grade runtime guardrails, human-in-the-loop governance, and FinOps for autonomous AI agents"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -26,13 +26,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-otel = ["opentelemetry-api==1.45.1", "opentelemetry-sdk==1.45.1", "opentelemetry-exporter-otlp-proto-http==1.45.1"]
-dev = ["pytest>=8.3.0", "pytest-asyncio>=0.23.0", "ruff>=0.6.0", "aiosqlite>=0.20.0", "import-linter>=2.15,<2.16"]
+otel = ["opentelemetry-api==1.45.2", "opentelemetry-sdk==1.45.2", "opentelemetry-exporter-otlp-proto-http==1.45.2"]
+dev = ["pytest>=8.3.0", "pytest-asyncio>=0.23.0", "ruff>=0.6.0", "aiosqlite>=0.20.0", "httpx2>=2.0.0", "import-linter>=2.15,<2.16"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+# v1.6.2: the test client must use httpx2; matched by message because older Starlette lacks the warning class.
+filterwarnings = ["error:Using `httpx` with `starlette.testclient` is deprecated"]
 
 [tool.ruff]
 line-length = 120
@@ -57,6 +59,7 @@ source_modules = [
     "app.services.judge_triage",
     "app.services.review_sampling",
     "app.services.change_requests",
+    "app.services.verification",
 ]
 forbidden_modules = [
     "app.services.events",
@@ -76,6 +79,26 @@ name = "The sandbox package is independent of the HTTP, Dashboard and worker lay
 type = "forbidden"
 source_modules = ["app.services.sandbox"]
 forbidden_modules = ["app.api", "app.ui", "app.workers"]
+
+[[tool.importlinter.contracts]]
+name = "Only sandbox-runner may load the Docker backend; the API and the worker never reach Docker (v1.6.2 D19)"
+type = "forbidden"
+source_modules = [
+    "app.main",
+    "app.api",
+    "app.ui",
+    "app.workers.consumer",
+    "app.workers.producer",
+    "app.services.executor",
+    "app.services.orchestrator",
+    "app.services.operations",
+    "app.services.sandbox.registry",
+    "app.services.sandbox.health",
+    "app.services.sandbox.gate",
+    "app.services.sandbox.jobs",
+    "app.services.verification",
+]
+forbidden_modules = ["app.services.sandbox.docker_backend"]
 
 [[tool.importlinter.contracts]]
 name = "FinOps submodules are layered (higher layers may import lower ones, never the reverse)"

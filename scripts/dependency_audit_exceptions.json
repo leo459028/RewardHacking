@@ -1,0 +1,4 @@
+{
+  "_comment": "Known vulnerabilities accepted for a limited time. Each entry needs id, package, reason and expires (YYYY-MM-DD); an expired or incomplete entry fails the audit.",
+  "exceptions": []
+}

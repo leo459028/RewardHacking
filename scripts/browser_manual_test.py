@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import gzip
+import io
 import os
 import re
 import sys
+import tarfile
 import time
 import uuid
+from pathlib import Path
 from urllib.parse import quote
 
 __test__ = False
@@ -1277,6 +1281,220 @@ def run_manual_test_suite(
             assert after["status"] == "planned" and str(len(after["candidate_run_ids"])) == candidates
             print(f"[Scenario 15] Dashboard apply of {e2e_purge_id} in {policy['purge_mode']} mode -> retention_apply_disabled; plan still planned with {candidates} candidates")
 
+        # Scenario 16 (v1.6.2): sandbox runtime status; with execution on, a queued conformance run must pass end to end.
+        sandbox_status = page.request.get(f"{base_url}/v1/sandbox/status").json()
+        page.goto(f"{base_url}/dashboard/sandbox")
+        if "execution_disabled" in sandbox_status["gate"]["reasons"]:
+            assert "execution_disabled" in page.inner_text('[data-testid="sandbox-gate-reasons"]')
+            assert page.locator("#sandbox-conformance-button").count() == 0
+            print("[Scenario 16] Sandbox execution is off on this stack: the page shows execution_disabled and no Run conformance button")
+        else:
+            assert page.inner_text('[data-testid="sandbox-backend"]').strip() == "docker"
+            assert page.locator('[data-testid="sandbox-runner-row"]').count() >= 1, "sandbox-runner is not running (docker compose --profile sandbox up -d)"
+            previous_run = page.inner_text('[data-testid="sandbox-latest-run"]').strip() if page.locator('[data-testid="sandbox-latest-run"]').count() else ""
+            page.click("#sandbox-conformance-button")
+            page.wait_for_load_state("networkidle")
+            assert "conformance_" in page.inner_text('[data-testid="sandbox-message"]')
+            latest_run = previous_run
+            for _ in range(60):
+                page.goto(f"{base_url}/dashboard/sandbox")
+                if page.locator('[data-testid="sandbox-latest-run"]').count():
+                    latest_run = page.inner_text('[data-testid="sandbox-latest-run"]').strip()
+                if latest_run != previous_run:
+                    break
+                page.wait_for_timeout(2000)
+            assert latest_run != previous_run, "the queued conformance run did not finish within 120 s"
+            latest_status = page.inner_text('[data-testid="sandbox-latest-status"]').strip()
+            latest_count = page.inner_text('[data-testid="sandbox-latest-count"]').strip()
+            gate_state = page.inner_text('[data-testid="sandbox-gate"]').strip()
+            assert latest_status == "passed" and latest_count == "20/20" and gate_state == "ready", (latest_status, latest_count, gate_state)
+            print(
+                f"[Scenario 16] Sandbox: backend docker, runtime {page.inner_text('[data-testid=sandbox-runtime]').strip()}, "
+                f"isolation {page.inner_text('[data-testid=sandbox-isolation]').strip()}; conformance {latest_run} {latest_status} {latest_count}; gate {gate_state}"
+            )
+        if session_mode:
+            auditor_context = browser.new_context(viewport={"width": 1440, "height": 900})
+            auditor_page = auditor_context.new_page()
+            sign_in(auditor_page, base_url, *creds["auditor"])
+            response = auditor_page.goto(f"{base_url}/dashboard/sandbox")
+            assert response is not None and response.status == 200
+            assert auditor_page.locator("#sandbox-conformance-button").count() == 0
+            refused = auditor_page.request.post(f"{base_url}/dashboard/sandbox/conformance", max_redirects=0)
+            assert refused.status == 403, refused.status
+            auditor_context.close()
+            print("[Scenario 16.1] Auditor reads /dashboard/sandbox without the Run conformance button; POST -> 403")
+
+        # Scenario 17 (v1.6.2): verification suites. Unique names keep repeated runs independent of earlier data.
+        sandbox_ready = "execution_disabled" not in sandbox_status["gate"]["reasons"]
+        platform_run_id = ""
+        page.goto(f"{base_url}/dashboard/verification")
+        assert "Platform Verification" in page.content()
+        if not sandbox_ready:
+            print("[Scenario 17] Sandbox execution is off on this stack: the verification page opens; suites and re-runs are not exercised")
+        else:
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+            from app.services.verification import demo as verification_demo
+
+            verify_tenant = f"verify-qa-{uuid.uuid4().hex[:8]}"
+            suite_name = f"demo-tax-{uuid.uuid4().hex[:8]}"
+
+            def _publish_suite(archive: bytes, name: str) -> None:
+                step_up("/dashboard/verification")
+                page.goto(f"{base_url}/dashboard/verification")
+                page.fill('[data-testid="verification-upload-form"] input[name="tenant_id"]', verify_tenant)
+                page.fill('[data-testid="verification-upload-form"] input[name="name"]', name)
+                page.set_input_files(
+                    '[data-testid="verification-upload-form"] input[name="file"]',
+                    {"name": "suite.tar.gz", "mimeType": "application/gzip", "buffer": archive},
+                )
+                page.click("#verification-upload-button")
+                page.wait_for_load_state("networkidle")
+
+            link_tar = io.BytesIO()
+            with tarfile.open(fileobj=link_tar, mode="w") as archive:
+                link = tarfile.TarInfo("link.py")
+                link.type, link.linkname = tarfile.SYMTYPE, "/etc/passwd"
+                archive.addfile(link)
+            _publish_suite(gzip.compress(link_tar.getvalue()), suite_name)
+            assert "artifact_symlink_rejected" in page.inner_text('[data-testid="verification-error"]')
+
+            _publish_suite(verification_demo.suite_archive(), suite_name)
+            assert "suite_published" in page.inner_text('[data-testid="verification-message"]')
+            page.goto(f"{base_url}/dashboard/verification?tenant_id={verify_tenant}")
+            suite_row = page.locator(f'[data-testid="verification-suite-row"][data-suite-name="{suite_name}"]')
+            suite_id = suite_row.get_attribute("data-suite-id") or ""
+            assert suite_id.startswith("vsu_") and suite_row.locator('[data-testid="verification-suite-version"]').inner_text().strip() == "1"
+            print(f"[Scenario 17] Suite {suite_id} published for {verify_tenant}; a symlink archive answered artifact_symlink_rejected")
+
+            # Scenario 18 (v1.6.2): an honest fix and an invented report, re-run by the platform inside the sandbox.
+            def _rerun_scenario(name: str) -> dict:
+                submitted = page.request.post(
+                    f"{base_url}/v1/agent/submit",
+                    data={
+                        "tenant_id": verify_tenant, "user_id": "qa-agent-162", "task_type": "code_fix", "prompt": "Fix the tax allowance.",
+                        "goal": "Fix the tax allowance", "allowed_tools": ["read_repo", "run_tests"], "metadata": {"verification_suite_id": suite_id},
+                    },
+                )
+                assert submitted.ok, submitted.text()
+                run_id = submitted.json()["run_id"]
+                _wait_for_status(run_id, "completed")
+                posted = page.request.post(f"{base_url}/v1/runs/{run_id}/outcome", data=verification_demo.scenario_evidence(name))
+                assert posted.ok, posted.text()
+                for _ in range(90):
+                    items = page.request.get(f"{base_url}/v1/runs/{run_id}/verifications").json()["verifications"]
+                    if items and items[0]["status"] not in ("queued", "running"):
+                        return items[0]
+                    page.wait_for_timeout(2000)
+                raise AssertionError(f"the platform re-run of {run_id} did not finish within 180 s")
+
+            honest = _rerun_scenario("honest")
+            honest_counts = honest["classification"]["counts"]
+            assert honest["status"] == "completed" and (honest_counts["fail_to_pass"], honest_counts["pass_to_fail"]) == (3, 0), honest
+            assert honest["coverage"]["status"] == "measured" and honest["coverage"]["ratio"] > 0, honest["coverage"]
+            invented = _rerun_scenario("fake_report")
+            invented_counts = invented["classification"]["counts"]
+            assert invented["status"] == "completed" and (invented_counts["fail_to_pass"], invented_counts["fail_to_fail"]) == (0, 3), invented
+            page.goto(f"{base_url}/dashboard/verification/runs/{honest['verification_id']}")
+            assert page.inner_text('[data-testid="verification-detail-status"]').strip() == "completed"
+            assert page.inner_text('[data-testid="verification-detail-f2p"]').strip() == "3"
+            assert "0E-8" not in page.content()
+            print(
+                f"[Scenario 18] Honest fix {honest['verification_id']}: fail_to_pass 3, coverage {honest['coverage']['ratio']}; "
+                f"invented report {invented['verification_id']}: fail_to_fail 3"
+            )
+
+            # Scenario 18.1 (v1.6.2 P4): the Run Detail block, its assurance level and what that level does not prove.
+            def _rule_ids(item: dict) -> set[str]:
+                assert {finding["mode"] for finding in item["findings"]} <= {"shadow"}, item["findings"]
+                return {finding["rule_id"] for finding in item["findings"]}
+
+            def _wait_for_verification(run_id: str, verification_id: str) -> dict:
+                for _ in range(90):
+                    item = page.request.get(f"{base_url}/v1/verifications/{verification_id}").json()
+                    if item["status"] not in ("queued", "running"):
+                        return item
+                    page.wait_for_timeout(2000)
+                raise AssertionError(f"re-run {verification_id} of {run_id} did not finish within 180 s")
+
+            assert (honest["assurance_level"], _rule_ids(honest)) == ("platform_verified", set()), honest
+            assert invented["assurance_level"] == "platform_verified" and "RV-001" in _rule_ids(invented), invented
+            platform_run_id = invented["run_id"]
+            page.goto(f"{base_url}/dashboard/runs/{platform_run_id}")
+            block = page.locator('[data-testid="platform-verification"]')
+            note = block.locator('[data-testid="platform-verification-note"]').inner_text()
+            assert "not tamper-proof" in note and "也不是防竄改證明" in note, note
+            assert block.locator('[data-testid="platform-assurance"]').inner_text().strip() == "platform_verified"
+            assert block.locator('[data-testid="platform-f2f"]').inner_text().strip() == "3"
+            assert "RV-001" in block.locator('[data-testid="platform-findings"]').inner_text()
+            assert "0E-8" not in page.content()
+            print(f"[Scenario 18.1] Run Detail of {platform_run_id}: platform_verified, RV-001 in shadow, the note says what the level does not prove")
+
+            # Scenario 19 (v1.6.2 P4): a rewritten conftest is discarded and a regression is reported.
+            rewritten = _rerun_scenario("conftest_rewrite")
+            assert rewritten["discarded_test_changes"] == [{"path": "tests/conftest.py", "reason": "test_config"}], rewritten
+            assert rewritten["classification"]["counts"]["fail_to_fail"] == 3 and "RV-001" in _rule_ids(rewritten), rewritten
+            regressed = _rerun_scenario("regression")
+            assert regressed["classification"]["counts"]["pass_to_fail"] == 1 and "RV-002" in _rule_ids(regressed), regressed
+            page.goto(f"{base_url}/dashboard/runs/{rewritten['run_id']}")
+            assert "tests/conftest.py" in page.locator('[data-testid="platform-discarded"]').inner_text()
+            print(f"[Scenario 19] {rewritten['verification_id']} discarded tests/conftest.py; {regressed['verification_id']} reported RV-002")
+
+            # Scenario 20 (v1.6.2 P4): a dry-run replay re-runs the tests, and a reviewer asks for a re-run from Review Detail.
+            replay_run_id = honest["run_id"]
+            page.goto(f"{base_url}/dashboard/runs/{replay_run_id}")
+            page.check('[data-testid="replay-sandbox-rerun"]')
+            page.click('[data-testid="replay-submit"]')
+            page.wait_for_load_state("networkidle")
+            assert "replay_queued" in page.content(), page.url
+            replay_id = page.locator('[data-testid="replay-attempt-verification"]').last.inner_text().strip()
+            replayed = _wait_for_verification(replay_run_id, replay_id)
+            assert (replayed["trigger"], replayed["status"], replayed["assurance_level"]) == ("replay", "completed", "platform_verified"), replayed
+            page.goto(f"{base_url}/dashboard/runs/{replay_run_id}")
+            assert page.locator('[data-testid="replay-attempt-status"]').last.inner_text().strip() == "completed"
+            print(f"[Scenario 20] Replay of {replay_run_id} re-ran the tests as {replay_id} and finished")
+
+            reviews = page.request.get(f"{base_url}/v1/reviews", params={"run_id": rewritten["run_id"]}).json()
+            assert reviews, f"the conftest rewrite of {rewritten['run_id']} opened no review"
+            review_id = reviews[0]["review_id"]
+            page.goto(f"{base_url}/dashboard/reviews/{review_id}")
+            assert "也不是防竄改證明" in page.locator('[data-testid="platform-verification-note"]').inner_text()
+            page.click('[data-testid="platform-request-rerun"]')
+            page.wait_for_load_state("networkidle")
+            assert f"/dashboard/reviews/{review_id}" in page.url and "verification_queued" in page.content(), page.url
+            newest = page.request.get(f"{base_url}/v1/runs/{rewritten['run_id']}/verifications").json()["verifications"][0]
+            manual = _wait_for_verification(rewritten["run_id"], newest["verification_id"])
+            assert (manual["trigger"], manual["status"]) == ("manual", "completed"), manual
+            review_after = page.request.get(f"{base_url}/v1/reviews/{review_id}").json()
+            assert (review_after["status"], review_after["priority"]) == (reviews[0]["status"], reviews[0]["priority"]), review_after
+            print(f"[Scenario 20.1] Review {review_id}: manual re-run {manual['verification_id']} finished; the review status and priority did not change")
+
+            step_up("/dashboard/verification")
+            page.goto(f"{base_url}/dashboard/verification?tenant_id={verify_tenant}")
+            page.locator(f'[data-testid="verification-suite-row"][data-suite-id="{suite_id}"] [data-testid="verification-suite-disable"]').click()
+            page.wait_for_load_state("networkidle")
+            assert "suite_disabled" in page.inner_text('[data-testid="verification-message"]')
+            refused_run = page.request.post(
+                f"{base_url}/v1/agent/submit",
+                data={"tenant_id": verify_tenant, "user_id": "qa-agent-162", "task_type": "code_fix", "prompt": "Fix it.", "goal": "Fix it", "metadata": {"verification_suite_id": suite_id}},
+            )
+            assert refused_run.status == 422 and refused_run.json()["error"]["code"] == "verification_suite_invalid"
+            print(f"[Scenario 17.1] Disabled {suite_id}; a new run naming it answers 422 verification_suite_invalid")
+        if session_mode:
+            auditor_context = browser.new_context(viewport={"width": 1440, "height": 900})
+            auditor_page = auditor_context.new_page()
+            sign_in(auditor_page, base_url, *creds["auditor"])
+            response = auditor_page.goto(f"{base_url}/dashboard/verification")
+            assert response is not None and response.status == 200
+            assert auditor_page.locator('[data-testid="verification-upload-form"]').count() == 0
+            refused = auditor_page.request.post(f"{base_url}/dashboard/verification/request", form={"run_id": "run_x"}, max_redirects=0)
+            assert refused.status == 403, refused.status
+            if platform_run_id:
+                auditor_page.goto(f"{base_url}/dashboard/runs/{platform_run_id}")
+                assert auditor_page.locator('[data-testid="platform-verification"]').count() == 1
+                assert auditor_page.locator('[data-testid="platform-request-rerun"]').count() == 0
+            auditor_context.close()
+            print("[Scenario 17.2] Auditor reads /dashboard/verification and the Run Detail block without forms; POST -> 403")
+
         page.goto(f"{base_url}/dashboard/observability")
         obs_html = page.content()
         assert "FinOps" in obs_html
@@ -1323,23 +1541,25 @@ def run_manual_test_suite(
         assert "evaluation_review_queue_health" in ops_html
         assert "evaluation_benchmark_gate" in ops_html
         assert "evaluation_judge_health" in ops_html and "evaluation_sampling_health" in ops_html
-        assert "retention_policy" in ops_html and "sandbox_backend_health" in ops_html
+        assert "retention_policy" in ops_html and "sandbox_backend_health" in ops_html and "sandbox_runner_health" in ops_html
         assert "dashboard_auth_mode" in ops_html and "audit_chain_integrity" in ops_html and "dual_control_configured" in ops_html
         release_ver = page.input_value('input[name="release_version"]')
-        assert release_ver == "v1.6.1"
+        assert release_ver == "v1.6.2"
 
         page.select_option('select[name="evidence_type"]', "safety_regression")
         page.select_option('select[name="status"]', "pass")
         page.fill('input[name="reference_url"]', "docs/manual_test.md")
-        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.6.1")
+        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.6.2")
         page.click('button:has-text("Save Evidence")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
+        gates_before = set(re.findall(r"gate_[0-9a-f]{12}", page.content()))
         page.click('button:has-text("Create Release Gate Snapshot")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
-        assert "v1.6.1" in page.content()
-        print("[Scenario 4.3] Operations evidence saved & v1.6.1 Release Gate snapshot created via browser")
+        assert "v1.6.2" in page.content()
+        assert set(re.findall(r"gate_[0-9a-f]{12}", page.content())) - gates_before, "the release gate snapshot was not stored"
+        print("[Scenario 4.3] Operations evidence saved & v1.6.2 Release Gate snapshot created via browser")
 
         # 6. Check all primary navigation tabs for 0E-8 and HTTP 200
         nav_routes = [
@@ -1364,6 +1584,8 @@ def run_manual_test_suite(
             "/dashboard/admin/users",
             "/dashboard/change-requests",
             "/dashboard/audit-chain",
+            "/dashboard/sandbox",
+            "/dashboard/verification",
         ]
         for route in nav_routes:
             r = page.goto(f"{base_url}{route}")

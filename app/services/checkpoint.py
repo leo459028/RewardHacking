@@ -5,9 +5,15 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings
 from app.models.agent_run import AgentRun
 from app.models.checkpoint import ReplayAttempt, RunCheckpoint
 from app.models.control_plane import ExecutionPlan, ExecutionPlanStep
+from app.services.sandbox import gate
+from app.services.verification import sampling
+from app.services.verification.errors import VerificationError
+
+SANDBOX_RERUN_UNAVAILABLE = "sandbox_rerun_unavailable"
 
 
 def checkpoint_to_dict(checkpoint: RunCheckpoint) -> dict:
@@ -159,6 +165,41 @@ async def resume_run_from_checkpoint(
     )
 
 
+def _replay_attempt(
+    *,
+    run: AgentRun,
+    plan: ExecutionPlan,
+    steps: list[ExecutionPlanStep],
+    mode: str,
+    created_by: str,
+    status: str = "completed",
+    extra: dict | None = None,
+) -> ReplayAttempt:
+    return ReplayAttempt(
+        replay_id=f"replay_{uuid4().hex}",
+        source_run_id=run.run_id,
+        tenant_id=run.tenant_id,
+        trace_id=plan.trace_id or run.request_payload.get("metadata", {}).get("trace_id", ""),
+        mode=mode,
+        status=status,
+        result_payload={
+            "source_status": run.status,
+            "replayed_policy": dict(run.evaluation_summary.get("policy", plan.policy_snapshot)),
+            "workflow_id": plan.workflow_id,
+            "step_count": len(steps),
+            "automatic_external_execution": False,
+            **(extra or {}),
+        },
+        limitations={
+            "external_tool_calls": False,
+            "state_mutation": False,
+            "automatic_external_execution": False,
+            "note": "V1.4 replay rebuilds auditable execution context without external side effects.",
+        },
+        created_by=created_by,
+    )
+
+
 async def persist_replay_attempt(
     session: AsyncSession,
     *,
@@ -168,26 +209,44 @@ async def persist_replay_attempt(
     mode: str,
     created_by: str,
 ) -> ReplayAttempt:
-    attempt = ReplayAttempt(
-        replay_id=f"replay_{uuid4().hex}",
-        source_run_id=run.run_id,
-        tenant_id=run.tenant_id,
-        trace_id=plan.trace_id or run.request_payload.get("metadata", {}).get("trace_id", ""),
-        mode=mode,
-        status="completed",
-        result_payload={
-            "source_status": run.status,
-            "replayed_policy": dict(run.evaluation_summary.get("policy", plan.policy_snapshot)),
-            "workflow_id": plan.workflow_id,
-            "step_count": len(steps),
-            "automatic_external_execution": False,
-        },
-        limitations={
-            "external_tool_calls": False,
-            "state_mutation": False,
-            "note": "V1.4 replay rebuilds auditable execution context without external side effects.",
-        },
-        created_by=created_by,
+    attempt = _replay_attempt(run=run, plan=plan, steps=steps, mode=mode, created_by=created_by)
+    session.add(attempt)
+    await session.commit()
+    await session.refresh(attempt)
+    return attempt
+
+
+async def persist_sandbox_replay(
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    run: AgentRun,
+    plan: ExecutionPlan,
+    steps: list[ExecutionPlanStep],
+    mode: str,
+    created_by: str,
+    requested_by: str,
+) -> ReplayAttempt:
+    """A dry-run replay that also re-runs the tests in the sandbox (v1.6.2 D33).
+
+    Only the platform's tests run again: the agent's tool calls are not repeated, nothing is dispatched or published,
+    and no token lease is touched. A new re-run is committed with its attempt, and a running one stays locked until the
+    attempt is committed, so the runner cannot finish a re-run before the attempt that waits for it exists.
+    """
+    suite_id = sampling.bound_suite_id(run)
+    outcome = await sampling.latest_outcome(session, run.run_id)
+    if not suite_id or outcome is None or not (await gate.evaluate(session, settings)).ready:
+        raise VerificationError(
+            SANDBOX_RERUN_UNAVAILABLE, "A sandbox re-run needs an open execution gate, a bound suite and an outcome.", 409
+        )
+    await sampling.lock_new_reruns(session, run.tenant_id)
+    row = await sampling.active_for_outcome(session, outcome.outcome_id, lock=True) or await sampling.stage(
+        session, settings, run=run, outcome=outcome, suite_id=suite_id, trigger=sampling.TRIGGER_REPLAY, requested_by=requested_by
+    )
+    waiting = row.status in sampling.ACTIVE_STATUSES
+    attempt = _replay_attempt(
+        run=run, plan=plan, steps=steps, mode=mode, created_by=created_by, status="queued" if waiting else "completed",
+        extra={"verification_id": row.verification_id, "verification_status": row.status, "skip_reason": row.skip_reason},
     )
     session.add(attempt)
     await session.commit()

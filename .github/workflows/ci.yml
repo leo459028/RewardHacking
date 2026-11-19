@@ -6,21 +6,41 @@ on:
   pull_request:
     branches: ["main"]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt -r requirements-otel.txt
+        run: pip install -r requirements-dev.txt -r requirements-otel.txt
+
+      - name: Version anchors
+        run: python scripts/bump_version.py --check
+
+      - name: Whitespace check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            git diff --check "origin/$BASE_REF...HEAD"
+          else
+            git diff --check "$BEFORE_SHA" "$GITHUB_SHA"
+          fi
 
       - name: Lint
         run: ruff check app tests scripts --config pyproject.toml
@@ -33,3 +53,156 @@ jobs:
 
       - name: Test
         run: pytest -q -W error::DeprecationWarning
+
+  image:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Build image (not pushed)
+        run: docker build -t rewardhacking:ci .
+
+      - name: Scan image content
+        run: python scripts/image_content_check.py --image rewardhacking:ci
+
+      - name: Build sandbox image (not pushed)
+        run: docker build -t rewardhacking-sandbox-python:ci docker/sandbox-python
+
+      - name: Scan sandbox image content
+        run: python scripts/image_content_check.py --image rewardhacking-sandbox-python:ci
+
+      # Report only: most operating-system advisories have no fix yet and depend on the base image. Python packages are
+      # checked, and block, in the dependencies job.
+      - name: Vulnerability report (does not block)
+        id: cve
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        continue-on-error: true
+        with:
+          image: rewardhacking:ci
+          fail-build: false
+          output-format: json
+
+      - name: Upload the vulnerability report
+        if: always() && steps.cve.outputs.json != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vulnerability-report
+          path: ${{ steps.cve.outputs.json }}
+
+  # v1.6.2 P5: a known vulnerability in a Python dependency of either image fails the pull request. Exceptions need a
+  # reason and an expiry date (scripts/dependency_audit_exceptions.json).
+  dependencies:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-audit
+        run: pip install pip-audit==2.10.1
+
+      - name: Audit Python dependencies
+        run: python scripts/dependency_audit.py
+
+  # v1.6.2 D52(2): every revision must apply and revert on the database used in production.
+  migrations:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d app"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      POSTGRES_DSN: postgresql+asyncpg://app:app@localhost:5432/app
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Upgrade to head
+        run: alembic upgrade head
+
+      - name: Downgrade one revision
+        run: alembic downgrade -1
+
+      - name: Upgrade to head again
+        run: alembic upgrade head
+
+  # v1.6.2 D44 / Q7: the real isolation checks. gVisor is verified only here.
+  sandbox:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [runc, runsc]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt -r requirements-sandbox.txt
+
+      - name: Install gVisor
+        if: matrix.runtime == 'runsc'
+        env:
+          GVISOR_RELEASE: "20261102.0"
+          GVISOR_SHA512: 2e6671bb2d033b871c5811ab57e16ac570988b0e0054c525f911cfaf191bab3ca4efb08e0a98daa4b9e7d248f9e5776ef2ef2f8a6b82d829646a42924c98bb05
+        run: |
+          curl -fsSLo gvisor.tar.bz2 "https://storage.googleapis.com/gvisor/releases/release/${GVISOR_RELEASE}/x86_64/gvisor.tar.bz2"
+          echo "${GVISOR_SHA512}  gvisor.tar.bz2" | sha512sum -c -
+          tar -xjf gvisor.tar.bz2 runsc containerd-shim-runsc-v1
+          sudo install -m 0755 runsc containerd-shim-runsc-v1 /usr/local/bin/
+          sudo /usr/local/bin/runsc install
+          sudo systemctl restart docker
+          docker info --format '{{json .Runtimes}}' | grep -q runsc
+
+      - name: Pull the conformance image
+        run: docker pull "$(python -c "from app.core.config import Settings; print(Settings(_env_file=None).sandbox_conformance_image)")"
+
+      - name: Build the sandbox image for the demo suite
+        run: |
+          docker build -t rewardhacking-sandbox-python:ci docker/sandbox-python
+          echo "RH_SANDBOX_PYTHON_IMAGE=$(docker image inspect --format '{{.Id}}' rewardhacking-sandbox-python:ci)" >> "$GITHUB_ENV"
+
+      - name: Real Docker conformance
+        env:
+          RH_SANDBOX_LIVE: "1"
+          SANDBOX_DOCKER_RUNTIME: ${{ matrix.runtime }}
+        run: pytest tests/test_v162_docker_live.py -q -W error::DeprecationWarning

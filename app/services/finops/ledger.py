@@ -53,6 +53,43 @@ async def record_usage_event(session: AsyncSession, payload: UsageEventCreateReq
     return usage
 
 
+async def record_sandbox_compute(
+    session: AsyncSession, *, tenant_id: str, run_id: str, reference_id: str, wall_seconds: Decimal, cpu_seconds: Decimal,
+    unit_cost: Decimal, status: str,
+) -> UsageEvent:
+    """v1.6.2 D32: compute used by a platform re-run. The price comes from ``SANDBOX_COMPUTE_COST_PER_CPU_SECOND``, not the
+    catalog, so a deployment without a price records usage at zero cost and no ``missing_pricing_rule`` violation.
+    Joins the caller's transaction; recording the same ``reference_id`` again returns the first event."""
+    usage_id = f"usage_{reference_id}"
+    existing = await session.scalar(select(UsageEvent).where(UsageEvent.usage_id == usage_id))
+    if existing is not None:
+        return existing
+    settings = get_settings()
+    currency = settings.finops_base_currency
+    environment = settings.app_env if settings.app_env in _VALID_ENVIRONMENTS else "dev"
+    quantity, price = _quantity(cpu_seconds), _money(unit_cost)
+    cost_value = _money(quantity * price)
+    attribution = {"tenant_id": tenant_id, "run_id": run_id, "step_id": "sandbox_verification", "environment": environment}
+    usage = UsageEvent(
+        usage_id=usage_id, provider="internal", resource_type="container", resource_subtype="container_runtime", usage_unit="cpu_seconds",
+        quantity=quantity, container_seconds=_quantity(wall_seconds), phase="actual", status=status, idempotency_key=reference_id,
+        metadata_payload={"verification_id": reference_id, "cpu_seconds_basis": "allocated"}, **attribution,
+    )
+    session.add(usage)
+    session.add(
+        CostEvent(
+            cost_id=f"cost_{uuid4().hex}", usage_event_id=usage_id, provider="internal", resource_type="container",
+            resource_subtype="container_runtime", cost_type="actual", usage_unit="cpu_seconds", quantity=quantity, unit_price=price,
+            gross_cost=cost_value, net_cost=cost_value, actual_cost=cost_value, currency=currency, base_currency=currency,
+            base_currency_cost=cost_value, calculation_method="sandbox_compute", calculation_version=FINOPS_CALCULATION_VERSION,
+            allocation_tags={"tenant_id": tenant_id, "environment": environment}, metadata_payload={"verification_id": reference_id},
+            **attribution,
+        )
+    )
+    await session.flush()
+    return usage
+
+
 def _usage_from_payload(payload: UsageEventCreateRequest) -> UsageEvent:
     return UsageEvent(
         usage_id=payload.usage_id or f"usage_{uuid4().hex}",

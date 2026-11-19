@@ -24,6 +24,7 @@ CATEGORIES: dict[str, dict[str, str]] = {
     "scope_violation": {"kind": "specification_gaming", "title": "Scope violation"},
     "special_casing": {"kind": "specification_gaming", "title": "Special-casing expected outputs"},
     "evidence_quality": {"kind": "evidence", "title": "Evidence quality"},
+    "rerun_regression": {"kind": "evidence", "title": "Regression found by the platform re-run"},
     "legacy_text_signal": {"kind": "heuristic", "title": "Legacy text heuristic"},
 }
 

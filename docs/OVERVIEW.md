@@ -1,17 +1,18 @@
 # Project Documentation Overview
 
-> **Current Version**: `v1.6.1`
-> **Previous Version**: `v1.6.0`
+> **Current Version**: `v1.6.2`
+> **Previous Version**: `v1.6.1`
 
 This directory contains the comprehensive technical documentation for the **RewardHacking Guardrail** platform.
 
 ---
 
-## Release Baseline: `v1.6.1`
+## Release Baseline: `v1.6.2`
 
 ### Release Evolution
 
-- **`v1.6.1` (Current)**: Enterprise Access & Audit Integrity. Dashboard sign-in with sessions and five roles (including a read-only `auditor`) and tenant scope, CSRF tokens and step-up re-authentication, dual control (change requests) for retention apply / legal hold release / judge activation / protected-path relaxation, a tamper-evident audit chain with signed checkpoints, Dashboard retention apply and hold release, and prompt-guard/2.0 (P0). Alembic head `202611120003`.
+- **`v1.6.2` (Current)**: Isolated Sandbox Runtime. A published non-root image without secrets (content scan, SBOM, provenance); a hardened Docker backend on `runc` or `runsc` behind a disabled-by-default flag and a conformance gate; `sandbox-runner` as the only process with Docker access; immutable verification suites; before / after re-runs of the platform's own tests with flaky retries and changed-line coverage; the first `platform_verified` evidence (the report came from the platform's re-run in the sandbox; it is not proof against tampering); shadow rules `RV-001`–`RV-004`; sandbox replay; re-run sampling, daily caps and FinOps compute records; `/dashboard/sandbox` and `/dashboard/verification` (23 primary views). Agent-run tools stay simulated. Alembic head `202611180002`.
+- **`v1.6.1` (Historical)**: Enterprise Access & Audit Integrity. Dashboard sign-in with sessions and five roles (including a read-only `auditor`) and tenant scope, CSRF tokens and step-up re-authentication, dual control (change requests) for retention apply / legal hold release / judge activation / protected-path relaxation, a tamper-evident audit chain with signed checkpoints, Dashboard retention apply and hold release, and prompt-guard/2.0 (P0). Alembic head `202611120003`.
 - **`v1.6.0` (Historical)**: Runtime Foundations, first release of the **Verified Execution** series (`v1.6.x`). W3C Trace Context across HTTP and Kafka with optional OpenTelemetry export (attribute allowlist, GenAI judge spans, background span links, OpenMetrics exemplars, Jaeger compose profile; [`observability.md`](observability.md)); audit retention with plan → apply purges, fixed exclusion reasons, hash-only tombstones, legal holds, `410 run_purged` and a report-only FinOps ledger (default `AUDIT_RETENTION_PURGE_MODE=plan`, no automatic deletion; `/dashboard/retention`, the 18th primary view; [`runbook.md`](runbook.md)); the sandbox execution spec with a `simulated` backend, isolation levels (record-only policy) and a reusable conformance suite (`GET /v1/sandbox/status`); FinOps package split, per-domain routers and `import-linter` architecture contracts. Alembic head `202611120002`.
 - **`v1.5.12` (Historical)**: Judge Activation & Provider Adapters. The rule-based judge stays the default; any LLM judge needs a successful connection test for its exact configuration fingerprint (and, for Dashboard profiles, an explicit activation; environment-selected profiles are auto-probed at startup). Dashboard profile management (`/dashboard/judge-profiles`, templates, drafts, status labels, key status, editing gate, same-origin forms), `*_API_KEY` allowlist, HTTPS for external hosts and metadata-address blocking, a native Anthropic adapter, per-profile fallback chains, Redis circuit breakers and per-profile daily token caps. Alembic head `202611120001`. See [`docs/evaluation.md`](evaluation.md) §15.
 - **`v1.5.11` (Historical)**: Real Local & Cloud Judges. Named judge profiles (YAML / JSON, keys only by environment-variable name), structured-output fallback (`json_schema` → `json_object` → prompt-only), reasoning stripping and `reasoning_effort`, bounded retries, background triage with pending markers and sweep, profile-based cost attribution with zero-cost local pricing, exact-match internal hosts, tenant consent for external judges, multi-profile benchmarks with latency and invalid-output rates, and profile / probe / sweep APIs and Dashboard controls. Verified against Qwen3.5-2B in LM Studio on CPU. Alembic head `202611100001`. See [`docs/evaluation.md`](evaluation.md) §14.
@@ -46,6 +47,7 @@ RewardHacking is a production-grade safety guardrail and governance control plan
 - **Human-in-the-Loop Approval Gates**: Quarantines destructive or policy-violating actions into a TTL-guarded approval queue (`/dashboard/approvals`).
 - **Traceability & Checkpoint Replay**: Links all requests, plans, and audit steps to an `X-Trace-Id`, enabling checkpoint recovery and replay bundles.
 - **Evidence-Based Evaluation & Measurement**: Deterministic, versioned detectors over agent outcome evidence, a post-execution review queue, and a labeled benchmark that measures detection rates at low false-positive rates, advisory LLM-judge triage that only reorders review work, and quota-capped review sampling of rule-passed runs (monitor-only signals).
+- **Platform Re-Run Verification**: Since `v1.6.2`, re-runs the platform's own tests in an isolated sandbox and compares the result with the agent's report (monitor-only, shadow rules).
 - **Agent FinOps Ledger**: Enforces immutable usage and cost tracking across runs, tenants, and models.
 - **Operational Dashboard**: Jinja2-rendered real-time views for runs, approvals, control plane, governance, operations, and costs; since `v1.6.1` with sign-in, roles, CSRF, re-authentication, dual control and a tamper-evident audit chain.
 

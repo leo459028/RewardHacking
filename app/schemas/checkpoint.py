@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+from pydantic.json_schema import SkipJsonSchema
 
 from app.schemas.audit import RunRecord
 
@@ -37,6 +38,8 @@ class ResumeRunResponse(BaseModel):
 class ReplayRunRequest(BaseModel):
     mode: Literal["dry_run"] = "dry_run"
     created_by: str = "system"
+    # v1.6.2 D33. Left out of the generated schema so the v1.5.12 OpenAPI baseline stays as it is; see docs/api.md.
+    sandbox_rerun: SkipJsonSchema[bool] = False
 
 
 class ReplayAttemptRecord(BaseModel):

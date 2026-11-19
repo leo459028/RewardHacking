@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Platform Re-run | 平台重跑結果{% endblock %}
+{% block content %}
+{% set counts = item.classification.counts or {} %}
+<div class="page-head">
+  <div>
+    <h1>Platform Re-run</h1>
+    <div class="title-note">平台重跑結果</div>
+    <div class="muted"><code data-testid="verification-detail-id">{{ item.verification_id }}</code> · monitor-only, never changes a verdict | 只供監控，不會改變判定</div>
+  </div>
+</div>
+
+<p class="notice" data-testid="verification-detail-note">{{ assurance_note }} | {{ assurance_note_zh }}</p>
+
+<section class="grid stats">
+  <div class="stat"><div class="stat-label">Status | 狀態</div><div class="stat-value"><span class="status {{ 'completed' if item.status == 'completed' else ('failed' if item.status == 'failed' else 'pending') }}" data-testid="verification-detail-status">{{ item.status }}</span></div></div>
+  <div class="stat"><div class="stat-label">Fail→Pass</div><div class="stat-value" data-testid="verification-detail-f2p">{{ counts.fail_to_pass if counts else "-" }}</div></div>
+  <div class="stat"><div class="stat-label">Pass→Fail</div><div class="stat-value" data-testid="verification-detail-p2f">{{ counts.pass_to_fail if counts else "-" }}</div></div>
+  <div class="stat"><div class="stat-label">Flaky</div><div class="stat-value" data-testid="verification-detail-flaky">{{ counts.flaky if counts else "-" }}</div></div>
+  <div class="stat"><div class="stat-label">Assurance | 保證等級</div><div class="stat-value"><span class="assurance {{ item.assurance_level or 'none' }}" data-testid="verification-detail-assurance">{{ item.assurance_level or "-" }}</span></div></div>
+</section>
+
+<section class="panel">
+  <h2>Record <span class="heading-note">紀錄</span></h2>
+  <table>
+    <tbody>
+      <tr><th>Run</th><td><a href="/dashboard/runs/{{ item.run_id }}"><code>{{ item.run_id }}</code></a></td></tr>
+      <tr><th>Outcome</th><td><code>{{ item.outcome_id }}</code></td></tr>
+      <tr><th>Suite</th><td><code>{{ item.suite_id }}</code></td></tr>
+      <tr><th>Snapshot digest | 快照摘要</th><td><code>{{ item.artifact_digest }}</code></td></tr>
+      <tr><th>Trigger | 觸發</th><td>{{ item.trigger }}{% if item.requested_by %} · {{ item.requested_by }}{% endif %}</td></tr>
+      <tr><th>Reason | 原因</th><td data-testid="verification-detail-reason">{{ item.skip_reason or "-" }}</td></tr>
+      <tr><th>Backend | 後端</th><td>{{ item.backend_id or "-" }} {{ item.backend_version }} · {{ item.runtime or "-" }} · {{ item.isolation_level or "-" }}</td></tr>
+      <tr><th>Configuration fingerprint | 設定指紋</th><td>{% if item.config_fingerprint %}<code>{{ item.config_fingerprint[:16] }}…</code>{% else %}-{% endif %}</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Before and after <span class="heading-note">變更前後</span></h2>
+  <table data-testid="verification-detail-phases">
+    <thead><tr><th>Run | 階段</th><th>Sandbox status | 沙箱狀態</th><th>Exit code | 結束碼</th><th>Passed | 通過</th><th>Failed | 失敗</th><th>Skipped | 略過</th><th>Attempts | 次數</th><th>Spec digest</th></tr></thead>
+    <tbody>
+    {% for label, phase in [("Before | 變更前", item.before), ("After | 變更後", item.after)] %}
+      <tr><td>{{ label }}</td><td>{{ phase.status or "-" }}</td><td>{{ phase.exit_code if phase.exit_code is not none else "-" }}</td><td>{{ phase.counts.passed if phase.counts else "-" }}</td><td>{{ phase.counts.failed if phase.counts else "-" }}</td><td>{{ phase.counts.skipped if phase.counts else "-" }}</td><td>{{ phase.attempts or "-" }}</td><td>{% if phase.spec_digest %}<code>{{ phase.spec_digest[:16] }}…</code>{% else %}-{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Test classes <span class="heading-note">測試分類</span></h2>
+  {% if counts %}
+  <table data-testid="verification-detail-classes">
+    <thead><tr><th>Class | 分類</th><th>Count | 數量</th><th>Tests | 測試</th></tr></thead>
+    <tbody>
+    {% for name, count in counts.items() %}
+      <tr><td><code>{{ name }}</code></td><td>{{ count }}</td><td>{% for test in item.classification.tests[name] %}<div><code>{{ test }}</code></div>{% else %}-{% endfor %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">No classification. | 沒有分類結果。</p>{% endif %}
+</section>
+
+<section class="panel">
+  <h2>Changed-line coverage <span class="heading-note">變更行覆蓋率</span></h2>
+  {% if item.coverage.status == "measured" %}
+  <p data-testid="verification-detail-coverage">{{ item.coverage.changed_lines_executed }} / {{ item.coverage.changed_lines_total }} changed lines executed. | 變更行中有這些行被執行。</p>
+  {% for line in item.coverage.unexecuted %}<div><code>{{ line.path }}:{{ line.line }}</code></div>{% endfor %}
+  {% else %}<p class="muted" data-testid="verification-detail-coverage">Not measured. | 未量測。</p>{% endif %}
+</section>
+
+<section class="panel">
+  <h2>Shadow findings <span class="heading-note">Shadow 偵測結果（不影響判定）</span></h2>
+  <div data-testid="verification-detail-findings">{% set findings = item.findings %}{% include "_findings.html" %}</div>
+</section>
+
+<section class="panel">
+  <h2>Discarded test changes <span class="heading-note">已丟棄的測試變更</span></h2>
+  <table data-testid="verification-detail-discarded">
+    <thead><tr><th>Path | 路徑</th><th>Reason | 原因</th></tr></thead>
+    <tbody>
+    {% for change in item.discarded_test_changes %}<tr><td><code>{{ change.path }}</code></td><td>{{ change.reason }}</td></tr>{% else %}<tr><td colspan="2" class="muted">None. | 無。</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

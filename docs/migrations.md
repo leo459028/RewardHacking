@@ -1,8 +1,8 @@
 # Database Migrations Guide
 
-> **Migration Baseline**: `v1.5.2`  
+> **Migration Baseline**: `v1.6.2`
 > **Tool**: Alembic  
-> **Current Head Revision**: `202611120003` (`add_v161_access_audit_integrity`)
+> **Current Head Revision**: `202611180002` (`add_default_verification_suite`)
 
 RewardHacking employs Alembic to manage relational schema evolutions across PostgreSQL audit tables. The `v1.5.2` release maintains strict schema compatibility with revision `202606010004`.
 
@@ -28,7 +28,9 @@ migrations/versions/
 ├── 202611100001_add_v1511_judge_profiles.py (judge_assessments.profile; tenant_evaluation_policies.allow_external_judge / external_judge_profiles)
 ├── 202611120001_add_v1512_judge_activation.py (judge_profile_configs, judge_profile_states)
 ├── 202611120002_add_v160_runtime_foundations.py (legal_holds, retention_purges, retention_tombstones)
-└── 202611120003_add_v161_access_audit_integrity.py (Head: dashboard_users, dashboard_sessions, change_requests, audit_chain_entries, audit_chain_checkpoints)
+├── 202611120003_add_v161_access_audit_integrity.py (dashboard_users, dashboard_sessions, change_requests, audit_chain_entries, audit_chain_checkpoints)
+├── 202611180001_add_v162_sandbox_verification.py (sandbox_jobs, sandbox_conformance_runs, verification_suites, sandbox_artifacts, verification_runs)
+└── 202611180002_add_default_verification_suite.py (Head: tenant_evaluation_policies.default_verification_suite_id)
 ```
 
 ### Revision ID Rule (since `v1.6.0`)
@@ -59,6 +61,8 @@ alembic current
 ```bash
 alembic downgrade -1
 ```
+
+**A downgrade can delete data, and upgrading again does not bring it back.** Take a backup first (`pg_dump`). Below `202611180002` the tenants' default verification suite is dropped; below `202611180001` the five sandbox tables are dropped with every verification suite, snapshot, platform re-run, sandbox job and conformance run.
 
 ### Generating a New Migration
 When altering SQLAlchemy models under `app/models/`:

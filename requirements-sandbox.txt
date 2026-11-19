@@ -1,0 +1,2 @@
+# v1.6.2 D16: Docker SDK. Imported only by app/services/sandbox/docker_backend.py, used only by sandbox-runner.
+docker==7.1.0

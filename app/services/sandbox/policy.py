@@ -1,7 +1,9 @@
-"""Isolation policy (v1.6.0 D21). Record-only in this release; enforced from v1.6.1.
+"""Isolation policy (v1.6.0 D21, v1.6.2 D20).
 
 ``required_isolation`` = the configured minimum for the run's risk score, raised (never lowered) by a tool
-definition's ``min_isolation`` (top level or under ``metadata``).
+definition's ``min_isolation`` (top level or under ``metadata``). Work that really executes is refused when the
+backend's isolation is below the requirement (``isolation_rejection``); there is no downgrade. The simulated backend
+runs nothing, so the requirement is only recorded for it (``n/a``).
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from app.services.sandbox.base import IsolationLevel
 DEFAULT_MIN_ISOLATION = IsolationLevel.CONTAINER
 DEFAULT_MIN_ISOLATION_HIGH_RISK = IsolationLevel.GVISOR
 NOT_APPLICABLE = "n/a"
+ISOLATION_INSUFFICIENT = "isolation_insufficient"
 
 
 def _level(value: Any, fallback: IsolationLevel) -> IsolationLevel:
@@ -46,3 +49,14 @@ def isolation_satisfied(actual: IsolationLevel | str, required: IsolationLevel) 
     if actual == IsolationLevel.SIMULATED:
         return NOT_APPLICABLE
     return "yes" if actual >= required else "no"
+
+
+def isolation_rejection(actual: IsolationLevel | str, risk_score: float | None, settings: Any, tool_def: dict | None = None) -> str | None:
+    """D20: the refusal code when executing work needs more isolation than the backend gives, otherwise ``None``."""
+    required = required_isolation(risk_score, tool_def, settings)
+    return ISOLATION_INSUFFICIENT if isolation_satisfied(actual, required) == "no" else None
+
+
+def high_risk_relaxed(settings: Any) -> bool:
+    """True when the high-risk minimum was lowered below the default ``gvisor`` (shown on the Dashboard, D20)."""
+    return required_isolation(1.0, None, settings) < DEFAULT_MIN_ISOLATION_HIGH_RISK

@@ -1,0 +1,224 @@
+name: Release Image
+
+# A published GitHub Release pushes the image. A manual run builds and scans a ref and never pushes.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build and scan (nothing is pushed)
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name || github.event.inputs.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Check release tag
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Tag $TAG is not vX.Y.Z"; exit 1; }
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          [ "$TAG" = "v$version" ] || { echo "Tag $TAG does not match pyproject.toml version $version"; exit 1; }
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: rewardhacking:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan image content
+        run: python scripts/image_content_check.py --image rewardhacking:scan
+
+      - name: Build sandbox image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: docker/sandbox-python
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: rewardhacking-sandbox-python:scan
+
+      - name: Scan sandbox image content
+        run: python scripts/image_content_check.py --image rewardhacking-sandbox-python:scan
+
+      # Report only (v1.6.2 Q8): known CVEs do not block a release; the content scan above does.
+      - name: CVE report
+        id: cve
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        continue-on-error: true
+        with:
+          image: rewardhacking:scan
+          fail-build: false
+          output-format: json
+
+      - name: Upload CVE report
+        if: always() && steps.cve.outputs.json != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cve-report
+          path: ${{ steps.cve.outputs.json }}
+
+      - name: CVE report for the sandbox image
+        id: cve_sandbox
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        continue-on-error: true
+        with:
+          image: rewardhacking-sandbox-python:scan
+          fail-build: false
+          output-format: json
+
+      - name: Upload the sandbox CVE report
+        if: always() && steps.cve_sandbox.outputs.json != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cve-report-sandbox
+          path: ${{ steps.cve_sandbox.outputs.json }}
+
+  # The images are built and scanned in this job, and the push reuses those layers from this job's builder. No shared
+  # build cache is read here, so what is published is what was scanned.
+  publish:
+    needs: verify
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build the image to publish
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: rewardhacking:publish
+
+      - name: Scan the image to publish
+        run: python scripts/image_content_check.py --image rewardhacking:publish
+
+      - name: Build the sandbox image to publish
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: docker/sandbox-python
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: rewardhacking-sandbox-python:publish
+
+      - name: Scan the sandbox image to publish
+        run: python scripts/image_content_check.py --image rewardhacking-sandbox-python:publish
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # `latest` moves only for the release GitHub marks as Latest: never for a prerelease or a later fix of an older
+      # series. If the lookup fails or disagrees, only the version tag is pushed.
+      - name: Image name and latest tag
+        id: image
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/rewardhacking" >> "$GITHUB_OUTPUT"
+          latest_release=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name || true)
+          if [ "$latest_release" = "$TAG" ]; then latest=true; else latest=false; fi
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "Moves \`latest\`: $latest (Latest release: ${latest_release:-none})" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ github.event.release.tag_name }}
+            ${{ steps.image.outputs.latest == 'true' && format('{0}:latest', steps.image.outputs.name) || '' }}
+          sbom: true
+          provenance: mode=max
+
+      - name: Record digest
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          TAG: ${{ github.event.release.tag_name }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: echo "Published \`$IMAGE:$TAG\` with digest \`$DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build and push sandbox image
+        id: push_sandbox
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: docker/sandbox-python
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}-sandbox-python:${{ github.event.release.tag_name }}
+            ${{ steps.image.outputs.latest == 'true' && format('{0}-sandbox-python:latest', steps.image.outputs.name) || '' }}
+          sbom: true
+          provenance: mode=max
+
+      - name: Record sandbox image digest
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}-sandbox-python
+          TAG: ${{ github.event.release.tag_name }}
+          DIGEST: ${{ steps.push_sandbox.outputs.digest }}
+        run: echo "Published \`$IMAGE:$TAG\` with digest \`$DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Confirm the published images are the scanned images
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          SANDBOX_DIGEST: ${{ steps.push_sandbox.outputs.digest }}
+        run: |
+          same_layers() {
+            docker pull --quiet "$2" > /dev/null
+            [ "$(docker image inspect --format '{{json .RootFS.Layers}}' "$1")" = "$(docker image inspect --format '{{json .RootFS.Layers}}' "$2")" ] \
+              || { echo "$2 differs from the scanned image $1"; exit 1; }
+          }
+          same_layers rewardhacking:publish "$IMAGE@$DIGEST"
+          same_layers rewardhacking-sandbox-python:publish "$IMAGE-sandbox-python@$SANDBOX_DIGEST"

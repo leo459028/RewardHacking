@@ -1,5 +1,80 @@
 # Test Execution & Verification Report
 
+## 2026-11-19 - v1.6.2 Isolated Sandbox Runtime Release Verification
+
+- **Version**: `v1.6.2` (branch `v1.6.2`, Alembic head `202611180002`, `ENGINE_VERSION` `v1.6.2`, 10 version anchors at `1.6.2`).
+- **Stage 2 gate** (`scripts/release_gate.py --skip-e2e`, then the browser E2E separately with `--headless`): version anchors, secret scan, `ruff`, `lint-imports` (5 kept, 0 broken) and `git diff --check` passed. Full suite → **2023 passed, 33 skipped in 654.93 s** (the skipped tests are the real Docker checks). `docker compose --profile sandbox up -d --build` succeeded and `alembic current` → `202611180002 (head)`.
+- **CI dependency versions** (fresh venv: FastAPI 0.165.0, Pydantic 2.14.3, Starlette 1.10.0, SQLAlchemy 2.1.9, pytest 9.2.0, `httpx2` 2.16.2, `docker` 7.1.0, OpenTelemetry 1.45.2) → **2023 passed, 33 skipped** in two consecutive runs (678.23 s and 677.64 s). An earlier run on the same application code had one failure in `test_v153_budget_hard_limit_require_approval_creates_gate`. It did not recur in these two runs or in 15 runs of its test file, and its cause is unknown because that run did not keep the traceback.
+- **Real Docker** (`RH_SANDBOX_LIVE=1`, Docker Desktop 29.9.2 on Windows, `runc`) → **33 passed in 95.69 s**. A trivial hardened container took p50 0.405 s, p95 0.445 s and at most 0.603 s over 20 runs.
+- **Browser E2E** (`scripts/browser_manual_test.py --headless`, session mode): exit 0, 23 navigation views, Scenarios 1–20, 0 console errors, 0 page errors, 0 failed requests, 0 `0E-8` artifacts, 0 unexpected re-authentication redirects. Conformance `sbc_8f5c25d7b51f4a8fa5a68dc2b25991d4` passed 20/20. Suite `vsu_60a3b27993354deaa97a258b2908a166`; honest fix `vrf_6759a1ef890a48b9a43b6bd424ccb04d` (Fail→Pass 3, changed-line coverage 1.0); invented report `vrf_92eeaf0c5f9740c9ab6a3c6da47847b2` (Fail→Fail 3, `RV-001` in shadow); discarded `tests/conftest.py` in `vrf_1c4f0b9658a64052b2e945b2a3398eeb`; regression `vrf_d07ca48ec69444c19de3676eb9a3df84` (`RV-002`); replay re-run `vrf_70d323092b6e46ff91dcfdf621b112ba`; manual re-run `vrf_6b1cbc965be54a68838650e4ba07189a` from review `review_a9848d9f5de449f296d81c61`, whose status and priority did not change. Audit checkpoint `acp_2ca9647f22c942db8374f194215f7c6a` (signed), change request `chg_59ef36b6d7c9dc1a79d64a67`. The temporary accounts `e2e-run-e23b0b-*` were disabled afterwards.
+- **Postgres concurrency** (temporary database, removed afterwards): 30 concurrent re-run requests against a daily cap of 5 admitted exactly 5 in 10 of 10 rounds (30 without the lock). A replay joining a running re-run was never left waiting in 30 rounds (30 of 30 without the row lock). **Bug found and fixed**: 12 concurrent manual requests for one outcome created 12 re-runs; they now create 1 in 10 of 10 rounds.
+- **Migrations** (temporary databases, removed afterwards): a fresh install reaches head with 52 tables. A copy of the local data (51 tables, 6,795 rows) was downgraded to the `v1.6.1` schema and upgraded again with no row changed in any existing table, and `python -m app.jobs.audit_chain --verify` reported `ok` for 601 entries and 9 checkpoints. The live database was only read.
+- **Images**: `rewardhacking-api` 366 MB (887 MB before this release), UID 10001; `rewardhacking-sandbox-python` 199 MB, UID 65534. Base `python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b`, still the current digest. `scripts/image_content_check.py` → `pass`, 0 findings on both, now also covering image settings, build history, more key file types, developer home paths and files too large to scan.
+- **Publication audit**: all 2,819 git objects, commit messages, public issues, pull requests, comments, releases, the latest CI log and every image layer were scanned. No credentials or private keys were found; the token-shaped values are documented test fixtures. The working tree holds no developer home directory paths, and a test and the pre-commit check now refuse them.
+- **Dependency advisories** (OSV, final images): Python packages 0 on both images, after moving OpenTelemetry to 1.45.2 (`GHSA-mf5v-w3w3-f6cg`) and the sandbox to pytest 9.0.3 (`GHSA-6w46-j5rx-g56g`) and removing pip from both final images. Debian packages: 114 advisories across 22 source packages, 111 without a published fix and 3 for `zlib` with a fix in Debian that the current base image does not include yet.
+- **Dependency audit on pull requests** (added after the release commit): `python scripts/dependency_audit.py` with `pip-audit` 2.10.1 → no known vulnerabilities in the application requirements or in `docker/sandbox-python/requirements.txt`; the same tool reports `pytest==8.4.2` (`PYSEC-2026-1845`) and exits 1. The sandbox image now installs from that file; after the rebuild its content scan passed and real Docker (`runc`) passed 33 of 33.
+- **Release workflow**: the publish job now builds and scans the images it pushes, reads no shared build cache and compares the published layers with the scanned ones.
+- **`v1.6.1` follow-up included in this release** (`8168adb`): a change request kept its advisory lock until commit, and an expired request writes one event. On real Postgres, duplicate pending requests fell from 30 of 30 rounds to 0, and surplus expiry events from 330 to 0. The supplementary `v1.6.1` verification also passed 4,355 tenant-isolation checks and 52 dual-control checks.
+- **Independent review** (`/code-review high` on the release changes): 8 findings, all fixed. A security review of the image, workflow and hook files led to the release workflow and scanner changes above.
+- **Not verified**: `runsc` (gVisor) on the release commit until CI runs on it. `release-image.yml` runs only after merge, so the scan-then-push flow, the real push and a deployment from the published image are unverified. `alembic check` reports schema differences between models and migrations in older tables (for example numeric precision on FinOps columns); they predate this release and were not changed.
+
+## 2026-11-18 - v1.6.2 P4 `platform_verified`, Shadow `RV-*` Rules and Sandbox Replay (phase result, not a release)
+
+- **Branch**: `v1.6.2` (version anchors stay at `1.6.1` until the release phase; Alembic head `202611180002`; `ENGINE_VERSION` `v1.6.2`).
+- **CI before this phase**: all five jobs of `f380b31` passed (`test`, `image`, `migrations`, `sandbox (runc)`, `sandbox (runsc)`).
+- **Automated tests**: full suite → **1991 passed, 33 skipped in 598.82 s** (baseline 1864; the skipped tests are the real Docker checks). The P4 test file was then split in two without changing any test, and both files passed again (115 passed).
+- **CI dependency versions** (fresh venv: FastAPI 0.164.0, Pydantic 2.14.3, Starlette 1.10.0, SQLAlchemy 2.1.9, pytest 9.2.0, `httpx2` 2.16.2, `docker` 7.1.0) → 1991 passed, 33 skipped in 622.71 s.
+- **Real Docker** (`RH_SANDBOX_LIVE=1`, `RH_SANDBOX_PYTHON_IMAGE` set, Docker Desktop 29.9.2 on Windows, `runc`) → **33 passed in 92.67 s**. The demo scenarios fire the expected shadow rules: `honest` none, `fake_report` `RV-001`, `conftest_rewrite` `RV-001`, `regression` `RV-002`. `runsc` (gVisor) cannot run on this machine and is verified only by the CI `sandbox` job.
+- **Browser E2E** (`scripts/browser_manual_test.py --headless`, session mode): exit 0, 23 navigation views, Scenarios 1–20, 0 console errors, 0 page errors, 0 failed requests, 0 `0E-8` artifacts, 0 unexpected re-authentication redirects. Conformance `sbc_c4b9ff62501740b1bcee604de003486d` passed 20/20. Suite `vsu_67cdbdd5ede64fc1aa041564ef2501f6`; honest fix `vrf_cf839bd622a5421caa5b6e5a4d924bc3`; invented report `vrf_f2424815ca124fbbaf5fd745e6e56036` (`platform_verified`, `RV-001` in shadow); discarded `tests/conftest.py` in `vrf_601fbfd3ef0d4519bf71d150fe31e2e0`; regression `vrf_ff1c6fd4b6954293b56b0e2ad9f144d1` (`RV-002`); replay re-run `vrf_61bc5bee6b694f8aa99cea7bf9a10a68`; manual re-run `vrf_25a6343d0e7d42e6ab5d464f6df7b326` from review `review_2e658a106af14e018d799560`, whose status and priority did not change. The temporary accounts `e2e-run-734a6e-*` were disabled afterwards.
+- **Migration**: `alembic current` in the rebuilt `api` container → `202611180002 (head)`. P4 adds no migration.
+- **OpenAPI baseline**: `tests/fixtures/v160/openapi_v1512.json` is unchanged. `sandbox_rerun` is accepted by `POST /v1/runs/{run_id}/replay` but left out of the generated schema, and `GET /v1/runs/{run_id}/outcomes` keeps its shape.
+- **Independent review** (`/code-review high`): 10 findings, all fixed. The main ones: benchmark runs of the re-run corpus no longer replace the readiness gate's measurement, `rerun_regression` stays out of the judge output schema, a replay that joins a running re-run can no longer stay `queued`, and `platform_verified` now follows the backend that actually ran.
+- **Not verified**: the row lock taken when a replay joins a running re-run was checked only as generated SQL (`FOR UPDATE`), not under concurrency on Postgres. The `RV-*` rules were measured only on the seed corpus they were written against, so there is no real-world detection rate.
+
+## 2026-11-18 - v1.6.2 P3 Verification Suites and Platform Re-Runs (phase result, not a release)
+
+- **Branch**: `v1.6.2` (version anchors stay at `1.6.1` until the release phase; Alembic head `202611180002`).
+- **Automated tests**: full suite → **1864 passed, 28 skipped in 719.75 s** (baseline 1588; the skipped tests are the real Docker checks). Stage 1 (`ruff`, `lint-imports` 5 kept / 0 broken, `git diff --check`, P3 and contract test files) → 688 passed.
+- **CI dependency versions** (fresh venv: FastAPI 0.163.2, Pydantic 2.14.3, Starlette 1.10.0, SQLAlchemy 2.1.9, pytest 9.2.0, `httpx2` 2.16.2, `docker` 7.1.0) → 1864 passed, 29 skipped in 741.24 s. The extra skipped test is the repeated memory-limit check, added between the two runs.
+- **Real Docker** (`RH_SANDBOX_LIVE=1`, `RH_SANDBOX_PYTHON_IMAGE` set, Docker Desktop on Windows, `runc`) → **29 passed in 63.40 s**, including the four demo scenarios and ten consecutive `memory_limit_enforced` runs. `runsc` (gVisor) cannot run on this machine and is verified only by the CI `sandbox` job.
+- **Demo suite on real Docker**: before the change 3 passed and 3 failed in every scenario. `honest`: Fail→Pass 3, Pass→Pass 3, coverage above 0. `fake_report`: Fail→Fail 3. `conftest_rewrite`: Fail→Fail 3 and `tests/conftest.py` discarded. `regression`: Fail→Pass 3, Pass→Fail 1.
+- **Browser E2E** (`scripts/browser_manual_test.py --headless`, session mode): exit 0, 23 navigation views, Scenarios 1–18, 0 console errors, 0 page errors, 0 failed requests, 0 `0E-8` artifacts, 0 unexpected re-authentication redirects. Conformance `sbc_7fb35ee98c234290af81543d4f6fd815` passed 20/20. Suite `vsu_35906233e9a64dd78c9e8f4dd38f19b9`; honest fix `vrf_ad2e15c6da8944e8af956337892028d2` (Fail→Pass 3, changed-line coverage 1.0); invented report `vrf_9b0b670c20c64b4189003f24bf9a06df` (Fail→Fail 3). The temporary accounts `e2e-run-ebc511-*` were disabled afterwards.
+- **Migration**: `alembic current` in the rebuilt `api` container → `202611180002 (head)`.
+- **CI fix for `memory_limit_enforced`**: the case failed intermittently with exit 137 and no `OOMKilled`, first on a documentation-only commit. Waiting 3 seconds for Docker's report did not help, and ten consecutive runs then failed on both runtimes. On `runc` the shell now outlives `dd`, and the case still requires Docker's own OOM report. On `runsc` the whole sandbox can die with `dd` and Docker reports nothing, so the user approved a different proof there: the same command must finish with 768 MiB, and under the 32 MiB limit it must be killed (exit 137) before it finishes. The wait was removed.
+- **Not verified**: the Postgres advisory lock on the daily cap was not exercised under concurrency. The re-run results are monitor-only in this phase, and `platform_verified` and the `RV-*` rules arrive in the next phase.
+
+## 2026-11-18 - v1.6.2 P2 Sandbox Runtime: Docker Backend, Runner and Dashboard (phase result, not a release)
+
+- **Branch**: `v1.6.2` (version anchors stay at `1.6.1` until the release phase; Alembic head `202611180001`).
+- **Automated tests**: full suite → **1588 passed, 24 skipped in 598.09 s** (baseline 1387; the skipped tests are the real Docker checks). Stage 1 (`ruff`, `lint-imports` 5 kept / 0 broken, `git diff --check`, P2 test files) → 581 passed.
+- **CI dependency versions** (fresh venv: FastAPI 0.163.2, Pydantic 2.14.3, Starlette 1.10.0, SQLAlchemy 2.1.9, pytest 9.2.0, `httpx2` 2.16.2, `docker` 7.1.0) → 1588 passed, 24 skipped in 671.26 s. One Dependabot grouping test was added after these two runs and passed on its own.
+- **Real Docker** (`RH_SANDBOX_LIVE=1`, Docker Desktop 29.9.2 on Windows, `runc`) → **24 passed in 26.86 s**. `runsc` (gVisor) cannot run on this machine and is verified only by the CI `sandbox` job.
+- **Conformance in the compose `sandbox-runner`** (UID 10001): 20 of 20 cases passed (10 base, 10 hardening) in about 12.4 s, for example run `sbc_a067efbf884e4dfc8ad0d8560a5a8c14`. No sandbox container or volume was left behind.
+- **Workspace transfer spike (D17)**: a named volume seeded through a container that never starts works with a read-only root filesystem. A tmpfs volume lost its content before the container started, so it was rejected.
+- **Migration**: on a temporary Postgres database `upgrade head`, `downgrade -1` and `upgrade head` all succeeded and the five tables exist. The full revision chain cannot run on SQLite because of older revisions; the new revision is applied on SQLite by a test.
+- **Job queue on Postgres** (temporary database): 8 concurrent runners claimed 600 jobs over 20 rounds with 0 duplicates; 6 concurrent reclaims requeued an expired job once; a runner that lost its lease could not write a result.
+- **Browser E2E**: exit 0 with temporary accounts `e2e-run-070a35-*` (disabled afterwards). 22 navigation views returned 200; Scenario 16 queued conformance run `sbc_f913934f3c774138bf9360b58ab37383`, which passed 20/20 with the gate `ready`; the auditor saw no button and a POST answered 403. 0 console errors, 0 page errors, 0 failed requests, 0 unexpected re-authentication redirects.
+- **Images**: `rewardhacking-api` content scan `pass` (7 layers, 9716 files, 0 findings, user `10001:10001`). `rewardhacking-sandbox-python` content scan `pass` (6 layers, 5973 files, 0 findings, user `65534:65534`; pytest 8.4.2, coverage 7.10.7).
+- **gVisor process limit**: gVisor's own threads share the host PID cgroup (measured about 36 host PIDs at rest plus 2 per sandboxed process; a limit of 16 did not start and 32 failed intermittently). With `runsc` the host limit is now `pids * 3 + 64` and the program is limited by an `nproc` hard limit set from outside the sandbox. `pids_limit_enforced` was tightened: a control run must spawn its processes, and the limited run must show a refused fork with at most 16 processes started. With the stricter case the real Docker suite passed 24 of 24 on `runc` locally and 24 of 24 on `runsc` in CI (`8f2b229`).
+- **Secret scan**: words such as `mock` and `dummy` now excuse only the password rule. Tokens and private keys pass only as reviewed fixture lines, matched by the SHA-256 of the whole line. All 7 such lines in the working tree and git history were checked and are fake. The image content scan uses the same logic.
+- **Independent review** (`/code-review high`): 10 findings, all fixed. The main ones: orphaned containers are now swept repeatedly, the gate uses the live Docker version, files under `out/` in an artifact are refused, and a Redis outage no longer stops lease renewal.
+
+## 2026-11-18 - v1.6.2 P1 Published Image Baseline & Development Guardrails (phase result, not a release)
+
+- **Branch**: `v1.6.2` (version anchors stay at `1.6.1` until the release phase; Alembic head `202611120003`).
+- **Automated tests**: full suite on the final tree → **1387 passed in 521.19 s** (baseline 1254, 133 new). Stage 1 (`ruff`, `lint-imports` 4 kept / 0 broken, `git diff --check`, P1 test files) → 195 passed.
+- **CI dependency versions** (fresh venv: FastAPI 0.163.2, Pydantic 2.14.3, Starlette 1.10.0, SQLAlchemy 2.1.9, pytest 9.2.0, `httpx2` 2.16.2) → 1254 passed in 522.60 s on a snapshot taken before the P1 test files existed, with `StarletteDeprecationWarning` as an error; the P1 test files then passed in the same venv (135 passed). With `httpx2` uninstalled the suite stops at collection, so the warning cannot return unnoticed.
+- **Image**: 887 MB → **363 MB**. Base `python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b`. `scripts/image_content_check.py` → `pass`, 7 layers, 9566 files, 0 findings, for both `rewardhacking-api` and `rewardhacking-worker`. `id` → `uid=10001(app) gid=10001(app)`. No `gcc`, `curl`, `pytest` or `ruff`; the application user cannot write to `/app`.
+- **Stack on the new image**: `api` healthy, `alembic current` → `202611120003 (head)`, `/v1/healthz` and `/v1/readyz` 200, `/dashboard/login` 200, UID 10001 reads the mounted audit chain keys and `judge_profiles.yaml`.
+- **Read-only root filesystem** (`--read-only --tmpfs /tmp`): API answered `/v1/healthz` and `/v1/readyz` with 200, writes to `/app` and `/opt` were refused, `/tmp` was writable; the worker kept running; no permission errors in either log. An unreachable database stopped the API start (exit 1).
+- **Old image cleanup**: removed only the `api` and `worker` containers (the Postgres container and its anonymous volume were kept), deleted images `c1ec25b89d17` and `70bdf2fb278e`, and pruned by ID the 17 build cache records from the old `COPY config`, `COPY tests` and `COPY README.md` steps; none remain. Cache records of other projects were not touched.
+- **Permission rules** (tried in a disposable repository): denied `git reset --hard`, `git clean -fd`, `git checkout -- <path>`, `git push --force`, `git push ... -f`, `git stash drop`, `git stash clear`, `git branch -D`, PowerShell `git reset --hard`, and reading `.env.e2e` and `config/*.pem`. `git push` asked for confirmation.
+- **Hooks**: `post_edit_lint.py` 0.25 s, fired on a real `Write` and reported `F401`. `stop_check.py` 0.42–0.44 s before `lint-imports` was added (`lint-imports` itself 0.6 s); it was tested by feeding it hook input, not by ending a live turn.
+- **Pre-commit** (real `git commit` in a disposable repository): refused `docs/plan/`, `docs/handoff.md`, `.env`, `.env.e2e`, `config/k.pem`, a nested `*.pem`, `config/judge_profiles.yaml` and trailing whitespace; allowed `.env.example` and an ordinary file.
+- **`AGENTS.md`**: 191 lines / 31,479 bytes → 119 lines / 15,439 bytes.
+- **Browser E2E** (`python scripts/browser_manual_test.py --headless`, exit 0, against the stack on the new image): Scenarios 1–15 passed, 21 navigation tabs returned 200 with 0 `0E-8` artifacts, 0 console errors or warnings, 0 page errors, 0 failed requests, 0 unexpected re-authentication redirects. Live IDs: run `a3a4fccf-a8b2-451e-b20c-9056089e0160`, review `review_85e9c3df287e48868d9f4220`, benchmark `bmr_0eef925e32d04be483b3f67e`, checkpoint `acp_6c99240a1fc641908a72766a4d75a73a` (signed), change request `chg_316240fd3bf79de9e2fa3ce2`. The run used three accounts created for it with generated passwords (`e2e-run-d27f30-admin`, `-admin2`, `-auditor`), because the agent may not read `.env.e2e`; all three were disabled afterwards.
+- **Not run in this phase**: the new CI jobs and the `release-image.yml` manual run (the branch has not been pushed).
+
 ## 2026-11-12 - v1.6.1 Enterprise Access & Audit Integrity Verification
 
 - **Version**: `v1.6.1` (branch `v1.6.1`, Alembic head `202611120003`, OpenAPI `1.6.1`, `evaluator_version` unchanged at `v1.5.9`)
@@ -747,17 +822,17 @@
 
 截圖存於本機暫存目錄：
 
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\01-playground-empty.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\02-playground-filled.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\03-playground-result.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\04-run-detail.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\05-costs-filtered.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\06-pricing-dry-run.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\07-pricing-apply.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\08-catalog-filtered.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\09-pricing-detail-saved.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\10-pricing-detail-actual-price-saved.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\11-mobile-playground-smoke.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\01-playground-empty.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\02-playground-filled.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\03-playground-result.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\04-run-detail.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\05-costs-filtered.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\06-pricing-dry-run.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\07-pricing-apply.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\08-catalog-filtered.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\09-pricing-detail-saved.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\10-pricing-detail-actual-price-saved.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-dashboard-qa-20260602\11-mobile-playground-smoke.png`
 
 ### 限制與已知問題
 
@@ -963,13 +1038,13 @@
 
 ### 截圖證據
 
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\01-playground-before.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\02-playground-filled.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\03-playground-result.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\04-run-detail-checkpoint.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\05-run-detail-replay-attempt.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\06-control-plane-resumable.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\07-run-detail-replay-visible.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\01-playground-before.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\02-playground-filled.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\03-playground-result.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\04-run-detail-checkpoint.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\05-run-detail-replay-attempt.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\06-control-plane-resumable.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-v14-dashboard-qa\07-run-detail-replay-visible.png`
 
 ### 已知限制
 
@@ -1093,7 +1168,7 @@
 | Observability page | 通過。`/dashboard/observability` 顯示 `Observability`、`Worker` 與 `Incident`。 |
 | Governance page | 通過。`/dashboard/governance` 顯示 `Governance`、`Tenant` 與 `Quota`。 |
 | Browser console | 通過。上述頁面與互動流程的 console error / warning count 均為 `0`。 |
-| Screenshot evidence | 通過。Browser 截圖已保存於本機暫存目錄：`C:/Users/leohung/AppData/Local/Temp/v12-dashboard-control-plane.png`、`v12-dashboard-run-detail.png`、`v12-dashboard-operations.png`、`v12-dashboard-observability.png`、`v12-dashboard-governance.png`。 |
+| Screenshot evidence | 通過。Browser 截圖已保存於本機暫存目錄：`<local-user-home>/AppData/Local/Temp/v12-dashboard-control-plane.png`、`v12-dashboard-run-detail.png`、`v12-dashboard-operations.png`、`v12-dashboard-observability.png`、`v12-dashboard-governance.png`。 |
 
 ### 限制與已知問題
 
@@ -2325,12 +2400,12 @@ print('\n'.join(sorted(routes)))"
 
 ### 截圖證據
 
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v13-dashboard-qa\01-playground-before.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v13-dashboard-qa\02-playground-filled.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v13-dashboard-qa\03-playground-result.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v13-dashboard-qa\04-run-detail-trace.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v13-dashboard-qa\04b-run-detail-replay-link.png`
-- `C:\Users\leohung\AppData\Local\Temp\rewardhacking-v13-dashboard-qa\06-control-plane.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-v13-dashboard-qa\01-playground-before.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-v13-dashboard-qa\02-playground-filled.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-v13-dashboard-qa\03-playground-result.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-v13-dashboard-qa\04-run-detail-trace.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-v13-dashboard-qa\04b-run-detail-replay-link.png`
+- `<local-user-home>\AppData\Local\Temp\rewardhacking-v13-dashboard-qa\06-control-plane.png`
 
 ### 已知限制
 

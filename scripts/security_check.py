@@ -7,6 +7,7 @@ passwords, private keys, and cloud credentials.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import subprocess
 import sys
@@ -23,7 +24,10 @@ SECRET_PATTERNS = [
     (r"(?i)(password|secret|passwd)\s*[:=]\s*['\"][^'\"]{8,}['\"]", "Hardcoded Password/Secret"),
 ]
 
-# Allowlisted substrings known to be benign mock data or tests
+PASSWORD_RULE = "Hardcoded Password/Secret"
+
+# Substrings of benign mock data. They only excuse the password rule, which is the one that guesses: a line with a
+# real token or private key is reported even when it also says "mock".
 ALLOWLIST_PATTERNS = [
     r"demo-key",
     r"admin-key",
@@ -45,6 +49,28 @@ ALLOWLIST_PATTERNS = [
     # v1.5.12 Dashboard editing-gate test fixture (fake, non-default Basic Auth credentials)
     r"s3cret-pass",
 ]
+
+
+# Fake credentials reviewed line by line: sha256 of the whole stripped line. Git history cannot be rewritten, so lines
+# that only exist in old commits stay listed. Changing such a line needs a new review and a new digest.
+KNOWN_FIXTURE_LINES = {
+    "1ca668e96f1edf7fd3ff5b085559d88c472e9bd313959ad1132ea80211e803e4": "docs/test_report.md: names the fake redaction fixture",
+    "85924b7c656125faf01563b8b1c365be0d6d141b985e9408419d79c1362bf264": "scripts/security_check.py (history): earlier allowlist entry for the header-only key fixture",
+    "671670754679724e9b7cd8b1163b54d73b11f757ec57fe979c4e62506a82f956": "scripts/security_check.py: allowlist entry of the fake redaction fixture",
+    "95d66fb862655c4f4774ba0688491b9e3c281ce7898ce7e1f7dc8236d14b6df4": "tests/test_v158_outcome_evidence_review_queue.py: asserts the fake key was redacted",
+    "28691f4da4780b320174b9ccdbfc7b5b67d63fb0446ad80bf5880b94b944b5a3": "tests/test_v158_outcome_evidence_review_queue.py: fake key in a redaction diff",
+    "366a9f569d2506d31652cda2a5ad3e102e233bd85d11e83841804e3c8068a756": "tests/test_v162_image_hardening.py (history): fake token and access key fixture",
+    "b6eb6ee6d3acd9ba6dcf7397d15ccae4bab7f7c260c87d1159a1825460e44b1b": "tests/test_v162_image_hardening.py: header-only private key fixture",
+}
+
+
+def line_findings(line: str) -> list[str]:
+    """Names of the secret rules this line breaks."""
+    text = line.strip()
+    if hashlib.sha256(text.encode("utf-8")).hexdigest() in KNOWN_FIXTURE_LINES:
+        return []
+    excused = any(re.search(allow, text) for allow in ALLOWLIST_PATTERNS)
+    return [name for pattern, name in SECRET_PATTERNS if re.search(pattern, text) and not (excused and name == PASSWORD_RULE)]
 
 
 def check_git_history() -> list[str]:
@@ -71,13 +97,8 @@ def check_git_history() -> list[str]:
                 continue
 
             content = line[1:].strip()
-            # Skip if matched allowlist
-            if any(re.search(allow, content) for allow in ALLOWLIST_PATTERNS):
-                continue
-
-            for pattern, name in SECRET_PATTERNS:
-                if re.search(pattern, content):
-                    findings.append(f"[Commit {current_commit}] Possible {name}: {content[:60]}...")
+            for name in line_findings(content):
+                findings.append(f"[Commit {current_commit}] Possible {name}: {content[:60]}...")
     except Exception as exc:
         findings.append(f"Git history scan error: {exc}")
     return findings
@@ -104,12 +125,8 @@ def check_working_tree() -> list[str]:
             try:
                 content = file_path.read_text(encoding="utf-8", errors="ignore")
                 for line_no, line in enumerate(content.splitlines(), start=1):
-                    # Skip allowlisted
-                    if any(re.search(allow, line) for allow in ALLOWLIST_PATTERNS):
-                        continue
-                    for pattern, name in SECRET_PATTERNS:
-                        if re.search(pattern, line):
-                            findings.append(f"[{file_path}:{line_no}] Possible {name}: {line.strip()[:60]}...")
+                    for name in line_findings(line):
+                        findings.append(f"[{file_path}:{line_no}] Possible {name}: {line.strip()[:60]}...")
             except Exception:
                 continue
     except Exception as exc:
@@ -118,7 +135,7 @@ def check_working_tree() -> list[str]:
 
 
 def main() -> int:
-    print("Running RewardHacking Security & Secret Scan (v1.6.1)...")
+    print("Running RewardHacking Security & Secret Scan (v1.6.2)...")
     git_findings = check_git_history()
     tree_findings = check_working_tree()
 

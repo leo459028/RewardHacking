@@ -2,7 +2,7 @@
 
 ``validate_spec`` returns a list of stable reason codes (empty = valid). It never raises on bad input, so a
 backend can turn the reasons into a ``rejected`` result. ``spec_digest`` (sha256 of canonical JSON without
-``labels``) is the subject of the sandbox execution attestation planned for v1.6.1.
+``labels``) identifies what ran in a platform re-run record (v1.6.2).
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from app.services.sandbox.base import LIMIT_FIELDS, NETWORK_MODES, BackendCapabi
 # the first component may be a registry host with a port. Tags are not allowed: the digest is the identity.
 _COMPONENT = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
 _IMAGE_DIGEST = re.compile(rf"^{_COMPONENT}(?::\d+(?=/))?(?:/{_COMPONENT})*@sha256:[0-9a-f]{{64}}$")
+_IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")  # v1.6.2 D18: a local image ID is also a content hash
 _ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _ARTIFACT_REF = re.compile(r"^artifact:sha256:[0-9a-f]{64}$")
 _FORBIDDEN_TARGETS = ("/proc", "/sys", "/dev", "/var/run", "/run")
@@ -68,7 +69,14 @@ def _under(path: str, roots: tuple[str, ...]) -> bool:
     return any(path == root or path.startswith(root + "/") for root in roots)
 
 
-def validate_spec(spec: ExecutionSpec, caps: BackendCapabilities) -> list[str]:
+def image_reference_valid(image: Any, *, allow_image_ids: bool = False) -> bool:
+    """A digest-pinned reference, or (local development only, D18) a local image ID."""
+    if not isinstance(image, str):
+        return False
+    return bool(_IMAGE_DIGEST.match(image)) or (allow_image_ids and bool(_IMAGE_ID.match(image)))
+
+
+def validate_spec(spec: ExecutionSpec, caps: BackendCapabilities, *, allow_image_ids: bool = False) -> list[str]:
     reasons: list[str] = []
     if not isinstance(spec.tool_name, str) or not spec.tool_name.strip():
         reasons.append("tool_name_required")
@@ -81,7 +89,7 @@ def validate_spec(spec: ExecutionSpec, caps: BackendCapabilities) -> list[str]:
         reasons.append("argv_invalid")
 
     if caps.isolation_level >= IsolationLevel.CONTAINER:
-        if not isinstance(spec.image, str) or not _IMAGE_DIGEST.match(spec.image):
+        if not image_reference_valid(spec.image, allow_image_ids=allow_image_ids):
             reasons.append("image_not_digest_pinned")
     elif spec.image and not isinstance(spec.image, str):
         reasons.append("image_invalid")

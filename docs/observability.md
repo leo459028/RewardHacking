@@ -1,6 +1,6 @@
 # Observability, Metrics & SLOs
 
-> **Observability Baseline**: `v1.6.0` (W3C Trace Context, optional OpenTelemetry export)
+> **Observability Baseline**: `v1.6.2` (W3C Trace Context, optional OpenTelemetry export, sandbox gauges)
 > **Metrics Engine**: Prometheus Client  
 > **Endpoint**: `GET /v1/metrics`
 
@@ -125,3 +125,15 @@ The system tracks operational compliance against key performance targets visible
 | **Incident Response Time** | $< 900\text{ seconds}$ | Time from incident creation to human resolution |
 | **Approval Turnaround** | $< 3600\text{ seconds}$ (TTL) | Time awaiting human decision before fail-closed timeout |
 | **DLQ Ratio** | $< 0.1\%$ | Ratio of `agent_worker_dlq_total` to total worker jobs |
+
+## Sandbox Metrics (`v1.6.2`)
+
+`sandbox-runner` accepts no outside requests and has no metrics endpoint, so `GET /v1/metrics` reads these gauges from the database at scrape time. Every API replica reports the same numbers, and a database error leaves the previous values in place.
+
+| Metric | Labels | Meaning |
+| --- | --- | --- |
+| `sandbox_jobs` | `kind`, `status` | Sandbox jobs currently stored |
+| `verification_runs` | `status` | Platform re-runs currently stored |
+| `sandbox_conformance_passed` | | `1` when the latest conformance run passed, otherwise `0` |
+
+The values are current row counts, so they can fall when retention purges a run. Use `delta()` rather than `rate()`.

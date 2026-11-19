@@ -23,6 +23,13 @@ from app.models.judge import JudgeAssessment, JudgeProfileConfig, JudgeProfileSt
 from app.models.incident import Incident  # noqa: F401
 from app.models.retention import LegalHold, RetentionPurge, RetentionTombstone  # noqa: F401
 from app.models.operations import OperationsEvidence, ReleaseGateItem, ReleaseGateRun  # noqa: F401
+from app.models.sandbox import (  # noqa: F401
+    SandboxArtifact,
+    SandboxConformanceRun,
+    SandboxJob,
+    VerificationRun,
+    VerificationSuite,
+)
 from app.models.tenant import Tenant, TenantApiKey  # noqa: F401
 from app.models.tool_execution import ToolExecution  # noqa: F401
 from app.models.worker_attempt import WorkerAttempt  # noqa: F401

@@ -20,7 +20,11 @@ from app.models.tenant import TenantApiKey
 from app.models.worker_attempt import WorkerAttempt
 from app.services import audit_chain, retention
 from app.services.finops import ensure_default_pricing
+from app.services.sandbox import docker_config
+from app.services.sandbox import gate as sandbox_gate
 from app.services.sandbox import health as sandbox_health
+from app.services.sandbox import jobs as sandbox_jobs
+from app.services.sandbox.registry import DOCKER, configured_backend
 
 
 @dataclass(frozen=True)
@@ -112,12 +116,12 @@ async def _evaluation_benchmark_gate_check(session: AsyncSession, *, settings: S
     ``EVALUATION_BENCHMARK_GATE_ENFORCED`` is true; when enforced, a stale benchmark warns and a TPR
     below ``EVALUATION_BENCHMARK_MIN_TPR`` fails in ``APP_ENV=prod``.
     """
-    from app.services.benchmark import gate_evaluation, latest_benchmark_run
+    from app.services.benchmark import gate_evaluation, latest_gate_run
     from app.services.evaluation.engine import EvaluationEngine
     from app.services.evaluation.metrics import fpr_key
 
     evaluator_version = EvaluationEngine().version()
-    run = await latest_benchmark_run(session, evaluator_version=evaluator_version)
+    run = await latest_gate_run(session, evaluator_version=evaluator_version)
     status, reason = gate_evaluation(run.metrics if run is not None else None, settings)
     cell: dict[str, Any] = {}
     auroc = None
@@ -517,12 +521,24 @@ def _dual_control_configured_check(settings: Settings) -> OperationsCheck:
     )
 
 
-def _sandbox_backend_health_check(settings: Settings) -> OperationsCheck:
-    """v1.6.0 D24: the configured backend must load and pass the conformance smoke cases."""
+async def _sandbox_backend_health_check(session: AsyncSession, settings: Settings) -> OperationsCheck:
+    """v1.6.0 D24, v1.6.2 D41: the backend must load; with execution on, the gate must be open.
+
+    Production with the ``runc`` runtime warns: containers share the host kernel, so gVisor is recommended."""
     report = sandbox_health.status_report(settings)
     caps = report["capabilities"] or {}
+    status = report["status"]
+    gate_status = await sandbox_gate.evaluate(session, settings)
     if report["error"]:
         detail = f"Sandbox backend {report['configured_backend']!r} failed to load: {report['error']}"
+    elif settings.sandbox_execution_enabled and not gate_status.ready:
+        status = "fail"
+        detail = f"Sandbox execution is on but the gate is closed: {', '.join(gate_status.reasons)}."
+    elif settings.sandbox_execution_enabled and (settings.app_env or "").strip().lower() == "prod" and docker_config.runtime_of(settings) == "runc":
+        status = "warn"
+        detail = "Sandbox gate is open on runc in production; containers share the host kernel, use runsc (gVisor) for untrusted code."
+    elif configured_backend(settings) == DOCKER:
+        detail = f"Backend docker ({caps.get('isolation_level')}): " + ("gate open." if gate_status.ready else f"execution off ({', '.join(gate_status.reasons)}).")
     else:
         passed = sum(1 for case in report["smoke"]["cases"] if case["passed"])
         detail = (
@@ -532,16 +548,39 @@ def _sandbox_backend_health_check(settings: Settings) -> OperationsCheck:
         )
     return OperationsCheck(
         check_key="sandbox_backend_health",
-        status=report["status"],
+        status=status,
         title="Sandbox backend health",
         detail=detail,
         metadata={
+            "gate_ready": gate_status.ready,
+            "gate_reasons": list(gate_status.reasons),
             "configured_backend": report["configured_backend"],
             "backend_id": caps.get("backend_id"),
             "isolation_level": caps.get("isolation_level"),
             "executes_tools": report["executes_tools"],
             "smoke": report["smoke"],
         },
+    )
+
+
+async def _sandbox_runner_health_check(settings: Settings, state_store: object | None) -> OperationsCheck:
+    """v1.6.2 D41: with execution on, a runner must be alive and able to reach Docker."""
+    runners = await sandbox_jobs.runner_heartbeats(state_store)
+    healthy = [item for item in runners if item.get("state") in {"ready", "busy"}]
+    if not settings.sandbox_execution_enabled:
+        status, detail = "pass", "Sandbox execution is off; no runner is needed."
+    elif healthy:
+        status, detail = "pass", f"{len(healthy)} sandbox runner(s) reporting."
+    elif runners:
+        status, detail = "fail", f"Sandbox runner state: {', '.join(sorted(str(item.get('state')) for item in runners))}."
+    else:
+        status, detail = "fail", "Sandbox execution is on but no runner heartbeat was found. Start sandbox-runner."
+    return OperationsCheck(
+        check_key="sandbox_runner_health",
+        status=status,
+        title="Sandbox runner health",
+        detail=detail,
+        metadata={"execution_enabled": settings.sandbox_execution_enabled, "runners": [item.get("runner_id") for item in runners]},
     )
 
 
@@ -667,7 +706,8 @@ async def compute_operations_readiness(
 
     checks = [
         await _retention_policy_check(session, settings=settings),
-        _sandbox_backend_health_check(settings),
+        await _sandbox_backend_health_check(session, settings),
+        await _sandbox_runner_health_check(settings, state_store),
         await _dashboard_auth_mode_check(session, settings=settings),
         await _audit_chain_integrity_check(session, settings=settings),
         _dual_control_configured_check(settings),

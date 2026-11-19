@@ -29,6 +29,14 @@ os.environ["DASHBOARD_AUTH_MODE"] = "off"
 # them with monkeypatch.
 os.environ["DUAL_CONTROL_ACTIONS"] = ""
 os.environ["AUDIT_CHAIN_SIGNING_KEY_FILE"] = ""
+# v1.6.2 D44: the local QA stack turns the Docker sandbox on in .env; the suite never reaches Docker by default.
+os.environ["SANDBOX_BACKEND"] = "simulated"
+os.environ["SANDBOX_EXECUTION_ENABLED"] = "false"
+os.environ["SANDBOX_VERIFY_MODE"] = "off"
+os.environ["SANDBOX_MIN_ISOLATION_DEFAULT"] = "container"
+os.environ["SANDBOX_MIN_ISOLATION_HIGH_RISK"] = "gvisor"
+os.environ["SANDBOX_DOCKER_ALLOW_LOCAL_IMAGE_IDS"] = "false"
+os.environ["SANDBOX_IMAGES"] = ""
 
 
 @pytest.fixture(autouse=True)

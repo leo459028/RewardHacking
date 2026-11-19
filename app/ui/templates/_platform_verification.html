@@ -1,0 +1,54 @@
+{# v1.6.2 D39 platform re-run block. Expects `platform` (app.services.verification.panel) and `platform_return` ("run" or "review"). #}
+{% if platform and (platform.suite_id or platform.records) %}
+{% set latest = platform.latest %}
+<section class="panel" id="platform-verification" data-testid="platform-verification">
+  <h2>Platform verification <span class="heading-note">平台重跑驗證</span></h2>
+  <p class="notice" data-testid="platform-verification-note">{{ platform.note }} | {{ platform.note_zh }}</p>
+  <p class="muted">Monitor-only: shadow findings never change the verdict, the review or its priority. | 只供監控：shadow 偵測結果不會改變判定、審查或優先順序。</p>
+  {% if can("verification.request", "verification") and platform.can_rerun %}
+  <form method="post" action="/dashboard/verification/request" style="margin-bottom:12px;">
+    {{ csrf_input() }}
+    <input type="hidden" name="run_id" value="{{ run.run_id }}">
+    <input type="hidden" name="return_to" value="{{ platform_return }}">
+    {% if platform_return == "review" %}<input type="hidden" name="review_id" value="{{ review.review_id }}">{% endif %}
+    <button class="button secondary" type="submit" data-testid="platform-request-rerun">Request re-run | 要求重跑</button>
+  </form>
+  {% endif %}
+  {% if latest %}
+  {% set counts = latest.classification.counts or {} %}
+  <section class="grid stats">
+    <div class="stat"><div class="stat-label">Status | 狀態</div><div class="stat-value"><span class="status {{ 'completed' if latest.status == 'completed' else ('failed' if latest.status == 'failed' else 'pending') }}" data-testid="platform-status">{{ latest.status }}</span></div></div>
+    <div class="stat"><div class="stat-label">Assurance | 保證等級</div><div class="stat-value"><span class="assurance {{ latest.assurance_level or 'none' }}" data-testid="platform-assurance">{{ latest.assurance_level or "-" }}</span></div></div>
+    <div class="stat"><div class="stat-label">Before | 變更前</div><div class="stat-value" data-testid="platform-before">{% if latest.before.counts %}{{ latest.before.counts.passed }} / {{ latest.before.counts.failed }}{% else %}-{% endif %}</div><div class="muted">passed / failed</div></div>
+    <div class="stat"><div class="stat-label">After | 變更後</div><div class="stat-value" data-testid="platform-after">{% if latest.after.counts %}{{ latest.after.counts.passed }} / {{ latest.after.counts.failed }}{% else %}-{% endif %}</div><div class="muted">passed / failed</div></div>
+    <div class="stat"><div class="stat-label">Fail→Pass</div><div class="stat-value" data-testid="platform-f2p">{{ counts.fail_to_pass if counts else "-" }}</div></div>
+    <div class="stat"><div class="stat-label">Pass→Fail</div><div class="stat-value" data-testid="platform-p2f">{{ counts.pass_to_fail if counts else "-" }}</div></div>
+    <div class="stat"><div class="stat-label">Fail→Fail</div><div class="stat-value" data-testid="platform-f2f">{{ counts.fail_to_fail if counts else "-" }}</div></div>
+    <div class="stat"><div class="stat-label">Flaky</div><div class="stat-value" data-testid="platform-flaky">{{ counts.flaky if counts else "-" }}</div></div>
+  </section>
+  {% if latest.skip_reason %}<p data-testid="platform-reason">Reason | 原因: <code>{{ latest.skip_reason }}</code></p>{% endif %}
+  <p data-testid="platform-coverage">Changed-line coverage | 變更行覆蓋率:
+    {% if latest.coverage.status == "measured" %}{{ latest.coverage.changed_lines_executed }} / {{ latest.coverage.changed_lines_total }}{% else %}<span class="muted">Not measured. | 未量測。</span>{% endif %}</p>
+  <h3>Discarded test changes <span class="heading-note">已丟棄的測試變更</span></h3>
+  <table data-testid="platform-discarded">
+    <thead><tr><th>Path | 路徑</th><th>Reason | 原因</th></tr></thead>
+    <tbody>
+    {% for change in latest.discarded_test_changes %}<tr><td><code>{{ change.path }}</code></td><td>{{ change.reason }}</td></tr>{% else %}<tr><td colspan="2" class="muted">None. | 無。</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <h3>Shadow findings <span class="heading-note">Shadow 偵測結果（不影響判定）</span></h3>
+  <div data-testid="platform-findings">{% set findings = latest.findings %}{% include "_findings.html" %}</div>
+  <h3>Re-run history <span class="heading-note">重跑紀錄</span></h3>
+  <table data-testid="platform-history">
+    <thead><tr><th>Verification</th><th>Trigger | 觸發</th><th>Status | 狀態</th><th>Assurance | 保證等級</th><th>Reason | 原因</th></tr></thead>
+    <tbody>
+    {% for item in platform.records %}
+      <tr><td><a href="/dashboard/verification/runs/{{ item.verification_id }}"><code>{{ item.verification_id }}</code></a></td><td>{{ item.trigger }}</td><td>{{ item.status }}</td><td>{{ item.assurance_level or "-" }}</td><td>{{ item.skip_reason or "-" }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted" data-testid="platform-empty">No platform re-run yet. | 尚未進行平台重跑。</p>
+  {% endif %}
+</section>
+{% endif %}

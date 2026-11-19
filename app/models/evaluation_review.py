@@ -88,6 +88,8 @@ class TenantEvaluationPolicy(Base):
     # v1.5.11 tenant consent before evidence may be sent to an external (cloud) judge profile
     allow_external_judge: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     external_judge_profiles: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # v1.6.2 D24: the suite new code_fix runs are bound to when the request names none ("" = no default)
+    default_verification_suite_id: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
     updated_by: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

@@ -978,10 +978,10 @@ def test_operations_judge_and_sampling_health_are_advisory(session_factory, monk
 
 def test_evaluator_version_unchanged_by_judge():
     version = EvaluationEngine().version()
-    assert version.startswith("v1.5.9:")
+    assert version.startswith("v1.6.2:")
     from app.services.evaluation import registry
 
-    assert registry.ENGINE_VERSION == "v1.5.9"
+    assert registry.ENGINE_VERSION == "v1.6.2"
 
 
 # ---------------------------------------------------------------------------

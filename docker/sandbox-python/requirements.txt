@@ -1,0 +1,3 @@
+# v1.6.2: the packages of the sandbox image. Exact versions, audited on every pull request (scripts/dependency_audit.py).
+pytest==9.0.3
+coverage==7.10.7

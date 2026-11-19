@@ -37,6 +37,7 @@ from app.models.governance_event import GovernanceEvent
 from app.models.incident import Incident
 from app.models.judge import JudgeAssessment, ReviewSamplingDecision
 from app.models.retention import LegalHold, RetentionPurge, RetentionTombstone
+from app.models.sandbox import SandboxJob, VerificationRun
 from app.models.tool_execution import ToolExecution
 from app.models.worker_attempt import WorkerAttempt
 from app.services.governance_audit import persist_governance_event
@@ -62,6 +63,7 @@ EXCLUSION_REASONS: tuple[str, ...] = (
     "checkpoint_reference",
     "replay_reference",
     "honeypot_measurement",
+    "verification_in_progress",
 )
 # Skip-only codes used at apply time in addition to the D9 reasons.
 SKIP_RECENT_ACTIVITY = "recent_activity"
@@ -90,6 +92,8 @@ _DELETE_SPECS: tuple[tuple[str, Any, Any, Any], ...] = (
     ("execution_plans", ExecutionPlan, ExecutionPlan.run_id, None),
     ("run_checkpoints", RunCheckpoint, RunCheckpoint.run_id, None),
     ("replay_attempts", ReplayAttempt, ReplayAttempt.source_run_id, None),
+    ("verification_runs", VerificationRun, VerificationRun.run_id, None),
+    ("sandbox_jobs", SandboxJob, SandboxJob.run_id, None),
     ("governance_events", GovernanceEvent, GovernanceEvent.run_id, None),
     ("agent_runs", AgentRun, AgentRun.run_id, None),
 )
@@ -241,6 +245,10 @@ async def _reasons_for_runs(session: AsyncSession, runs: list[AgentRun], cutoff:
     await mark("checkpoint_reference", RunCheckpoint.run_id, RunCheckpoint.created_at >= cutoff)
     await mark("replay_reference", ReplayAttempt.source_run_id, ReplayAttempt.created_at >= cutoff)
     await mark("honeypot_measurement", HoneypotLaunch.run_id)
+    # Only a runner closes these records, so one abandoned before the cutoff (sandbox switched off) must not block forever.
+    await mark(
+        "verification_in_progress", VerificationRun.run_id, VerificationRun.status.in_(("queued", "running")), VerificationRun.created_at >= cutoff
+    )
     return {run_id: [reason for reason in EXCLUSION_REASONS if reason in reasons] for run_id, reasons in found.items()}
 
 

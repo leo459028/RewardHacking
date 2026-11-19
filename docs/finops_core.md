@@ -1,12 +1,16 @@
 # Agent FinOps Core & Cost Accounting Reference
 
-> **Module**: Agent FinOps Core (`v1.5.10`, `FINOPS_CALCULATION_VERSION = "v1.5.10"`; no calculation changes since `v1.5.8`)
-> **Schema Revision**: `202611090001` (Alembic Head; FinOps tables unchanged since `202606010004`)
+> **Module**: Agent FinOps Core (`v1.6.2`, `FINOPS_CALCULATION_VERSION = "v1.6.2"`; no model or tool cost calculation changes since `v1.5.8`)
+> **Schema Revision**: `202611180002` (Alembic Head; FinOps tables unchanged since `202606010004`)
 > **Reference Seed**: `app/seeds/model_pricing_seed.yaml`
 
 This document details the architectural design, database schemas, burn-rate forecasting, Dynamic Token Broker pre-execution leasing, settled ledger deduplication, multi-currency FX & tax accounting, cost-center attribution, manual reconciliation adjustments, ledger exports, model-aware routing, active budget enforcement, context-aware pricing resolution, administration APIs, and YAML seed ingestion mechanics of the **Agent FinOps Core** engine.
 
 ---
+
+## Sandbox Re-Run Compute (`v1.6.2`)
+
+Each finished platform re-run records one `UsageEvent` and one `CostEvent` (`step_id="sandbox_verification"`, `resource_type="container"`, `usage_unit="cpu_seconds"`, `calculation_method="sandbox_compute"`), keyed by the verification ID so a repeat records nothing. The quantity is **allocated** CPU seconds (wall time × 1 CPU, `metadata.cpu_seconds_basis="allocated"`), because Docker does not report actual use here. The price is `SANDBOX_COMPUTE_COST_PER_CPU_SECOND` (default `0`: recorded, not charged), not a pricing catalog row, so a deployment without a price gets no `missing_pricing_rule` violation. Re-runs never acquire, settle or release a token lease.
 
 ## Judge Profile Cost Attribution (`v1.5.11`)
 

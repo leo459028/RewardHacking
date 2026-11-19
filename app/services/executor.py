@@ -7,7 +7,7 @@ from typing import Any, Protocol
 
 from app.core import tracing
 from app.schemas.agent import AgentRequest
-from app.services.sandbox import ExecutionSpec, Limits, Mount, SandboxBackend, get_backend, isolation_satisfied, required_isolation
+from app.services.sandbox import ExecutionSpec, Limits, Mount, SandboxBackend, get_tool_backend, isolation_satisfied, required_isolation
 
 
 TASK_TOOL_ALLOWLIST: dict[str, set[str]] = {
@@ -66,7 +66,8 @@ def _sandbox_execution(
 ) -> dict[str, object]:
     """v1.6.0 D23: run one allowed tool through the sandbox backend and describe it for the transcript.
 
-    Hashes and identifiers only. The isolation requirement is recorded, not enforced, in this release (D21).
+    Hashes and identifiers only. Agent-run tools stay simulated, so the requirement is recorded here (D21); it is
+    enforced for work that really executes (v1.6.2 D20).
     """
     caps = backend.capabilities()
     cap = caps.max_limits
@@ -117,7 +118,7 @@ class BoundedToolExecutor:
         from app.services.mcp_gateway import resolve_tool_mcp_server, validate_tool_output
 
         settings = get_settings()
-        backend = get_backend(settings)
+        backend = get_tool_backend(settings)
         labels = {"run_id": run_id, "tenant_id": request.tenant_id or "default"}
 
         if isinstance(request.metadata, dict) and request.metadata.get("simulate_worker_failure"):

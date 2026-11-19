@@ -1,6 +1,6 @@
 # Developer Guide & Local Setup
 
-> **Guide Version**: `v1.5.3`
+> **Guide Version**: `v1.6.2`
 > **Python Version**: `>=3.11`
 > **Linter**: `ruff`
 > **Test Runner**: `pytest` & `scripts/browser_manual_test.py`
@@ -42,7 +42,7 @@ RewardHacking/
 ```bash
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 cp .env.example .env
 ```
 
@@ -100,4 +100,4 @@ When modifying SQLAlchemy models under `app/models/`:
 
 - Forms submitted via HTML dashboard routes use `application/x-www-form-urlencoded` parsed via `request.form()`. The runtime includes `python-multipart` to support this.
 - When creating or modifying dashboard routes, ensure both the `GET` view and the corresponding `POST` action are tested in `tests/` to guarantee reliable operation.
-- If introducing new Python packages, ensure both `requirements.txt` and `pyproject.toml` are updated synchronously.
+- If introducing new Python packages, update `pyproject.toml` together with `requirements.txt` (run time) or `requirements-dev.txt` (tests and tools; never installed into the image).

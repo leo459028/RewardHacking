@@ -699,7 +699,9 @@ async def preflight(
 ) -> McpPreflightResult:
     """Shared Safe MCP Gateway preflight for every submit entry point (D16)."""
     from app.services.control_plane import list_tool_definitions
+    from app.services.verification.suites import bound_request
 
+    agent_request = await bound_request(session, agent_request)  # v1.6.2 D24: refuses an unusable verification suite
     tools = tools if tools is not None else await list_tool_definitions(session)
     index = _tool_index(tools)
     server_map = await get_mcp_server_map(session, settings)

@@ -177,6 +177,7 @@
     }
     .detail-grid { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
     .success { background: #ecfdf3; border: 1px solid #abefc6; border-radius: 8px; color: var(--ok); padding: 12px; margin-bottom: 12px; }
+    .notice { background: #fffaeb; border: 1px solid #fedf89; border-radius: 8px; color: #93370d; padding: 12px; margin-bottom: 12px; }
     .error { background: #fef3f2; border: 1px solid #fecdca; border-radius: 8px; color: var(--danger); padding: 12px; }
     .decision-form { display: grid; gap: 8px; min-width: 220px; }
     .app-shell.bare { grid-template-columns: 1fr; }
@@ -219,6 +220,8 @@
         {% if can("retention.view", "retention") %}<a class="{{ 'active' if active == 'retention' else '' }}" href="/dashboard/retention">Retention | 資料保留</a>{% endif %}
         {% if can("dashboard.view", "change_requests") %}<a class="{{ 'active' if active == 'change-requests' else '' }}" href="/dashboard/change-requests">Change Requests | 變更覆核</a>{% endif %}
         {% if can("audit_chain.read", "audit_chain") %}<a class="{{ 'active' if active == 'audit-chain' else '' }}" href="/dashboard/audit-chain">Audit Chain | 稽核鏈</a>{% endif %}
+        {% if can("sandbox.view", "sandbox") %}<a class="{{ 'active' if active == 'sandbox' else '' }}" href="/dashboard/sandbox">Sandbox | 沙箱</a>{% endif %}
+        {% if can("verification.view", "verification") %}<a class="{{ 'active' if active == 'verification' else '' }}" href="/dashboard/verification">Verification | 平台重跑驗證</a>{% endif %}
         {% if can("runs.submit", "playground") %}<a class="{{ 'active' if active == 'playground' else '' }}" href="/dashboard/playground">Playground</a>{% endif %}
         {% if principal_ and not principal_.synthetic and can("users.manage", "users") %}
         <a class="{{ 'active' if active == 'users' else '' }}" href="/dashboard/admin/users">Users | 使用者</a>

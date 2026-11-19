@@ -51,8 +51,9 @@ STEPS: tuple[Step, ...] = (
     Step("import_contracts", "core", ("lint-imports",), 300),
     Step("diff_check", "core", ("git", "diff", "--check"), 60),
     Step("pytest_full", "core", (PY, "-m", "pytest", "-q", "-W", "error::DeprecationWarning"), 1800),
-    Step("docker_build", "docker", ("docker", "compose", "up", "-d", "--build"), 1800),
-    Step("docker_ps", "docker", ("docker", "compose", "ps"), 120),
+    # The sandbox profile is part of the release: the E2E re-runs must execute on the runner image built from this tree.
+    Step("docker_build", "docker", ("docker", "compose", "--profile", "sandbox", "up", "-d", "--build"), 1800),
+    Step("docker_ps", "docker", ("docker", "compose", "--profile", "sandbox", "ps"), 120),
     Step("alembic_upgrade", "docker", ("docker", "compose", "exec", "-T", "api", "alembic", "upgrade", "head"), 300),
     Step("alembic_current", "docker", ("docker", "compose", "exec", "-T", "api", "alembic", "current"), 120),
     Step("browser_e2e", "e2e", (PY, "scripts/browser_manual_test.py"), 1800),
