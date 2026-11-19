@@ -78,6 +78,12 @@ jobs:
       - name: Scan sandbox image content
         run: python scripts/image_content_check.py --image rewardhacking-sandbox-python:ci
 
+      - name: Third-party notices are in both images
+        run: |
+          for image in rewardhacking:ci rewardhacking-sandbox-python:ci; do
+            docker run --rm --entrypoint grep "$image" -q "^PYTHON PACKAGES" /licenses/THIRD_PARTY_NOTICES.txt
+          done
+
       # Report only: most operating-system advisories have no fix yet and depend on the base image. Python packages are
       # checked, and block, in the dependencies job.
       - name: Vulnerability report (does not block)

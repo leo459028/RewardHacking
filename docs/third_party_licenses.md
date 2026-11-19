@@ -16,6 +16,23 @@ The published images contain open-source software from other projects: a Debian 
 | Python packages | 53, in `/opt/venv` | 6 (`pytest`, `coverage` and their dependencies), in `/usr/local/lib/python3.12/site-packages` |
 | This project | `/app` (Apache-2.0) | none |
 
+## The Notices File in Each Image
+
+Both images carry **`/licenses/THIRD_PARTY_NOTICES.txt`** (in the main image also linked as `/app/THIRD_PARTY_NOTICES.txt`). It is written during the image build from what is actually installed, and holds:
+
+- every Debian package with its version, source package and the licenses named in its copyright file;
+- every Python package with its version and license;
+- the full license and `NOTICE` texts of the Python packages;
+- where to obtain the source code that GPL, LGPL and MPL ask for, with a link to the exact version of each MPL-2.0 package.
+
+```bash
+docker run --rm --entrypoint cat ghcr.io/leo459028/rewardhacking:v1.6.2 /licenses/THIRD_PARTY_NOTICES.txt
+```
+
+The image labels name it too: `org.opencontainers.image.licenses` (this project, `Apache-2.0`), `org.opencontainers.image.source` (this repository) and `org.opencontainers.image.description`.
+
+**Licenses are checked at build time.** The build stops when a Python package declares a strong copyleft license (GPL, AGPL, SSPL), a weak copyleft license that has not been reviewed (`WEAK_COPYLEFT_ALLOWED` in `docker/sandbox-python/third_party_notices.py`, today `certifi` and `orjson`), no license, or no license file. The CI `image` job builds both images on every pull request, so such a dependency is caught before it merges.
+
 ## Where the License Texts Are
 
 - **Debian packages**: every package keeps its copyright and license file at `/usr/share/doc/<package>/copyright`.
