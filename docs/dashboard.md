@@ -76,7 +76,7 @@ The Run Detail view aggregates the full end-to-end lifecycle of a single agent t
 - **Prompt Guard**: Shows detected adversarial signals (such as classical Chinese injection markers or bypass commands).
 
 ### 3. Production Operations Release Gate (`/dashboard/operations`)
-In production environments (`APP_ENV=prod`), deployments must meet strict release criteria:
+In production environments (any `APP_ENV` but `dev` / `test`), deployments must meet strict release criteria:
 1. Verify that no unresolved blocking incidents exist.
 2. Confirm the Dead Letter Queue (DLQ) is completely drained.
 3. Submit required operational evidence:

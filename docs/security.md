@@ -143,7 +143,7 @@ applied per route (see the next section); CSRF tokens, re-authentication and sec
 
 | Threat | Control |
 | :--- | :--- |
-| Shared credentials hide who did what | Personal accounts (`dashboard_users`); HTTP Basic Auth was removed. `DASHBOARD_AUTH_MODE=off` (local development only, synthetic `local-admin`, banner on every page) fails the `dashboard_auth_mode` operations check in `APP_ENV=prod` |
+| Shared credentials hide who did what | Personal accounts (`dashboard_users`); HTTP Basic Auth was removed. `DASHBOARD_AUTH_MODE=off` (local development only, synthetic `local-admin`, banner on every page) fails the `dashboard_auth_mode` operations check and, since `v1.6.3`, makes the API refuse to start in production (any `APP_ENV` but `dev` / `test`) |
 | Unauthenticated access | In `session` mode every `/dashboard` route needs a live session: pages redirect (303) to `/dashboard/login?next=...`, other methods answer `401 dashboard_sign_in_required` and nothing runs |
 | Password database theft | Standard-library scrypt (`scrypt$n$r$p$salt$hash`, default N=2^15, r=8, p=3, 16-byte salt, constant-time comparison); weaker stored hashes are upgraded at the next sign-in. Minimum 12 characters, not the username, not on the built-in common-password list; no composition rules |
 | Session token theft from the database | Only the SHA-256 of the 256-bit cookie token is stored. Cookie `rh_session`: `HttpOnly`, `SameSite=Lax`, `Path=/dashboard`, `Secure` unless `APP_ENV=dev` (`DASHBOARD_COOKIE_SECURE`) |
@@ -266,7 +266,7 @@ on `/dashboard/audit-chain` (`admin`, re-authentication) signs the head with Ed2
 or `AUDIT_CHAIN_SIGNING_KEY`). The signature covers the checkpoint fields above; `key_id` is the first 16 hex digits
 of the SHA-256 of the raw public key; each checkpoint links to the previous one (`prev_checkpoint_hash`) and is itself
 chained. Without a key the checkpoint is written as `unsigned` and the `audit_chain_integrity` operations check warns
-(fails in `APP_ENV=prod`). Re-running with no new entries writes nothing. Old checkpoints stay verifiable after a key
+(fails in production (any `APP_ENV` but `dev` / `test`)). Re-running with no new entries writes nothing. Old checkpoints stay verifiable after a key
 rotation when the old public key is listed in `AUDIT_CHAIN_PUBLIC_KEYS_FILE`.
 
 **Verification** (`python -m app.jobs.audit_chain --verify`, or bounded online on the API / Dashboard) reports:
@@ -299,7 +299,7 @@ records: it never changes a verdict, releases a run or alters source rows.
 
 Four high-impact actions can require a second person. `DUAL_CONTROL_ACTIONS` is a comma list of
 `retention.apply`, `legal_hold.release`, `judge.activate` and `evaluation_policy.protected_paths`; it is empty by
-default, so nothing changes after an upgrade. The `dual_control_configured` operations check warns in `APP_ENV=prod`
+default, so nothing changes after an upgrade. The `dual_control_configured` operations check warns in production (any `APP_ENV` but `dev` / `test`)
 while `retention.apply` or `legal_hold.release` is not listed (advisory elsewhere) and warns on unknown names.
 
 **Enforcement is in the service layer** (`app/services/change_requests.py`, `execute_or_request()`), which the API
@@ -364,7 +364,7 @@ Only the platform's own conformance suite executes in this phase; agent-run tool
 | Output flooding memory or the host disk | Output is read from the attach stream with `log driver none`: all of it is hashed, only `max_output_bytes` is kept. The output archive is read as a stream with a hard byte limit |
 | Malicious files in the output | The output archive is never unpacked on disk. Only regular files with safe relative paths are accepted; symlinks, hard links, devices and `..` are dropped and the result is marked truncated |
 | Tampered or unexpected workspace input | Artifacts must match the SHA-256 in the spec, and only regular files and directories are copied, re-owned by the sandbox user. A host path can never be a mount source |
-| Mutable or substituted images | Only digest-pinned references are accepted. Local image IDs need an explicit setting and are never allowed when `APP_ENV=prod`. Images are not pulled unless `SANDBOX_DOCKER_PULL=missing` |
+| Mutable or substituted images | Only digest-pinned references are accepted. Local image IDs need an explicit setting and are never allowed in production (any `APP_ENV` but `dev` / `test`). Images are not pulled unless `SANDBOX_DOCKER_PULL=missing` |
 | Stale results after a crash | Job leases are renewed by the heartbeat. An expired job is retried once and then ends as `expired`; a runner that lost its lease cannot write a result. Leftover containers and volumes are removed at start-up |
 
 ## Judge Activation & Dashboard Profiles Threat Model (`v1.5.12`)

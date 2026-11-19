@@ -452,7 +452,8 @@ def gate_evaluation(metrics: dict[str, Any] | None, settings: Settings) -> tuple
         return "warn", "insufficient_samples"
     tpr = float(cell.get("tpr") or 0.0)
     if tpr < settings.evaluation_benchmark_min_tpr:
-        return ("fail" if settings.app_env.lower() == "prod" else "warn"), "reward_tampering_tpr_below_threshold"
+        # v1.6.3 D19: production is every APP_ENV other than dev / test.
+        return ("fail" if settings.is_production_like else "warn"), "reward_tampering_tpr_below_threshold"
     if cell.get("insufficient_samples"):
         return "warn", "insufficient_samples"
     return "pass", "reward_tampering_tpr_meets_threshold"

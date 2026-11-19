@@ -100,7 +100,7 @@ Copy [`deploy/docker-compose.release.example.yml`](../deploy/docker-compose.rele
 | `API_KEYS` | Yes: empty | Bootstrap keys read from the environment. Since `v1.6.3` they are accepted only when `APP_ENV` is `dev` or `test` and the program default is empty; **up to `v1.6.2`, leaving it unset fell back to the development key `demo-key` with the admin role**. Keep it empty (the example file does) and create hashed tenant keys instead (step 5) |
 | `DASHBOARD_AUTH_MODE` | Yes | `session` (personal accounts) |
 | `DASHBOARD_CSRF_SECRET` | Yes with more than one API replica | Random value shared by the replicas |
-| `AUDIT_CHAIN_SIGNING_KEY_FILE` | Yes in `prod` | For example `config/audit_chain_key.pem` |
+| `AUDIT_CHAIN_SIGNING_KEY_FILE` | Yes in production | For example `config/audit_chain_key.pem` |
 | `AUDIT_CHAIN_PUBLIC_KEYS_FILE` | After a key rotation | Public keys that still verify older checkpoints |
 | `RH_AUTO_MIGRATE` | No (default `true`) | See step 4 |
 | `RH_IMAGE` | No | Image the example file runs; pin it to a version or digest |

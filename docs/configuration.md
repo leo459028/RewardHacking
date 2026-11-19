@@ -13,7 +13,7 @@ Application configuration is loaded from environment variables and local `.env` 
 | Variable | Default Value | Description |
 | --- | --- | --- |
 | `APP_NAME` | `reward-hacking-guardrail` | Service name identifier in OpenAPI and log streams |
-| `APP_ENV` | `dev` (the published image sets `prod`) | Target runtime environment. Since `v1.6.3` only `dev` and `test` are development environments; every other value (`prod`, `production`, `staging`, empty, ...) is treated as production: environment API keys are refused, and the API refuses to start with `AUTH_ENABLED=false` or Dashboard sign-in mode `off` |
+| `APP_ENV` | `dev` (the published image sets `prod`) | Target runtime environment. Since `v1.6.3` only `dev` and `test` are development environments; every other value (`prod`, `production`, `staging`, empty, ...) is treated as production: environment API keys are refused, the API refuses to start with `AUTH_ENABLED=false` or Dashboard sign-in mode `off`, and every production-only operations check and sandbox rule applies. A staging environment therefore gets the production checks; for a relaxed test stack set `APP_ENV=test`, which also accepts environment API keys and `AUTH_ENABLED=false` |
 | `LOG_LEVEL` | `INFO` | Structlog level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 | `API_HOST` | `0.0.0.0` | Ingress binding host interface |
 | `API_PORT` | `8000` | Ingress HTTP port |
@@ -57,10 +57,10 @@ Application configuration is loaded from environment variables and local `.env` 
 | `AUDIT_RETENTION_PLAN_TTL_MINUTES` | `60` | A plan must be applied within this many minutes |
 | `FINOPS_LEDGER_RETENTION_DAYS` | `2555` | Age reported by `GET /v1/retention/finops-ledger-report`; the ledger is never deleted |
 | `AUDIT_CHAIN_ENABLED` | `true` | `v1.6.1`: append every governance event, review / approval decision, tombstone and checkpoint to the tamper-evident `audit_chain_entries` ledger in the same transaction. When `false` nothing is chained and verification later reports those rows as `unchained_record` |
-| `AUDIT_CHAIN_SIGNING_KEY_FILE` | *(empty)* | Ed25519 private key (unencrypted PEM file) used to sign checkpoints. Keep it apart from the database; empty = checkpoints are `unsigned` (operations check warns, fails in `APP_ENV=prod`) |
+| `AUDIT_CHAIN_SIGNING_KEY_FILE` | *(empty)* | Ed25519 private key (unencrypted PEM file) used to sign checkpoints. Keep it apart from the database; empty = checkpoints are `unsigned` (operations check warns, fails in production (any `APP_ENV` but `dev` / `test`)) |
 | `AUDIT_CHAIN_SIGNING_KEY` | *(empty)* | The same key as a PEM string (secret); used only when `AUDIT_CHAIN_SIGNING_KEY_FILE` is empty |
 | `AUDIT_CHAIN_PUBLIC_KEYS_FILE` | *(empty)* | PEM file with the public keys accepted when verifying (keep old keys after a rotation); the current signing key is always accepted |
-| `DUAL_CONTROL_ACTIONS` | *(empty)* | `v1.6.1`: comma list of actions that need a second, signed-in person (Change Requests): `retention.apply`, `legal_hold.release`, `judge.activate`, `evaluation_policy.protected_paths` (relaxations only), `verification_suite.publish` (`v1.6.2`). Empty = every action runs at once (pre-`v1.6.1` behaviour). Unknown names are ignored and warned about by `dual_control_configured`, which also warns in `APP_ENV=prod` while `retention.apply` or `legal_hold.release` is missing |
+| `DUAL_CONTROL_ACTIONS` | *(empty)* | `v1.6.1`: comma list of actions that need a second, signed-in person (Change Requests): `retention.apply`, `legal_hold.release`, `judge.activate`, `evaluation_policy.protected_paths` (relaxations only), `verification_suite.publish` (`v1.6.2`). Empty = every action runs at once (pre-`v1.6.1` behaviour). Unknown names are ignored and warned about by `dual_control_configured`, which also warns in production (any `APP_ENV` but `dev` / `test`) while `retention.apply` or `legal_hold.release` is missing |
 | `DUAL_CONTROL_REQUEST_TTL_HOURS` | `24` | Hours a pending change request stays approvable (`retention.apply` also stops at the plan's own expiry) |
 | `AUDIT_CHAIN_VERIFY_MAX_ENTRIES` | `5000` | Entries checked per online verification call (API / Dashboard); the CLI has no limit |
 | `SANDBOX_BACKEND` | `simulated` | Sandbox backend. `simulated` executes nothing. `docker` (`v1.6.2`) is used only by `sandbox-runner` for conformance and platform re-runs; agent-run tools stay simulated. Unknown values fail closed |
@@ -73,7 +73,7 @@ Application configuration is loaded from environment variables and local `.env` 
 | `SANDBOX_DOCKER_RUNTIME` | `runc` | OCI runtime: `runc` (isolation `container`) or `runsc` (gVisor, isolation `gvisor`; register it with the Docker daemon first) |
 | `SANDBOX_DOCKER_USER` | `65534:65534` | Numeric `uid:gid` inside sandbox containers; root is refused |
 | `SANDBOX_DOCKER_PULL` | `never` | `never`: images must already exist on the host. `missing`: pull a missing digest-pinned image |
-| `SANDBOX_DOCKER_ALLOW_LOCAL_IMAGE_IDS` | `false` | Local development only: also accept `sha256:<image id>`. Always off when `APP_ENV=prod` |
+| `SANDBOX_DOCKER_ALLOW_LOCAL_IMAGE_IDS` | `false` | Local development only: also accept `sha256:<image id>`. Always off in production (any `APP_ENV` but `dev` / `test`) |
 | `SANDBOX_CONFORMANCE_IMAGE` | pinned `busybox` | Digest-pinned image for the conformance suite. It needs `sh`, `cat`, `id`, `nc` and `nslookup` |
 | `SANDBOX_CONFORMANCE_MAX_AGE_HOURS` | `168` | The gate closes when the latest passing conformance run is older than this |
 | `SANDBOX_IMAGES` | `{}` | JSON object of allowed sandbox images, for example `{"python": "ghcr.io/<owner>/rewardhacking-sandbox-python@sha256:<digest>"}` |
@@ -120,7 +120,7 @@ Application configuration is loaded from environment variables and local `.env` 
 | `EVALUATION_DETECTOR_MODES` | `{}` | JSON map of detector name to `enforce` / `shadow` / `disabled` (e.g. `{"scope": "shadow"}`); unknown names fail the readiness check. `special_casing` defaults to `shadow` (`v1.5.9`). `rerun_verification` (`v1.6.2`) defaults to `shadow`; `disabled` stops its findings, and `enforce` does not change live verdicts in this release |
 | `EVALUATION_BENCHMARK_MIN_TPR` | `0.90` | `v1.5.9` minimum reward-tampering TPR at `EVALUATION_BENCHMARK_GATE_FPR` for `evaluation_benchmark_gate` (`(0, 1]`) |
 | `EVALUATION_BENCHMARK_GATE_FPR` | `0.05` | False-positive rate at which the gate reads TPR (`(0, 1)`) |
-| `EVALUATION_BENCHMARK_GATE_ENFORCED` | `false` | When `false` the benchmark gate is advisory (shown, excluded from overall readiness); when `true` a stale benchmark warns and a TPR below the minimum fails in `APP_ENV=prod` |
+| `EVALUATION_BENCHMARK_GATE_ENFORCED` | `false` | When `false` the benchmark gate is advisory (shown, excluded from overall readiness); when `true` a stale benchmark warns and a TPR below the minimum fails in production (any `APP_ENV` but `dev` / `test`) |
 | `EVALUATION_BENCHMARK_MAX_SAMPLES` | `5000` | Maximum samples per benchmark run (`422 benchmark_too_many_samples`) |
 | `EVALUATION_CHEAT_RATE_MIN_SAMPLES` | `20` | Below this many trials a cheat rate is flagged `insufficient_data` |
 | `EVALUATION_ATTESTATION_MAX_AGE_HOURS` | `24` | Maximum age of a CI attestation timestamp |

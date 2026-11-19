@@ -114,7 +114,7 @@ async def _evaluation_benchmark_gate_check(session: AsyncSession, *, settings: S
 
     Reads stored benchmark runs only (never runs a benchmark). Advisory unless
     ``EVALUATION_BENCHMARK_GATE_ENFORCED`` is true; when enforced, a stale benchmark warns and a TPR
-    below ``EVALUATION_BENCHMARK_MIN_TPR`` fails in ``APP_ENV=prod``.
+    below ``EVALUATION_BENCHMARK_MIN_TPR`` fails in production (any APP_ENV but dev / test, v1.6.3 D19).
     """
     from app.services.benchmark import gate_evaluation, latest_gate_run
     from app.services.evaluation.engine import EvaluationEngine
@@ -220,7 +220,7 @@ async def _evaluation_judge_health_check(session: AsyncSession, *, settings: Set
         )
         or 0
     )
-    if same_family and settings.app_env.lower() == "prod":
+    if same_family and settings.is_production_like:  # v1.6.3 D19: every APP_ENV other than dev / test
         status = "warn" if status == "pass" else status
         issues.append(f"{same_family} assessments used a judge from the monitored agent's model family")
     if settings.judge_uses_legacy_alias:
@@ -405,9 +405,11 @@ async def _retention_policy_check(session: AsyncSession, *, settings: Settings) 
 
 
 async def _dashboard_auth_mode_check(session: AsyncSession, *, settings: Settings) -> OperationsCheck:
-    """v1.6.1 D9 / D14: Dashboard sign-in must be on in production; deprecated Basic Auth settings are flagged."""
+    """v1.6.1 D9 / D14: Dashboard sign-in must be on in production; deprecated Basic Auth settings are flagged.
+
+    v1.6.3 D19: "production" is every APP_ENV other than dev / test (the API also refuses to start with off there)."""
     mode = settings.dashboard_auth_mode
-    prod = (settings.app_env or "").strip().lower() == "prod"
+    prod = settings.is_production_like
     admins = int(
         await session.scalar(
             select(func.count()).select_from(DashboardUser).where(DashboardUser.role == "admin", DashboardUser.status == "active")
@@ -472,9 +474,10 @@ AUDIT_CHAIN_CHECKPOINT_MAX_AGE_HOURS = 48
 async def _audit_chain_integrity_check(session: AsyncSession, *, settings: Settings) -> OperationsCheck:
     """v1.6.1 D33 / Q7: the chain must be on, recent entries must verify, and checkpoints must be signed and recent.
 
-    Outside ``APP_ENV=prod`` a missing signing key, a disabled chain or a stale checkpoint is an advisory warning (it
-    does not change the overall gate); in production it fails. A tail that does not verify fails everywhere."""
-    prod = (settings.app_env or "").strip().lower() == "prod"
+    In ``APP_ENV=dev`` / ``test`` a missing signing key, a disabled chain or a stale checkpoint is an advisory warning
+    (it does not change the overall gate); in production (every other APP_ENV, v1.6.3 D19) it fails. A tail that does
+    not verify fails everywhere."""
+    prod = settings.is_production_like
     current = await audit_chain.head(session)
     head_seq = current.seq if current is not None else 0
     tail = await audit_chain.verify(
@@ -520,11 +523,12 @@ DUAL_CONTROL_REQUIRED_IN_PROD = ("retention.apply", "legal_hold.release")
 def _dual_control_configured_check(settings: Settings) -> OperationsCheck:
     """v1.6.1 D38 / Q4: production should put purge apply and legal-hold release under dual control.
 
-    Missing actions warn in ``APP_ENV=prod``; elsewhere the warning is advisory (it does not change the overall gate,
-    like ``dashboard_auth_mode`` and ``audit_chain_integrity``). Unknown names in ``DUAL_CONTROL_ACTIONS`` also warn."""
+    Missing actions warn in production (every APP_ENV other than dev / test, v1.6.3 D19); in dev / test the warning is
+    advisory (it does not change the overall gate, like ``dashboard_auth_mode`` and ``audit_chain_integrity``). Unknown
+    names in ``DUAL_CONTROL_ACTIONS`` also warn."""
     from app.services.change_requests import configured_actions
 
-    prod = (settings.app_env or "").strip().lower() == "prod"
+    prod = settings.is_production_like
     enabled, unknown = configured_actions(settings)
     missing = [action for action in DUAL_CONTROL_REQUIRED_IN_PROD if action not in enabled]
     if unknown:
@@ -558,7 +562,7 @@ async def _sandbox_backend_health_check(session: AsyncSession, settings: Setting
     elif settings.sandbox_execution_enabled and not gate_status.ready:
         status = "fail"
         detail = f"Sandbox execution is on but the gate is closed: {', '.join(gate_status.reasons)}."
-    elif settings.sandbox_execution_enabled and (settings.app_env or "").strip().lower() == "prod" and docker_config.runtime_of(settings) == "runc":
+    elif settings.sandbox_execution_enabled and settings.is_production_like and docker_config.runtime_of(settings) == "runc":
         status = "warn"
         detail = "Sandbox gate is open on runc in production; containers share the host kernel, use runsc (gVisor) for untrusted code."
     elif configured_backend(settings) == DOCKER:
@@ -682,7 +686,7 @@ async def compute_operations_readiness(
         or 0
     )
     violation_status = (
-        ("fail" if settings.app_env.lower() == "prod" else "warn")
+        ("fail" if settings.is_production_like else "warn")  # v1.6.3 D19
         if open_critical_violations
         else "pass"
     )
@@ -843,7 +847,7 @@ async def compute_operations_readiness(
     backup = await latest_evidence(session, evidence_type="backup_restore_drill")
     secret = await latest_evidence(session, evidence_type="secret_rotation")
     safety = await latest_evidence(session, evidence_type="safety_regression")
-    safety_missing_status = "fail" if settings.app_env.lower() == "prod" else "warn"
+    safety_missing_status = "fail" if settings.is_production_like else "warn"  # v1.6.3 D19
     checks.extend(
         [
             _fresh_evidence_check(

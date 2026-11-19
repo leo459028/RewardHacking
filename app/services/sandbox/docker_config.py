@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.core.config import DEVELOPMENT_APP_ENVS
 from app.services.sandbox.base import BackendCapabilities, IsolationLevel
 from app.services.sandbox.registry import SandboxConfigError
 from app.services.sandbox.spec import image_reference_valid
@@ -65,8 +66,8 @@ def user_ids(settings: Any) -> tuple[int, int] | None:
 
 
 def local_image_ids_allowed(settings: Any) -> bool:
-    """D18: never in production, whatever the setting says."""
-    prod = str(getattr(settings, "app_env", "") or "").strip().lower() == "prod"
+    """D18: never in production, whatever the setting says (v1.6.3 D19: every APP_ENV other than dev / test)."""
+    prod = str(getattr(settings, "app_env", "") or "").strip().lower() not in DEVELOPMENT_APP_ENVS
     return bool(getattr(settings, "sandbox_docker_allow_local_image_ids", False)) and not prod
 
 

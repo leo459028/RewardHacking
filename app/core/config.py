@@ -120,7 +120,7 @@ class Settings(BaseSettings):
     sandbox_docker_runtime: str = "runc"  # D20: runc -> isolation "container"; runsc -> "gvisor"
     sandbox_docker_user: str = "65534:65534"  # D16: numeric uid:gid, never 0
     sandbox_docker_pull: str = "never"  # D16: never | missing
-    sandbox_docker_allow_local_image_ids: bool = False  # D18: local development only; always false when APP_ENV=prod
+    sandbox_docker_allow_local_image_ids: bool = False  # D18: local development only; always false unless APP_ENV is dev / test (v1.6.3 D19)
     sandbox_conformance_image: str = "busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec"
     sandbox_conformance_max_age_hours: int = 168
     # D18: JSON {"python": "<digest-pinned reference>"}. ``str`` lets an empty variable reach the validator below.

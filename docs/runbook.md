@@ -208,7 +208,7 @@ docker compose logs --tail=100 -f worker
 - **Lost the only admin password**: `python -m app.jobs.users reset-password --username <admin>` on the server.
 - **Suspected stolen session**: **Sign out everywhere** for that user on `/dashboard/admin/users`, or disable the account (`python -m app.jobs.users disable --username <name>`); both revoke every session at once.
 - **Other CLI commands**: `list`, `enable`, `set-role --role <role> [--tenant-id <id>]` (a role change signs the user out).
-- **`dashboard_auth_mode` check**: `fail` = sign-in is off in `APP_ENV=prod`; `warn` = no active admin account yet, or the deprecated Basic Auth variables are still set.
+- **`dashboard_auth_mode` check**: `fail` = sign-in is off in production (any `APP_ENV` but `dev` / `test`) (the API also refuses to start then); `warn` = no active admin account yet, or the deprecated Basic Auth variables are still set.
 
 ### 14. Audit Chain: Keys, Checkpoints and Verification Failures (`v1.6.1`)
 - **Generate a signing key** (once, outside the database host if possible): `python -c "from cryptography.hazmat.primitives.asymmetric import ed25519; from cryptography.hazmat.primitives import serialization as s; k=ed25519.Ed25519PrivateKey.generate(); open('audit_chain_key.pem','wb').write(k.private_bytes(s.Encoding.PEM, s.PrivateFormat.PKCS8, s.NoEncryption())); open('audit_chain_public.pem','wb').write(k.public_key().public_bytes(s.Encoding.PEM, s.PublicFormat.SubjectPublicKeyInfo))"`. Mount the private key read-only into the api and job containers and set `AUDIT_CHAIN_SIGNING_KEY_FILE`; never commit it, bake it into the image or store it in the database. Keep the public key with the people who verify.
@@ -216,7 +216,7 @@ docker compose logs --tail=100 -f worker
 - **Rotate the key**: create a new key, append the old public key to the file named by `AUDIT_CHAIN_PUBLIC_KEYS_FILE`, switch `AUDIT_CHAIN_SIGNING_KEY_FILE` to the new key and restart. Old checkpoints keep verifying.
 - **Verify**: `python -m app.jobs.audit_chain --verify --public-keys <your copy of the public keys>` (exit 0 ok, 1 inconsistent, 2 could not run). `/dashboard/audit-chain` → **Verify** checks up to `AUDIT_CHAIN_VERIFY_MAX_ENTRIES` entries per click.
 - **Verification failed** (`audit_chain_integrity` fails, or exit 1): do not "fix" the chain. Snapshot the database first (`pg_dump`), then read `details`: `hash_mismatch` on a source row (`governance_events`, `evaluation_reviews`, `approval_events`, `retention_tombstones`) means the row changed after it was written; `missing_source` means a row was deleted outside a retention purge; `chain_break` / `hash_mismatch` on entries means the ledger itself was edited; `unchained_record` means rows were written while the chain was disabled or by a path that bypassed the ORM; `checkpoint_signature_invalid` means a checkpoint was altered or signed by an untrusted key. Compare against your exported checkpoints to find the last good `seq`, and treat it as a security incident.
-- **`audit_chain_integrity` warn** (outside prod): no signing key, no checkpoint yet, the latest checkpoint is unsigned or older than 48 hours, or the chain is disabled. These fail in `APP_ENV=prod`.
+- **`audit_chain_integrity` warn** (outside prod): no signing key, no checkpoint yet, the latest checkpoint is unsigned or older than 48 hours, or the chain is disabled. These fail in production (any `APP_ENV` but `dev` / `test`).
 
 ### 15. Dual Control: Change Requests (`v1.6.1`)
 - **Turn it on**: set `DUAL_CONTROL_ACTIONS=retention.apply,legal_hold.release` (add `judge.activate`, `evaluation_policy.protected_paths` as needed) and restart the api. You need `DASHBOARD_AUTH_MODE=session` and at least two people with the action's permission (two `admin` accounts for purge apply and hold release); otherwise nobody can approve.
@@ -224,7 +224,7 @@ docker compose logs --tail=100 -f worker
 - **Approve**: the second person signs in, opens `/dashboard/change-requests`, re-authenticates if asked and clicks **Approve & execute**. The action runs immediately; `executed` shows the result, `failed` shows why (`change_request_stale` = the target changed after the request; ask for a new one).
 - **Cancel / expire**: the requester cancels with `POST /v1/change-requests/{id}/cancel` or the Dashboard **Cancel**. Pending requests expire after `DUAL_CONTROL_REQUEST_TTL_HOURS` (24); purge-plan requests expire with the plan (`AUDIT_RETENTION_PLAN_TTL_MINUTES`), so approve those promptly or create a new plan.
 - **Scheduled purge**: with `retention.apply` listed, `python -m app.jobs.retention --apply-latest` exits 2 (`second_approval_required`). Keep scheduling `--plan` and request the apply through the API for a person to approve.
-- **`dual_control_configured` warn**: in `APP_ENV=prod`, `retention.apply` or `legal_hold.release` is not listed (advisory outside prod), or `DUAL_CONTROL_ACTIONS` has an unknown name.
+- **`dual_control_configured` warn**: in production (any `APP_ENV` but `dev` / `test`), `retention.apply` or `legal_hold.release` is not listed (advisory outside prod), or `DUAL_CONTROL_ACTIONS` has an unknown name.
 
 ### 16a. Platform Re-Runs (`v1.6.2`)
 
