@@ -1619,7 +1619,7 @@ def run_manual_test_suite(
         assert "evaluation_judge_health" in ops_html and "evaluation_sampling_health" in ops_html
         assert "retention_policy" in ops_html and "sandbox_backend_health" in ops_html and "sandbox_runner_health" in ops_html
         assert "dashboard_auth_mode" in ops_html and "audit_chain_integrity" in ops_html and "dual_control_configured" in ops_html
-        assert "api_auth_enabled" in ops_html and "env_created_api_keys" in ops_html  # v1.6.3
+        assert "api_auth_enabled" in ops_html and "env_created_api_keys" in ops_html and "unattributed_api_keys" in ops_html  # v1.6.3
         release_ver = page.input_value('input[name="release_version"]')
         assert release_ver == "v1.6.2"
 

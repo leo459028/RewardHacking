@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from app.models.tenant import Tenant, TenantApiKey
 from app.services.auth import hash_api_key
+from app.services.governance_audit import add_governance_event
 
 
 def seed_db_api_key(
@@ -22,8 +23,12 @@ def seed_db_api_key(
     role: str = "admin",
     key_id: str | None = None,
     tenant_status: str = "active",
+    created_by: str | None = None,
 ) -> str:
-    """Create the tenant (when missing) and an active database key whose plaintext is ``plaintext``; return its key_id."""
+    """Create the tenant (when missing) and an active database key whose plaintext is ``plaintext``; return its key_id.
+
+    ``created_by`` also writes the ``api_key.created`` event with that actor (``"cli"`` = the v1.6.3 CLI), so the key
+    has a recorded creator; without it the key counts in the ``unattributed_api_keys`` check (D20)."""
     key_id = key_id or f"key_test_{hash_api_key(plaintext)[:12]}"
 
     async def scenario() -> None:
@@ -43,6 +48,16 @@ def seed_db_api_key(
                     revoked=False,
                 )
             )
+            if created_by is not None:
+                add_governance_event(
+                    session,
+                    tenant_id=tenant_id,
+                    user_id=created_by,
+                    event_type="api_key.created",
+                    decision="created",
+                    reason=f"API key {key_id} ({role}) created from the CLI.",
+                    details={"key_id": key_id, "role": role, "key_prefix": plaintext[:8]},
+                )
             await session.commit()
 
     asyncio.run(scenario())

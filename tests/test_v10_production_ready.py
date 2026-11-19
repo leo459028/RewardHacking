@@ -191,7 +191,7 @@ def test_prod_readiness_passes_with_fresh_safety_regression_evidence(
     )
     _use_audit_chain_key(monkeypatch)
     _seed_dashboard_admin(session_factory)
-    seed_db_api_key(session_factory, PROD_ADMIN_KEY, tenant_id="ops")
+    seed_db_api_key(session_factory, PROD_ADMIN_KEY, tenant_id="ops", created_by="cli")  # v1.6.3 D20: a key with a recorded creator
 
     with v10_client(session_factory) as client:
         client.headers["X-API-Key"] = PROD_ADMIN_KEY

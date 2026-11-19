@@ -1,4 +1,5 @@
-"""v1.6.3 P2: find database API keys that an environment API key created (plan D6-D9).
+"""v1.6.3 P2 / P2.1: find database API keys that an environment API key created, or whose creator is unknown
+(plan D6-D9, D20).
 
 Covers the attribution of every event source (pre-v1.6.3 API events with the key id only in ``reason``, Dashboard
 events, v1.6.3 API events with ``details.key_id``), ``unknown``, the ``env_created_api_keys`` operations check
@@ -612,3 +613,131 @@ def test_v163_cli_list_created_by_env_matches_the_operations_check(capsys, sessi
     assert [item["key_id"] for item in tenant_only["api_keys"]] == ["key_env1"]
     _, unknown, _ = _cli(capsys, session_factory, "list", "--created-by", "unknown")
     assert [item["key_id"] for item in unknown["api_keys"]] == ["key_orphan"]
+
+
+# ---------------------------------------------------------------------------
+# D20 (P2.1): keys whose creator is unknown get their own check
+# ---------------------------------------------------------------------------
+
+
+def _unattributed_check(session_factory) -> operations.OperationsCheck:
+    async def scenario():
+        async with session_factory() as session:
+            return await operations._unattributed_api_keys_check(session)
+
+    return _run(scenario())
+
+
+def test_v163_unknown_creators_carry_a_reason_and_other_kinds_none(session_factory):
+    _seed(
+        session_factory,
+        keys=[_key("key_noevent"), _key("key_noactor"), _key("key_envone"), _key("key_dashone")],
+        events=[_api_event_v163("key_noactor", ""), _api_event_v163("key_envone", "legacy"), _dashboard_event("key_dashone", "user:a")],
+    )
+    creators = _creators(session_factory)
+    assert creators["key_noevent"].reason == provenance.UNKNOWN_NO_EVENT_REASON
+    assert creators["key_noactor"].reason == provenance.UNKNOWN_NO_ACTOR_REASON
+    assert creators["key_envone"].reason == "" and creators["key_dashone"].reason == ""
+    assert creators["key_noactor"].as_dict()["reason"] == "no_actor"
+
+
+def test_v163_unattributed_check_warns_and_splits_the_reasons(session_factory):
+    _seed(session_factory, keys=[_key("key_noevent"), _key("key_noactor", "t2")], events=[_api_event_legacy("key_noactor", "", "t2")])
+    check = _unattributed_check(session_factory)
+    assert check.check_key == "unattributed_api_keys" and check.status == "warn"
+    assert check.metadata["key_ids"] == ["key_noactor", "key_noevent"] and check.metadata["count"] == 2
+    assert check.metadata["no_actor"] == ["key_noactor"] and check.metadata["no_event"] == ["key_noevent"]
+    assert check.metadata["tenants"] == ["default", "t2"]
+    assert "AUTH_ENABLED=false" in check.detail and "outside the application" in check.detail
+    assert provenance.RUNBOOK_SECTION in check.detail
+    # The environment-key check is a different question and stays quiet.
+    assert _env_check(session_factory).status == "pass"
+
+
+def test_v163_unattributed_check_ignores_attributed_and_revoked_keys(session_factory):
+    _seed(
+        session_factory,
+        keys=[_key("key_envmade"), _key("key_dashok"), _key("key_cliok"), _key("key_dbok"), _key("key_gone", status="revoked")],
+        events=[
+            _api_event_v163("key_envmade", "legacy"),
+            _dashboard_event("key_dashok", "dashboard-admin"),
+            {"tenant_id": "default", "user_id": "cli", "reason": "API key key_cliok (admin) created from the CLI.",
+             "details": {"key_id": "key_cliok", "role": "admin"}},
+            _api_event_v163("key_dbok", "key_parent"),
+        ],
+    )
+    check = _unattributed_check(session_factory)
+    assert check.status == "pass" and check.metadata["count"] == 0 and "recorded creator" in check.detail
+
+
+def test_v163_unattributed_check_caps_the_listed_ids(session_factory):
+    ids = [f"key_orph{n:02d}" for n in range(12)]
+    _seed(session_factory, keys=[_key(key_id) for key_id in ids])
+    check = _unattributed_check(session_factory)
+    assert check.metadata["count"] == 12 and "and 2 more" in check.detail and "key_orph11" not in check.detail
+
+
+def test_v163_key_created_through_the_api_with_auth_off_warns_until_revoked(monkeypatch, session_factory):
+    _env(monkeypatch, APP_ENV="dev", AUTH_ENABLED="false", DASHBOARD_AUTH_MODE="off")
+    _seed(session_factory)
+    with _client(session_factory) as client:
+        created = client.post("/v1/tenants/default/api-keys", json={"name": "made-without-auth", "role": "admin"})
+        assert created.status_code == 200, created.text
+        key_id = created.json()["key_id"]
+        checks = {item["check_key"]: item for item in client.get("/v1/operations/readiness").json()["checks"]}
+        assert checks["unattributed_api_keys"]["status"] == "warn"
+        assert checks["unattributed_api_keys"]["metadata"]["no_actor"] == [key_id]
+        assert checks["env_created_api_keys"]["status"] == "pass"
+        assert client.post(f"/v1/tenants/default/api-keys/{key_id}/revoke").status_code == 200
+        checks = {item["check_key"]: item for item in client.get("/v1/operations/readiness").json()["checks"]}
+    assert checks["unattributed_api_keys"]["status"] == "pass"
+
+
+@pytest.mark.parametrize("app_env", ["prod", "staging"])
+def test_v163_unattributed_keys_warn_in_production_and_never_fail(monkeypatch, session_factory, app_env):
+    _prod_env(monkeypatch, app_env)
+    seed_db_api_key(session_factory, DB_KEY)  # no creation event either: it is unattributed too
+    _seed(session_factory, keys=[_key("key_noactor")], events=[_api_event_v163("key_noactor", "")])
+    with _client(session_factory) as client:
+        check = _readiness_checks(client, DB_KEY)["unattributed_api_keys"]
+    assert check["status"] == "warn" and "key_noactor" in check["metadata"]["no_actor"]
+
+
+def test_v163_dashboard_shows_the_unattributed_notice(monkeypatch, session_factory):
+    _dev_env(monkeypatch)
+    _seed(session_factory, keys=[_key("key_noactor"), _key("key_dashmade")],
+          events=[_api_event_v163("key_noactor", ""), _dashboard_event("key_dashmade", "user:alice")])
+    with _client(session_factory) as client:
+        html = client.get("/dashboard/governance?tenant_id=default").text
+    assert 'data-testid="unattributed-keys-notice"' in html and 'data-testid="unattributed-keys-count">1<' in html
+    assert "key_noactor" in html.split('data-testid="unattributed-keys-ids">', 1)[1].split("<", 1)[0]
+    assert "env-created-keys-notice" not in html
+
+
+def test_v163_dashboard_without_unattributed_keys_has_no_second_notice(monkeypatch, session_factory):
+    _dev_env(monkeypatch)
+    _seed(session_factory, keys=[_key("key_envmade")], events=[_api_event_v163("key_envmade", "legacy")])
+    with _client(session_factory) as client:
+        html = client.get("/dashboard/governance?tenant_id=default").text
+    assert "unattributed-keys-notice" not in html and 'data-testid="env-created-keys-notice"' in html
+
+
+def test_v163_tenant_bound_auditor_counts_only_their_unattributed_keys(client, signed_in, session_factory):
+    _seed(session_factory, keys=[_key("key_t1orph", "t1"), _key("key_t2orph", "t2")])
+    signed_in(role="auditor", tenant_id="t1")
+    page = client.get("/dashboard/governance")
+    assert page.status_code == 200
+    assert 'data-testid="unattributed-keys-count">1<' in page.text and "key_t2orph" not in page.text
+
+
+def test_v163_cli_list_unknown_matches_the_unattributed_check(capsys, session_factory):
+    _seed(
+        session_factory,
+        keys=[_key("key_noevent"), _key("key_noactor"), _key("key_envmade"), _key("key_gone", status="revoked")],
+        events=[_api_event_v163("key_noactor", ""), _api_event_v163("key_envmade", "legacy")],
+    )
+    _, payload, _ = _cli(capsys, session_factory, "list", "--created-by", "unknown")
+    listed = sorted(item["key_id"] for item in payload["api_keys"])
+    assert listed == _unattributed_check(session_factory).metadata["key_ids"] == ["key_noactor", "key_noevent"]
+    reasons = {item["key_id"]: item["created_by"]["reason"] for item in payload["api_keys"]}
+    assert reasons == {"key_noactor": "no_actor", "key_noevent": "no_event"}

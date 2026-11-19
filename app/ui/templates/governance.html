@@ -127,6 +127,14 @@
     | 有 {{ env_created_keys|length }} 把仍有效的金鑰由環境變數金鑰建立；曾未設定 <code>API_KEYS</code> 或用過 <code>demo-key</code> 的部署請全部輪替。
   </div>
   {% endif %}
+  {% if unattributed_keys %}
+  <div class="notice" role="status" data-testid="unattributed-keys-notice">
+    <strong data-testid="unattributed-keys-count">{{ unattributed_keys|length }}</strong> active API key(s) have no recorded creator (created while API authentication was off, or written outside the application):
+    <span data-testid="unattributed-keys-ids">{{ unattributed_keys|join(", ") }}</span>.
+    Confirm each with its owner or rotate it. See <a href="{{ runbook_url }}" rel="noopener noreferrer" target="_blank">{{ runbook_section }}</a>.
+    | 有 {{ unattributed_keys|length }} 把仍有效的金鑰查不到建立者（建立時 API 未開認證，或在程式外寫入），請逐一確認或輪替。
+  </div>
+  {% endif %}
   <table>
     <thead><tr><th>Key</th><th>Name</th><th>Role</th><th>Status</th><th>Created</th><th>Created by | 建立者</th><th>Revoked</th><th>Actions</th></tr></thead>
     <tbody>

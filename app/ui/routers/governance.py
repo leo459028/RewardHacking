@@ -3,7 +3,8 @@
 v1.6.3 P2: moved from ``app/ui/routes.py`` under the Router Split Rule (``AGENTS.md`` §2.1); paths, permissions,
 forms and pages are unchanged. New in v1.6.3 (plan D8): the API key table shows who created each key
 (``app.services.api_key_provenance``), and a notice above it counts active keys an environment API key created,
-the same number as the ``env_created_api_keys`` operations check (D7). Seeing the column follows the existing
+the same number as the ``env_created_api_keys`` operations check (D7), and a second notice counts active keys
+whose creator is unknown (``unattributed_api_keys``, D20). Seeing the column follows the existing
 ``api_keys.view`` permission (admin, read-only auditor); revoking still needs ``api_keys.manage``.
 """
 
@@ -48,14 +49,15 @@ async def _key_provenance_context(
 ) -> dict[str, Any]:
     """D8: creators for the listed keys and the D7 notice (platform users: every tenant; tenant-bound: their own)."""
     if not has_permission(principal.role, "api_keys.view"):
-        return {"api_key_creators": {}, "env_created_keys": []}
+        return {"api_key_creators": {}, "env_created_keys": [], "unattributed_keys": []}
+    scope = None if principal.is_platform else principal.tenant_id
     creators = await api_key_provenance.creators_for_keys(session, api_keys)
-    env_keys = await api_key_provenance.active_env_created_keys(
-        session, tenant_id=None if principal.is_platform else principal.tenant_id
-    )
+    env_keys = await api_key_provenance.active_env_created_keys(session, tenant_id=scope)
+    unattributed = await api_key_provenance.active_unattributed_keys(session, tenant_id=scope)
     return {
         "api_key_creators": creators,
         "env_created_keys": [key.key_id for key in env_keys],
+        "unattributed_keys": [key.key_id for key, _ in unattributed],
         "env_key_label": api_key_provenance.ENV_LABEL,
         "runbook_section": api_key_provenance.RUNBOOK_SECTION,
         "runbook_url": api_key_provenance.RUNBOOK_URL,

@@ -12,11 +12,12 @@ reads them. The parsing is deterministic:
 * another ``actor_key_id`` is a database API key (``key:<id>``); ``user_id == "cli"`` is the
   ``python -m app.jobs.api_keys`` CLI; any other ``user_id`` is a Dashboard account (``user:<name>``, or the historical
   ``dashboard-admin`` string in ``off`` mode);
-* no event (never written, or removed by a retention purge), or an event with no actor (written while
-  ``AUTH_ENABLED=false``), is ``unknown``.
+* no event (``reason="no_event"``: the key was written outside the application; retention purges never remove
+  these events, which carry no ``run_id``), or an event with no actor (``reason="no_actor"``: written while
+  ``AUTH_ENABLED=false``, which was the default up to v1.6.2), is ``unknown``.
 
-Operations (``env_created_api_keys``), the Dashboard Governance page and the CLI ``list`` all use these functions,
-so they always agree.
+Operations (``env_created_api_keys``, D7; ``unattributed_api_keys``, D20), the Dashboard Governance page and the CLI
+``list`` all use these functions, so they always agree.
 """
 
 from __future__ import annotations
@@ -41,6 +42,8 @@ CREATOR_USER = "user"
 CREATOR_CLI = "cli"
 CREATOR_UNKNOWN = "unknown"
 CREATOR_KINDS = (CREATOR_ENV, CREATOR_KEY, CREATOR_USER, CREATOR_CLI, CREATOR_UNKNOWN)
+UNKNOWN_NO_EVENT_REASON = "no_event"
+UNKNOWN_NO_ACTOR_REASON = "no_actor"
 
 ENV_LABEL = "environment key (legacy)"
 RUNBOOK_SECTION = "docs/runbook.md § 17 (API keys created with an environment key)"
@@ -63,12 +66,22 @@ class KeyCreator:
     actor: str = ""
     event_id: int | None = None
     detail: str = ""
+    reason: str = ""  # ``unknown`` only: ``no_event`` or ``no_actor`` (D20)
 
     def as_dict(self) -> dict[str, Any]:
-        return {"kind": self.kind, "label": self.label, "actor": self.actor, "event_id": self.event_id, "detail": self.detail}
+        return {
+            "kind": self.kind,
+            "label": self.label,
+            "actor": self.actor,
+            "event_id": self.event_id,
+            "detail": self.detail,
+            "reason": self.reason,
+        }
 
 
-UNKNOWN_NO_EVENT = KeyCreator(kind=CREATOR_UNKNOWN, label="unknown", detail="no api_key.created event found")
+UNKNOWN_NO_EVENT = KeyCreator(
+    kind=CREATOR_UNKNOWN, label="unknown", detail="no api_key.created event found", reason=UNKNOWN_NO_EVENT_REASON
+)
 
 
 def event_key_id(event: GovernanceEvent) -> str | None:
@@ -95,7 +108,11 @@ def creator_from_event(event: GovernanceEvent) -> KeyCreator:
     if user_id:
         return KeyCreator(kind=CREATOR_USER, label=user_id, actor=user_id, event_id=event.id)
     return KeyCreator(
-        kind=CREATOR_UNKNOWN, label="unknown", event_id=event.id, detail="event records no actor (AUTH_ENABLED=false?)"
+        kind=CREATOR_UNKNOWN,
+        label="unknown",
+        event_id=event.id,
+        detail="the creation event records no actor (created while AUTH_ENABLED=false)",
+        reason=UNKNOWN_NO_ACTOR_REASON,
     )
 
 
@@ -161,3 +178,11 @@ async def active_env_created_keys(session: AsyncSession, *, tenant_id: str | Non
     """D7: active database keys an environment key created, sorted by ``key_id`` (Operations and CLI use this)."""
     rows = await list_keys_with_creators(session, tenant_id=tenant_id, created_by=CREATOR_ENV, active_only=True)
     return sorted((key for key, _ in rows), key=lambda key: key.key_id)
+
+
+async def active_unattributed_keys(
+    session: AsyncSession, *, tenant_id: str | None = None
+) -> list[tuple[TenantApiKey, KeyCreator]]:
+    """D20: active database keys whose creator is ``unknown``, sorted by ``key_id`` (Operations and Dashboard)."""
+    rows = await list_keys_with_creators(session, tenant_id=tenant_id, created_by=CREATOR_UNKNOWN, active_only=True)
+    return sorted(rows, key=lambda row: row[0].key_id)

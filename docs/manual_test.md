@@ -387,7 +387,7 @@ The runner names its keys `e2e-keys-<run id>-env` / `-dash` on tenant `manual-qa
 2. **Dashboard key**: create a key with the **Create API Key** form. Its creator is your account (`user:<name>`; `dashboard-admin` in `off` mode) and `env_created_api_keys` does not list it.
 3. **Auditor** (session mode): sign in as the auditor and open the same page: the **Created by** column is shown and there is no **Revoke Key** button.
 4. Revoke the Dashboard key: the row shows **Revoked**.
-5. `python -m app.jobs.api_keys list --created-by env` lists the same `key_id`s as the `env_created_api_keys` check.
+5. `python -m app.jobs.api_keys list --created-by env` lists the same `key_id`s as the `env_created_api_keys` check, and `list --created-by unknown` the same as `unattributed_api_keys` (keys created through the API while `AUTH_ENABLED=false`, or written outside the application; the Governance page shows a second notice for them).
 
 ## 6. Browser QA Sign-Off Checklist
 

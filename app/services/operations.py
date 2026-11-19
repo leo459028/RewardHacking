@@ -509,6 +509,59 @@ async def _env_created_api_keys_check(session: AsyncSession) -> OperationsCheck:
     )
 
 
+
+async def _unattributed_api_keys_check(session: AsyncSession) -> OperationsCheck:
+    """v1.6.3 D20: active database API keys whose creator cannot be told. ``warn`` in every environment, never fails.
+
+    ``no_actor``: the creation event names nobody, so the key was created while AUTH_ENABLED=false (the default up to
+    v1.6.2), when the API needed no key at all. ``no_event``: no creation event exists (written outside the app)."""
+    rows = await api_key_provenance.active_unattributed_keys(session)
+    key_ids = [key.key_id for key, _ in rows]
+    no_actor = [key.key_id for key, creator in rows if creator.reason == api_key_provenance.UNKNOWN_NO_ACTOR_REASON]
+    no_event = [key.key_id for key, creator in rows if creator.reason != api_key_provenance.UNKNOWN_NO_ACTOR_REASON]
+    metadata = {
+        "count": len(key_ids),
+        "key_ids": key_ids,
+        "no_actor": no_actor,
+        "no_event": no_event,
+        "tenants": sorted({key.tenant_id for key, _ in rows}),
+        "runbook": api_key_provenance.RUNBOOK_SECTION,
+    }
+    title = "API keys with an unknown creator"
+    if not key_ids:
+        return OperationsCheck(
+            check_key="unattributed_api_keys",
+            status="pass",
+            title=title,
+            detail="Every active database API key has a recorded creator.",
+            metadata=metadata,
+        )
+
+    def _listed(ids: list[str]) -> str:
+        more = f" and {len(ids) - ENV_CREATED_KEYS_SHOWN} more" if len(ids) > ENV_CREATED_KEYS_SHOWN else ""
+        return ", ".join(ids[:ENV_CREATED_KEYS_SHOWN]) + more
+
+    parts = []
+    if no_actor:
+        parts.append(
+            f"{len(no_actor)} created while API authentication was off (AUTH_ENABLED=false, the default up to v1.6.2: "
+            f"anyone who reached the API could create them): {_listed(no_actor)}"
+        )
+    if no_event:
+        parts.append(f"{len(no_event)} without any creation event (written outside the application): {_listed(no_event)}")
+    return OperationsCheck(
+        check_key="unattributed_api_keys",
+        status="warn",
+        title=title,
+        detail=(
+            f"{len(key_ids)} active database API key(s) have no recorded creator. " + "; ".join(parts) + ". "
+            "Confirm each with its owner, or rotate it: issue a replacement on /dashboard/governance and revoke the old "
+            f"key; the check passes when none is left. See {api_key_provenance.RUNBOOK_SECTION}."
+        ),
+        metadata=metadata,
+    )
+
+
 AUDIT_CHAIN_TAIL_ENTRIES = 1000
 AUDIT_CHAIN_CHECKPOINT_MAX_AGE_HOURS = 48
 
@@ -868,6 +921,7 @@ async def compute_operations_readiness(
 
     checks.append(_api_auth_enabled_check(settings))
     checks.append(await _env_created_api_keys_check(session))
+    checks.append(await _unattributed_api_keys_check(session))
     # v1.6.3 D5: "production" is every APP_ENV other than dev / test (it used to be only the exact value "prod").
     if settings.is_production_like and settings.release_gate_fail_on_bootstrap_keys_in_prod:
         api_keys_configured = bool((settings.api_keys or "").strip())

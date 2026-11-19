@@ -156,7 +156,7 @@ Then create the API keys your clients need as hashed tenant keys (`/dashboard/go
 docker compose exec -T api python -m app.jobs.api_keys create --tenant default --role admin --name first-admin-key
 ```
 
-Confirm that `/dashboard/operations` shows `bootstrap_keys_in_prod` as `pass`. Upgrading from `v1.6.2` or earlier: `env_created_api_keys` lists database keys that an environment key (possibly `demo-key`) created; see [`runbook.md`](runbook.md) §17. A new production install also fails `audit_chain_integrity` until the first checkpoint exists (`python -m app.jobs.audit_chain --checkpoint`, [`runbook.md`](runbook.md) §14) and `safety_regression_evidence` until evidence is recorded.
+Confirm that `/dashboard/operations` shows `bootstrap_keys_in_prod` as `pass`. Upgrading from `v1.6.2` or earlier: `env_created_api_keys` lists database keys that an environment key (possibly `demo-key`) created, and `unattributed_api_keys` those created while the API needed no key (`AUTH_ENABLED=false`, the old default); see [`runbook.md`](runbook.md) §17. A new production install also fails `audit_chain_integrity` until the first checkpoint exists (`python -m app.jobs.audit_chain --checkpoint`, [`runbook.md`](runbook.md) §14) and `safety_regression_evidence` until evidence is recorded.
 
 ### 6. Inspect the SBOM and Provenance
 
