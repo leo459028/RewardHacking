@@ -112,7 +112,7 @@ These rules protect the project's core purpose (reward-hacking detection). A cha
 | :--- | :--- | :--- |
 | Low | Only `docs/`, comments, plans | Stage 1 and CI |
 | Normal | Everything else | Also one independent `/code-review high` before the PR; list findings and their handling in the PR description |
-| High | `app/services/evaluation/**`, `ENGINE_VERSION` or detectors, `audit_chain.py`, `access/**`, `change_requests.py`, `retention.py`, FinOps leases, `migrations/`, `Dockerfile`, `.github/workflows/`, `.claude/settings.json`, `scripts/git-hooks/` | Also list the high-risk files in the PR description and ask the user to review them personally |
+| High | `app/services/evaluation/**`, `ENGINE_VERSION` or detectors, `audit_chain.py`, `access/**`, `change_requests.py`, `retention.py`, FinOps leases, `migrations/`, `Dockerfile`, `.github/workflows/`, `.claude/settings.json`, `scripts/git-hooks/` | Also list the high-risk files in the PR description; the agent reviews them and advises the user |
 
 ## 6. Project Notices
 

@@ -97,6 +97,7 @@ Copy [`deploy/docker-compose.release.example.yml`](../deploy/docker-compose.rele
 | `REDIS_URL`, `KAFKA_BOOTSTRAP_SERVERS` | Set by the example | Point them at your own services when you do not use the bundled ones |
 | `APP_ENV` | Yes | `prod` for production |
 | `AUTH_ENABLED` | Yes | `true`; API clients then need keys |
+| `API_KEYS` | Yes: empty | Bootstrap keys read from the environment. **Unset, it falls back to the development key `demo-key` with the admin role**, so set it to an empty value (the example file does) and create hashed tenant keys instead (step 5) |
 | `DASHBOARD_AUTH_MODE` | Yes | `session` (personal accounts) |
 | `DASHBOARD_CSRF_SECRET` | Yes with more than one API replica | Random value shared by the replicas |
 | `AUDIT_CHAIN_SIGNING_KEY_FILE` | Yes in `prod` | For example `config/audit_chain_key.pem` |
@@ -139,7 +140,7 @@ docker compose run --rm -e RH_AUTO_MIGRATE=false api alembic upgrade head
 
 The `worker` never runs migrations.
 
-Automatic migration means the API's database account can change the schema. Where that is not acceptable, set `RH_AUTO_MIGRATE=false` everywhere, run the one-off job above with an account that owns the schema, and give the API and the worker an account that can only read and write rows. A separate migration account is planned for the `v1.6.5` installer.
+Automatic migration means the API's database account can change the schema. Where that is not acceptable, set `RH_AUTO_MIGRATE=false` everywhere, run the one-off job above with an account that owns the schema, and give the API and the worker an account that can only read and write rows. A separate migration account is planned for the `v1.6.6` installer.
 
 ### 5. Create the First Administrator
 
@@ -149,6 +150,8 @@ There is no default account. Create the first admin from the command line ([`run
 docker compose exec -e RH_ADMIN_PASSWORD api python -m app.jobs.users create --username admin --role admin --password-env RH_ADMIN_PASSWORD
 ```
 
+Then create the API keys your clients need as hashed tenant keys (`/dashboard/governance`, or `POST /v1/tenants/{tenant_id}/api-keys`), and confirm that `/dashboard/operations` shows `bootstrap_keys_in_prod` as `pass`. A new production install also fails `audit_chain_integrity` until the first checkpoint exists (`python -m app.jobs.audit_chain --checkpoint`, [`runbook.md`](runbook.md) §14) and `safety_regression_evidence` until evidence is recorded.
+
 ### 6. Inspect the SBOM and Provenance
 
 ```bash
@@ -156,7 +159,7 @@ docker buildx imagetools inspect ghcr.io/leo459028/rewardhacking:vX.Y.Z --format
 docker buildx imagetools inspect ghcr.io/leo459028/rewardhacking:vX.Y.Z --format '{{ json .Provenance }}'
 ```
 
-Images are not signed yet; signing is planned for `v1.6.5`.
+Images are not signed yet; signing is planned for `v1.6.6`.
 
 ---
 
@@ -176,7 +179,7 @@ When preparing for production deployment (`APP_ENV=prod`):
 
 1. **Authentication Enforcement**:
    - Set `AUTH_ENABLED=true` and `DASHBOARD_AUTH_MODE=session`, then create the first Dashboard admin with `python -m app.jobs.users create --role admin ...` (`docs/runbook.md` §13).
-   - Remove bootstrap fallback keys (`API_KEYS`) and provision hashed tenant keys via `/v1/tenants/{tenant_id}/api-keys`.
+   - Set `API_KEYS` to an empty value and provision hashed tenant keys via `/v1/tenants/{tenant_id}/api-keys`. Removing the variable is not enough: unset, it falls back to the development key `demo-key` (tenant `default`, role admin).
 2. **Operations Gate Clearance**:
    - In `prod`, the `/dashboard/operations` gate enforces fail-closed checks:
      - No unresolved critical incidents.
