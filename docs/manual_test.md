@@ -383,7 +383,7 @@ As auditor the block is readable and **Request re-run \| 要求重跑** is missi
 
 The runner names its keys `e2e-keys-<run id>-env` / `-dash` on tenant `manual-qa-tenant`, revokes them at the end and touches no other key.
 
-The QA stack keeps `/v1` authentication off for Scenarios 1–20 (with it on, `/v1` queries are limited to the key's tenant and the runner's unauthenticated calls answer 401), so a full run lists the environment-key part as skipped. The release gate runs Scenario 21 a second time on its own, and there that part must run:
+The QA stack keeps `/v1` authentication off for Scenarios 1–20 (with it on, `/v1` queries are limited to the key's tenant and the runner's unauthenticated calls answer 401), so a full run (including the browser step of `scripts/release_gate.py`) lists the environment-key part as skipped. Before the release commit, run Scenario 21 a second time on its own; the gate does not do this step, and there that part must run:
 
 1. Start a second API on the same database with authentication on and a temporary environment admin key (do not reuse a real key):
 

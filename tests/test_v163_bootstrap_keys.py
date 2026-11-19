@@ -286,6 +286,39 @@ def test_no_api_key_notice_never_blocks_when_the_database_is_unreachable():
     assert _run(startup_guard.report_api_key_status(settings, Unreachable(), check_database=True)) == []
 
 
+def test_startup_messages_name_the_api_keys_cli(session_factory):
+    """Review finding 2 (P3): a headless deployment must learn about the D9 CLI, not only the Dashboard."""
+    refusal = startup_guard.startup_refusal_reasons(
+        Settings(_env_file=None, app_env="prod", auth_enabled=False, dashboard_auth_mode="session")
+    )
+    assert len(refusal) == 1 and "python -m app.jobs.api_keys create" in refusal[0] and "/dashboard/governance" in refusal[0]
+    settings = Settings(_env_file=None, app_env="prod", auth_enabled=True, api_keys="")
+    notices = _run(startup_guard.report_api_key_status(settings, session_factory, check_database=True))
+    assert len(notices) == 1 and "python -m app.jobs.api_keys create" in notices[0]
+
+
+@pytest.mark.parametrize("raw", ["not-a-key", "no-tenant:", ":default:admin"])
+def test_malformed_api_keys_in_production_warn_like_the_check(caplog, raw):
+    """Review finding 3 (P3): bootstrap_keys_in_prod fails on any non-empty API_KEYS; the startup log must warn too."""
+    settings = Settings(_env_file=None, app_env="prod", api_keys=raw)
+    with caplog.at_level(logging.WARNING, logger="app.services.startup_guard"):
+        notices = _run(startup_guard.report_api_key_status(settings, None, check_database=False))
+    assert len(notices) == 1 and notices[0].startswith("API_KEYS is set but holds no well-formed key")
+    assert raw not in caplog.text.replace(notices[0], "")
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"app_env": "prod", "api_keys": "   "},  # blank: nothing configured
+        {"app_env": "dev", "api_keys": "not-a-key"},  # development: environment keys are allowed, no refusal notice
+    ],
+)
+def test_malformed_api_keys_notice_negative_cases(values):
+    settings = Settings(_env_file=None, **values)
+    assert _run(startup_guard.report_api_key_status(settings, None, check_database=False)) == []
+
+
 # ---------------------------------------------------------------------------
 # D4 / D5: Operations checks
 # ---------------------------------------------------------------------------
@@ -295,6 +328,16 @@ def _readiness_checks(client: TestClient, key: str) -> dict[str, dict]:
     response = client.get("/v1/operations/readiness", headers={"X-API-Key": key})
     assert response.status_code == 200, response.text
     return {item["check_key"]: item for item in response.json()["checks"]}
+
+
+def test_bootstrap_keys_check_counts_well_formed_keys(monkeypatch, session_factory):
+    _prod_env(monkeypatch, API_KEYS="not-a-key")
+    seed_db_api_key(session_factory, DB_KEY)
+    with _client(session_factory) as client:
+        checks = _readiness_checks(client, DB_KEY)
+    bootstrap = checks["bootstrap_keys_in_prod"]
+    assert bootstrap["status"] == "fail" and bootstrap["metadata"]["well_formed_keys"] == 0
+    assert "0 well-formed key(s)" in bootstrap["detail"] and "not-a-key" not in bootstrap["detail"]
 
 
 @pytest.mark.parametrize("app_env", ["prod", "production", "staging"])

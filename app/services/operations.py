@@ -19,6 +19,7 @@ from app.models.operations import OperationsEvidence, ReleaseGateItem, ReleaseGa
 from app.models.tenant import TenantApiKey
 from app.models.worker_attempt import WorkerAttempt
 from app.services import api_key_provenance, audit_chain, retention
+from app.services.auth import configured_env_api_key_count
 from app.services.finops import ensure_default_pricing
 from app.services.sandbox import docker_config
 from app.services.sandbox import gate as sandbox_gate
@@ -924,20 +925,22 @@ async def compute_operations_readiness(
     checks.append(await _unattributed_api_keys_check(session))
     # v1.6.3 D5: "production" is every APP_ENV other than dev / test (it used to be only the exact value "prod").
     if settings.is_production_like and settings.release_gate_fail_on_bootstrap_keys_in_prod:
+        # Fails on any non-empty value, well-formed or not; the startup log warns on the same condition.
         api_keys_configured = bool((settings.api_keys or "").strip())
+        well_formed = configured_env_api_key_count(settings.api_keys)
         checks.append(
             OperationsCheck(
                 check_key="bootstrap_keys_in_prod",
                 status="fail" if api_keys_configured else "pass",
                 title="No bootstrap API keys in production",
                 detail=(
-                    f"API_KEYS is set, but environment API keys are refused when APP_ENV is not dev or test "
-                    f"(APP_ENV={settings.app_env!r}); every request with them gets 401. Remove API_KEYS and use database "
-                    "API keys."
+                    f"API_KEYS is set ({well_formed} well-formed key(s)), but environment API keys are refused when "
+                    f"APP_ENV is not dev or test (APP_ENV={settings.app_env!r}); every request with them gets 401. "
+                    "Remove API_KEYS and use database API keys."
                     if api_keys_configured
                     else "No environment API keys are configured; production uses database API keys only."
                 ),
-                metadata={"api_keys_configured": api_keys_configured, "app_env": settings.app_env},
+                metadata={"api_keys_configured": api_keys_configured, "well_formed_keys": well_formed, "app_env": settings.app_env},
             )
         )
 

@@ -49,7 +49,8 @@ def startup_refusal_reasons(settings: Settings) -> list[str]:
         reasons.append(
             f"AUTH_ENABLED=false leaves the /v1 API open to anyone without an API key, and APP_ENV={app_env} is "
             "treated as production (only dev and test are development environments). Set AUTH_ENABLED=true and "
-            f"create database API keys in the Dashboard (/dashboard/governance). {trial}"
+            "create database API keys with python -m app.jobs.api_keys create --tenant <id> --role <role> --name <name> "
+            f"or in the Dashboard (/dashboard/governance). {trial}"
         )
     if settings.dashboard_auth_mode == "off":
         reasons.append(
@@ -101,7 +102,8 @@ async def report_api_key_status(
 ) -> list[str]:
     """Log the startup notices about API keys and return them (for tests). Never blocks startup (D2, D16).
 
-    - Environment keys configured but refused in this APP_ENV: one warning with the number of keys only.
+    - API_KEYS set but refused in this APP_ENV: one warning with the number of well-formed keys only (also when that
+      number is 0, so the log agrees with the ``bootstrap_keys_in_prod`` check, which fails on any non-empty value).
     - Authentication on, no usable environment key and no active database key: one notice on how to create one.
     A database that cannot be reached in time skips the second notice instead of failing startup.
     """
@@ -111,6 +113,13 @@ async def report_api_key_status(
         message = (
             f"{refused} environment API key(s) in API_KEYS are refused because APP_ENV is not dev or test; "
             "remove API_KEYS and use database API keys."
+        )
+        logger.warning(message)
+        notices.append(message)
+    elif not settings.env_api_keys_allowed and (settings.api_keys or "").strip():
+        message = (
+            "API_KEYS is set but holds no well-formed key (key:tenant[:role]), and environment API keys are refused "
+            "because APP_ENV is not dev or test anyway; remove API_KEYS and use database API keys."
         )
         logger.warning(message)
         notices.append(message)
@@ -128,7 +137,8 @@ async def report_api_key_status(
     if active == 0:
         message = (
             "No API key is available: AUTH_ENABLED=true and there are no active database API keys, so every /v1 request "
-            "is answered 401. Create one in the Dashboard (/dashboard/governance) after signing in as an admin."
+            "is answered 401. Create one with python -m app.jobs.api_keys create --tenant <id> --role <role> --name "
+            "<name>, or in the Dashboard (/dashboard/governance) after signing in as an admin."
         )
         logger.warning(message)
         notices.append(message)
