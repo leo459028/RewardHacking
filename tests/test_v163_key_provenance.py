@@ -37,6 +37,7 @@ from app.services.events import InMemoryEventPublisher
 from app.services.governance_audit import add_governance_event
 from app.services.run_state import InMemoryRunStateStore
 from tests.auth_helpers import seed_db_api_key
+from tests.openapi_contract import route_owners
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV_KEY = "env-" + "provenance-key-v163"
@@ -493,7 +494,8 @@ def test_v163_governance_dashboard_routes_moved_to_their_router():
         "/dashboard/governance/tenants/{tenant_id}/api-keys",
         "/dashboard/governance/tenants/{tenant_id}/api-keys/{key_id}/revoke",
     }
-    modules = {route.path: route.endpoint.__module__ for route in app.routes if getattr(route, "path", "") in governance_paths}
+    # route_owners walks included routers too (newer FastAPI keeps them as _IncludedRouter entries in app.routes).
+    modules = {path: module for (path, _method), module in route_owners(app).items() if path in governance_paths}
     assert modules == {path: "app.ui.routers.governance" for path in governance_paths}
     ui_routes = (ROOT / "app" / "ui" / "routes.py").read_text(encoding="utf-8")
     assert '"/dashboard/governance' not in ui_routes

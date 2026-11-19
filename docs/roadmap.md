@@ -1,8 +1,8 @@
 # Project Roadmap: Evolutionary Milestones
 
-> **Roadmap Baseline**: `v1.6.2`
+> **Roadmap Baseline**: `v1.6.3`
 > **Status**: Active Open-Source Track (`v1.6.x` Verified Execution Series)
-> **Next Target**: `v1.6.3` (Bootstrap API Key Security Patch)
+> **Next Target**: `v1.6.4` (Detection Measurement & Trajectory Evidence)
 > **Re-baselined**: 2026-11-11, after `v1.6.0` (see [Re-baseline Notes](#re-baseline-notes-november-2026))
 
 This roadmap outlines the past development trajectory, the `v1.5.x` evaluation series, the `v1.6.x` runtime execution series, and long-term architectural milestones for the **RewardHacking** platform.
@@ -40,18 +40,26 @@ This roadmap outlines the past development trajectory, the `v1.5.x` evaluation s
 | `v1.5.12` | Completed | Judge Activation & Provider Adapters | Test-then-activate gate with configuration fingerprints (rule-based judge by default), Dashboard judge profile management with templates and an editing gate, key-variable allowlist and HTTPS / metadata hardening, native Anthropic adapter, fallback chains, circuit breakers and per-profile budgets. |
 | `v1.6.0` | Completed | Runtime Foundations | W3C trace context with optional OTLP export, audit retention plan → apply purge with legal holds and hash-only tombstones (FinOps ledger report-only), FinOps package split with `import-linter` contracts, and the sandbox execution spec with a `simulated` backend and conformance suite. |
 | `v1.6.1` | Completed | Enterprise Access & Audit Integrity | Dashboard sign-in with roles (including a read-only auditor), CSRF tokens and re-authentication, second-person approval (change requests) for high-impact actions, a tamper-evident audit chain with signed checkpoints, Dashboard retention apply / hold release, and prompt-guard/2.0 (P0). |
-| `v1.6.2` | **Current** | **Isolated Sandbox Runtime MVP** | A published container image without secrets, then a hardened Docker backend with a configurable OCI runtime (`runc` locally, `runsc`/gVisor on Linux) behind a disabled-by-default feature flag, used only for the platform's own re-runs; before / after re-runs against the platform's own tests produce the first `platform_verified` evidence, with changed-line coverage and shadow re-run rules. |
-| `v1.6.3` | **Next** | Bootstrap API Key Security Patch | A production deployment that leaves `API_KEYS` unset no longer accepts the development fallback key `demo-key`, found by the fresh deployment from the published `v1.6.2` image. |
-| `v1.6.4` | Planned | Detection Measurement & Trajectory Evidence | Capability-derived gates, agent tools and `stdio` MCP servers in the sandbox (moved from `v1.6.2`), public labeled corpora imports, trajectory detectors and trajectory-aware contrastive judging, a structured self-report and an escalation channel, a detector evasion-variant suite, root-cause labels and a monitoring-coverage metric. |
+| `v1.6.2` | Completed | Isolated Sandbox Runtime MVP | A published container image without secrets, then a hardened Docker backend with a configurable OCI runtime (`runc` locally, `runsc`/gVisor on Linux) behind a disabled-by-default feature flag, used only for the platform's own re-runs; before / after re-runs against the platform's own tests produce the first `platform_verified` evidence, with changed-line coverage and shadow re-run rules. |
+| `v1.6.3` | **Current** | **Secure Authentication Defaults (Security Patch)** | No built-in API key, environment keys only in `dev` / `test`, API authentication and Dashboard sign-in on by default with a startup refusal in production, an image that defaults to production, and checks that find API keys created with environment keys; found by the fresh deployment from the published `v1.6.2` image. |
+| `v1.6.4` | **Next** | Detection Measurement & Trajectory Evidence | Capability-derived gates, agent tools and `stdio` MCP servers in the sandbox (moved from `v1.6.2`), public labeled corpora imports, trajectory detectors and trajectory-aware contrastive judging, a structured self-report and an escalation channel, a detector evasion-variant suite, root-cause labels and a monitoring-coverage metric. |
 | `v1.6.5` | Planned (tentative number) | Compliance Foundation, Approved Models & Multilingual Guard | One control catalog with versioned framework mappings (ISO/IEC 42001, NIST AI RMF, EU AI Act, then Taiwan / Japan / US packs), an opt-in approved-model list with vendor jurisdiction, locale PII redaction packs, data-subject requests, incident notification clocks, prompt-guard hardening and localization. |
 | `v1.6.6` | Planned (tentative number) | Enterprise Integration | OIDC single sign-on, SIEM export, notifications, a CI integration kit with merge checks, and an offline / on-prem install bundle with SBOM and signed images. |
 | `v1.6.7+` | Long-Term (tentative number) | Stronger Verification & Scale-Out | Hidden held-out tests, changed-line mutation testing, realistic honeypots and canaries, a pre-rollout propensity gate, reviewer-quality measurement, multi-language structural rules, judge ensembles, K8s Job and microVM backends, remote MCP transports, resampling, and stateful graph time-travel replay. |
 
-**Release numbers**: only the next release (`v1.6.3`) has a fixed number. On 2026-11-19 the bootstrap API key patch took `v1.6.3` and every later theme moved back one number. The Re-baseline Notes below keep the numbers of that time. Numbers after it are tentative and name the planned order of themes. If a patch or a re-ordered theme has to ship first, it takes the next free number and the later themes move back; other documents that cite a tentative number are corrected when that release is planned.
+**Release numbers**: only the next release (`v1.6.4`) has a fixed number. On 2026-11-19 the bootstrap API key patch took `v1.6.3` and every later theme moved back one number. The Re-baseline Notes below keep the numbers of that time. Numbers after it are tentative and name the planned order of themes. If a patch or a re-ordered theme has to ship first, it takes the next free number and the later themes move back; other documents that cite a tentative number are corrected when that release is planned.
 
 ---
 
-## Current Release: `v1.6.2` Isolated Sandbox Runtime MVP
+## Current Release: `v1.6.3` Secure Authentication Defaults (Security Patch)
+
+The `v1.6.3` patch makes an unconfigured deployment safe:
+- **No Built-In API Key**: `API_KEYS` is empty by default; environment keys work only in `APP_ENV=dev` / `test` and are refused elsewhere with the same 401 as a wrong key.
+- **Secure Defaults**: `AUTH_ENABLED=true` and Dashboard sign-in `session` by default; outside `dev` / `test` the API refuses to start with either turned off; the published image sets `APP_ENV=prod`.
+- **One Production Rule**: every production-only check treats any `APP_ENV` but `dev` / `test` as production.
+- **Keys Left Behind**: creator attribution on the Governance page, the `env_created_api_keys` and `unattributed_api_keys` checks, a key CLI and a runbook section for rotation. Nothing is revoked automatically.
+
+## Previous Release: `v1.6.2` Isolated Sandbox Runtime MVP
 
 The `v1.6.2` milestone lets the platform re-run an agent's work with tests the agent cannot change:
 - **Published Image**: a non-root image without keys or tests, scanned before every push and published from CI with an SBOM and provenance.
@@ -60,7 +68,7 @@ The `v1.6.2` milestone lets the platform re-run an agent's work with tests the a
 - **`platform_verified`**: the report came from the platform's own re-run in the sandbox. It does not mean the tests passed and is not proof against tampering, because the agent's code runs in the same process as the tests.
 - **Shadow Rules**: `RV-001`–`RV-004` are recorded without changing verdicts until benchmark evidence supports promotion.
 
-## Previous Release: `v1.6.1` Enterprise Access & Audit Integrity
+## Earlier Release: `v1.6.1` Enterprise Access & Audit Integrity
 
 The `v1.6.1` milestone ties every Dashboard action to a named person and makes the audit trail verifiable:
 - **Sign-In & Roles**: local accounts with sessions, lockout and forced first password change; `admin`, `tenant_admin`, `reviewer`, `operator` and the read-only `auditor`; tenant scope; every route declares its permission; actions recorded as `user:<username>`.
@@ -234,7 +242,7 @@ Split out of the former `v1.6.1` scope: every Dashboard form is touched, and sig
 - **Tamper-Evident Audit Chain**: writes the hash-chain columns reserved on tombstones in `v1.6.0` (`prev_hash`, `entry_hash`, `chain_version`), extends the chain to governance events and review decisions, and adds signed daily checkpoints with a verification command.
 - **Unlocked from `v1.6.0`**: the Dashboard may apply retention plans and release legal holds (API-only in `v1.6.0`).
 
-### `v1.6.2` (Current): Isolated Sandbox Runtime MVP
+### `v1.6.2` (Completed): Isolated Sandbox Runtime MVP
 - **Published Image Baseline**: an allow-listed build context, a multi-stage non-root image, a content scan before every push, and `ghcr.io` images with an SBOM and provenance, published from CI when a release is created.
 - **Hardened Docker Backend**: Read-only root filesystem, no network by default, all capabilities dropped, non-root user, and pid/memory/CPU limits. The OCI runtime is configurable: `runc` for local Docker Desktop verification, `runsc` (gVisor) on Linux hosts without code changes. The backend must pass every case in `conformance.CASES` and `conformance.HARDENING_CASES` before it can be enabled. Images are digest-pinned and can come from an internal registry, so no outbound network is needed.
 - **Narrow Scope**: Only the platform's own low-risk re-runs execute in the sandbox, behind a disabled-by-default feature flag. Agent run tools stay simulated.
@@ -244,12 +252,14 @@ Split out of the former `v1.6.1` scope: every Dashboard form is touched, and sig
 - **Re-Run Contradiction Rule (shadow first)**: a platform re-run that contradicts the agent's report produces a finding, with retry and interpretation rules for flaky tests. It ships in `shadow` and is promoted only with benchmark evidence.
 - **Cost & Sampling**: re-run compute is recorded in the FinOps ledger, and sampling decides which runs are re-run.
 
-### `v1.6.3` (Next): Bootstrap API Key Security Patch
+### `v1.6.3` (Current): Secure Authentication Defaults (Security Patch)
 A patch release ahead of the next theme (decided 2026-11-19).
 - **Problem**: when `API_KEYS` is unset, the code default `demo-key:default` is accepted as an admin key for tenant `default`. A deployment from the published `v1.6.2` image that followed `docs/deployment.md` answered `X-API-Key: demo-key` with 200. The `bootstrap_keys_in_prod` operations check reports the problem but blocks nothing. Setting `API_KEYS` to an empty value closes it and is documented since 2026-11-19.
-- **Goal**: a production deployment that leaves `API_KEYS` unset no longer accepts the development key. How (refusing environment keys in production, or an empty default with development configuration naming the key) is decided in the release plan.
+- **Fix**: the default is empty and environment keys are accepted only when `APP_ENV` is `dev` or `test`. The same review found two worse defaults, both fixed here: the application started with API authentication off (`AUTH_ENABLED=false`) and Dashboard sign-in off, and the image did not set `APP_ENV`. `AUTH_ENABLED` now defaults to `true`, Dashboard sign-in to `session`, the image to `APP_ENV=prod`, and outside `dev` / `test` the API refuses to start with either turned off. This replaces the `v1.6.1` rule that only the `dashboard_auth_mode` operations check guarded a Dashboard without sign-in.
+- **Keys Left Behind**: database keys created with an environment key before the upgrade stay valid. The Governance page shows each key's creator, `env_created_api_keys` and `unattributed_api_keys` (warn) list the active ones, `python -m app.jobs.api_keys` creates and lists keys, and [`runbook.md`](runbook.md) §17 explains rotation. Whether an environment key was `demo-key` cannot be told afterwards.
+- **Not Changed**: an `admin` API key stays platform-wide (a tenant-scoped admin needs its own design), and nothing is revoked automatically.
 
-### `v1.6.4`: Detection Measurement & Trajectory Evidence
+### `v1.6.4` (Next): Detection Measurement & Trajectory Evidence
 The detection work is independent of the sandbox. Every new detector ships in `shadow`; judges stay triage-only.
 - **Capability-Derived Gates** (moved from `v1.6.2` on 2026-11-12): tools declare what they can do (write, network access, personal data, destructive change) and the platform derives the required gates from the tools a request may use. Today `allow_destructive_actions`, `allow_pii_access` and `no_external_network` are declared by the requester, so they only gate honest requests. This must land before any tool with real side effects is enabled.
 - **Agent Tools in the Sandbox** (moved from `v1.6.2` on 2026-11-12): low-risk tools (`read_repo`, `run_tests`) and in-sandbox `stdio` MCP servers run for real, behind a disabled-by-default feature flag.

@@ -4,7 +4,7 @@ Rules for AI agents and engineers on **RewardHacking**, for the whole repository
 
 ## Session Start: Read the Handoff File First
 
-- At the start of every session (new or resumed), read `docs/handoff.md` if it exists. It holds the current state, next steps, local environment notes and known pitfalls. It is local and git-ignored, in Traditional Chinese.
+- At the start of every session (new or resumed), read `docs/handoff.md` if it exists. It holds the current state, next steps, environment notes and pitfalls. It is local and git-ignored, in Traditional Chinese.
 - Then check it against `git status`, `git log --oneline -3` and `git branch --show-current`. If they disagree, git wins: continue from the real state and correct the handoff.
 - Update it after each phase commit, before ending a session, and whenever the state changes (push, PR, merge, new version). Keep it to about 100 lines: current state, next steps and pitfalls. Details belong in the version plan and `docs/test_report.md`.
 
@@ -16,13 +16,12 @@ Rules for AI agents and engineers on **RewardHacking**, for the whole repository
 | REST API | `app/api/routes.py` (frozen), `app/api/routers/`, `app/api/common.py`, `app/api/deps.py` | `docs/api.md` |
 | Dashboard | `app/ui/routes.py` (frozen), `app/ui/routers/`, `app/ui/templates/`, `app/ui/security.py` | `docs/dashboard.md` |
 | Guardrail, policy, quotas, MCP gateway | `app/services/{prompt_sanitizer,risk_scoring,policy_engine,quota,run_state,orchestrator,mcp_gateway}.py` | `docs/security.md`, `docs/redis_keys.md` |
-| Evaluation, review, benchmark, honeypots | `app/services/evaluation/`, `app/services/{outcomes,review_queue,benchmark,honeypot,cheat_rates,attestation_keys,inspect_import}.py` | `docs/evaluation.md` |
+| Evaluation, review, benchmark | `app/services/evaluation/`, `app/services/{outcomes,review_queue,benchmark,honeypot,cheat_rates,attestation_keys,inspect_import}.py` | `docs/evaluation.md` |
 | Judges and sampling | `app/services/evaluation/judges/`, `app/services/{judge_triage,judge_activation,judge_background,review_sampling}.py` | `docs/evaluation.md` §10–§15 |
-| Retention and legal holds | `app/services/retention.py`, `app/jobs/retention.py` | `docs/security.md`, `docs/runbook.md` |
 | Sandbox, platform re-runs | `app/services/{sandbox,verification}/`, `app/workers/sandbox_runner.py`, `app/{api,ui}/routers/{verification,replay}.py` | `docs/security.md`, `docs/architecture.md`, `docs/evaluation.md` §17 |
-| Access and audit integrity | `app/services/access/`, `app/services/{change_requests,audit_chain,governance_audit}.py` | `docs/security.md` |
+| Access, API keys, audit chain, retention | `app/services/access/`, `app/services/{auth,startup_guard,api_key_provenance,change_requests,audit_chain,governance_audit,retention}.py`, `app/jobs/{api_keys,users,retention}.py` | `docs/security.md`, `docs/runbook.md` |
 | FinOps | `app/services/finops/`, `app/services/pricing_import.py` | `docs/finops_core.md` |
-| Control plane, checkpoints, audit, DLQ, operations, tracing | `app/services/{control_plane,checkpoint,audit_log,operations}.py`, `app/workers/consumer.py`, `app/core/{trace_context,tracing}.py` | `docs/architecture.md`, `docs/runbook.md`, `docs/observability.md` |
+| Control plane, checkpoints, DLQ, operations, tracing | `app/services/{control_plane,checkpoint,audit_log,operations}.py`, `app/workers/consumer.py`, `app/core/{trace_context,tracing}.py` | `docs/architecture.md`, `docs/runbook.md`, `docs/observability.md` |
 | Database | `app/models/`, `migrations/versions/` | `docs/data_model.md`, `docs/migrations.md` |
 | Image and delivery | `Dockerfile`, `.dockerignore`, `deploy/`, `scripts/image_content_check.py`, `.github/workflows/` | `docs/deployment.md` |
 | Development guardrails | `.claude/settings.json`, `scripts/hooks/`, `scripts/git-hooks/` | `docs/testing_guide.md` |

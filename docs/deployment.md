@@ -197,7 +197,8 @@ When preparing for production deployment (`APP_ENV=prod`):
 
 1. **Authentication Enforcement**:
    - Set `AUTH_ENABLED=true` and `DASHBOARD_AUTH_MODE=session`, then create the first Dashboard admin with `python -m app.jobs.users create --role admin ...` (`docs/runbook.md` §13).
-   - Set `API_KEYS` to an empty value and provision hashed tenant keys via `/v1/tenants/{tenant_id}/api-keys`. Removing the variable is not enough: unset, it falls back to the development key `demo-key` (tenant `default`, role admin).
+   - Leave `API_KEYS` empty and provision hashed tenant keys with `python -m app.jobs.api_keys create` or `/v1/tenants/{tenant_id}/api-keys`. Since `v1.6.3` the program default is empty and environment keys are refused outside `dev` / `test`; up to `v1.6.2` an unset variable fell back to the development key `demo-key` (tenant `default`, role admin), so set it empty explicitly when you still run `v1.6.2`.
+   - Since `v1.6.3` the API refuses to start in production with `AUTH_ENABLED=false` or Dashboard sign-in `off`. After an upgrade from `v1.6.2` or earlier, review `env_created_api_keys` and `unattributed_api_keys` on `/dashboard/operations` ([`runbook.md`](runbook.md) §17).
 2. **Operations Gate Clearance**:
    - In `prod`, the `/dashboard/operations` gate enforces fail-closed checks:
      - No unresolved critical incidents.
