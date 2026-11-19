@@ -75,4 +75,5 @@ RewardHacking is a production-grade safety guardrail and governance control plan
 | [Production Runbooks](runbook.md) | Operational runbooks, DLQ mitigation, and emergency procedures |
 | [Observability & Metrics](observability.md) | Prometheus metrics, SLO definitions, and alert rules |
 | [Model Pricing Seed Reference](pricing/model_pricing_seed.md) | Official model catalog YAML specification and ingestion |
+| [Third-Party Software in the Images](third_party_licenses.md) | Licenses of the Debian, Python and package components in the published images, and where to get their source |
 | [Release Verification Report](test_report.md) | Real-world test execution records and release verification evidence |

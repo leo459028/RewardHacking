@@ -1,5 +1,16 @@
 # Test Execution & Verification Report
 
+## 2026-11-19 - v1.6.2 Post-Merge: Release and Published Images
+
+- **Merge**: PR #32 merged under the new branch protection of `main` (six required checks passed) as merge commit `ee33e3b`; GitHub Release `v1.6.2` marked Latest, tag on `ee33e3b`.
+- **Image workflow** (`release-image.yml`, run `44474145489`): `verify` and `publish` succeeded, including the step that compares the published layers with the scanned images.
+- **Published images**, pulled without signing in:
+  - `ghcr.io/leo459028/rewardhacking:v1.6.2` → `sha256:889b7e7cf6d66748bd4ec5ec99cc5f8df15f4d77d6b1bdb3866cb158fd6094b8` (`latest` points to the same digest).
+  - `ghcr.io/leo459028/rewardhacking-sandbox-python:v1.6.2` → `sha256:0aae571b029a184bf798b1bc766161bf08520daa588bdfe8a7f983b322c9e8a0` (`latest` points to the same digest).
+- **Visibility**: both packages became public on publication, because the workflow's token linked them to this public repository.
+- **Published image checks**: `scripts/image_content_check.py` → `pass`, 0 findings on both. Licenses: every Python package ships its license file (53 in the main image, 6 in the sandbox image), the three Apache-2.0 `NOTICE` files are kept, all 87 Debian packages have a copyright file, and the Python license file is present. The MPL-2.0 packages are `certifi` and `orjson`. See [`third_party_licenses.md`](third_party_licenses.md).
+- **Not yet done**: a fresh deployment from the published image following `docs/deployment.md`.
+
 ## 2026-11-19 - v1.6.2 Isolated Sandbox Runtime Release Verification
 
 - **Version**: `v1.6.2` (branch `v1.6.2`, Alembic head `202611180002`, `ENGINE_VERSION` `v1.6.2`, 10 version anchors at `1.6.2`).
