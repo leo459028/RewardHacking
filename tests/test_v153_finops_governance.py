@@ -18,6 +18,9 @@ from app.services.pricing_import import (
     validate_pricing_seed,
 )
 from app.services.run_state import InMemoryRunStateStore
+from tests.auth_helpers import seed_db_api_key
+
+PROD_ADMIN_KEY = "rg_" + "v153-prod-admin-test-key"
 
 
 @contextmanager
@@ -51,6 +54,8 @@ def reset_v153_settings(monkeypatch, **env):
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)
+    # v1.6.3 D16: AUTH_ENABLED now defaults to true; these tests were written for the old default (off).
+    env.setdefault("AUTH_ENABLED", "false")
     for key, value in env.items():
         monkeypatch.setenv(key, str(value))
     get_settings.cache_clear()
@@ -631,14 +636,18 @@ def test_v153_finops_metrics_observability_and_operations_readiness(
     session_factory,
     low_risk_payload,
 ):
+    # v1.6.3 D4 / D17: production refuses AUTH_ENABLED=false and Dashboard off, so authenticate with a database key.
     reset_v153_settings(
         monkeypatch,
         APP_ENV="prod",
-        AUTH_ENABLED="false",
+        AUTH_ENABLED="true",
         QUOTA_ENABLED="false",
+        DASHBOARD_AUTH_MODE="session",
     )
+    seed_db_api_key(session_factory, PROD_ADMIN_KEY)
 
     with v153_client(session_factory) as client:
+        client.headers["X-API-Key"] = PROD_ADMIN_KEY
         client.post(
             "/v1/admin/finops/pricing/import/dry-run",
             json={"file_path": "app/seeds/model_pricing_seed.yaml"},

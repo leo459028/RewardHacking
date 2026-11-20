@@ -10,7 +10,7 @@ All REST API endpoints are exposed under the `/v1` route prefix. The service ret
 
 ## Authentication & Headers
 
-- **`X-API-Key`**: API key header when `AUTH_ENABLED=true`. Maps the request to an authorized tenant and RBAC role (`viewer`, `operator`, `admin`, `finops_admin`, `reviewer`, `tenant_admin`, and since `v1.6.1` the read-only `auditor`, which is accepted wherever `viewer` is and never on write endpoints; `POST /v1/tenants/{tenant_id}/api-keys` accepts `role: "auditor"`).
+- **`X-API-Key`**: API key header. Since `v1.6.3` `AUTH_ENABLED` defaults to `true` and there is no built-in key: until a database key exists (Dashboard or `python -m app.jobs.api_keys create`), every `/v1` call except `/v1/healthz` and `/v1/readyz` answers 401. A missing header answers 401 `auth_required`; a wrong or revoked key, and an environment key (`API_KEYS`) when `APP_ENV` is not `dev` or `test`, answer the same 401 `invalid_api_key`, so a client cannot tell a refused environment key from a wrong one. A database key of an inactive tenant answers 403 `tenant_inactive`. `AUTH_ENABLED=false` is accepted only in `dev` / `test`; elsewhere the API does not start. Maps the request to an authorized tenant and RBAC role (`viewer`, `operator`, `admin`, `finops_admin`, `reviewer`, `tenant_admin`, and since `v1.6.1` the read-only `auditor`, which is accepted wherever `viewer` is and never on write endpoints; `POST /v1/tenants/{tenant_id}/api-keys` accepts `role: "auditor"`).
 - **`X-Trace-Id`**: Distributed trace identifier. If provided in the request header, it is echoed unchanged and bound to the execution plan and audit events; otherwise the server returns `trace_<32 hex>`, the W3C trace id with a prefix.
 - **`traceparent` / `tracestate`** (`v1.6.0`): W3C Trace Context. A valid incoming `traceparent` is continued; every response carries `traceparent`. See [`observability.md`](observability.md).
 
@@ -146,7 +146,7 @@ The tombstone is tenant-scoped like the run (another tenant's key gets `403 tena
 | `GET` | `/v1/tenants` | Lists configured tenants and quota overrides | `admin` |
 | `POST` | `/v1/tenants` | Provisions a new tenant | `admin` |
 | `GET` | `/v1/tenants/{tenant_id}/api-keys`| Lists hashed API keys for a tenant | `admin` |
-| `POST` | `/v1/tenants/{tenant_id}/api-keys`| Generates new API key (plaintext returned once) | `admin` |
+| `POST` | `/v1/tenants/{tenant_id}/api-keys`| Generates new API key (plaintext returned once). Since `v1.6.3` the `api_key.created` governance event carries `details.key_id` next to `actor_key_id` (`legacy` = an environment key); the response is unchanged. The CLI `python -m app.jobs.api_keys create` is the alternative for the first key | `admin` |
 | `GET` | `/v1/governance/events` | Queries tenant policy and quota event log (role enforced since `v1.6.1`; before, any valid key could read it) | `viewer`, `operator`, `admin` (and the roles treated as `viewer`) |
 
 ---

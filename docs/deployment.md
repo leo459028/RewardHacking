@@ -97,10 +97,10 @@ Copy [`deploy/docker-compose.release.example.yml`](../deploy/docker-compose.rele
 | `REDIS_URL`, `KAFKA_BOOTSTRAP_SERVERS` | Set by the example | Point them at your own services when you do not use the bundled ones |
 | `APP_ENV` | Yes | `prod` for production |
 | `AUTH_ENABLED` | Yes | `true`; API clients then need keys |
-| `API_KEYS` | Yes: empty | Bootstrap keys read from the environment. **Unset, it falls back to the development key `demo-key` with the admin role**, so set it to an empty value (the example file does) and create hashed tenant keys instead (step 5) |
+| `API_KEYS` | Yes: empty | Bootstrap keys read from the environment. Since `v1.6.3` they are accepted only when `APP_ENV` is `dev` or `test` and the program default is empty; **up to `v1.6.2`, leaving it unset fell back to the development key `demo-key` with the admin role**. Keep it empty (the example file does) and create hashed tenant keys instead (step 5) |
 | `DASHBOARD_AUTH_MODE` | Yes | `session` (personal accounts) |
 | `DASHBOARD_CSRF_SECRET` | Yes with more than one API replica | Random value shared by the replicas |
-| `AUDIT_CHAIN_SIGNING_KEY_FILE` | Yes in `prod` | For example `config/audit_chain_key.pem` |
+| `AUDIT_CHAIN_SIGNING_KEY_FILE` | Yes in production | For example `config/audit_chain_key.pem` |
 | `AUDIT_CHAIN_PUBLIC_KEYS_FILE` | After a key rotation | Public keys that still verify older checkpoints |
 | `RH_AUTO_MIGRATE` | No (default `true`) | See step 4 |
 | `RH_IMAGE` | No | Image the example file runs; pin it to a version or digest |
@@ -150,7 +150,13 @@ There is no default account. Create the first admin from the command line ([`run
 docker compose exec -e RH_ADMIN_PASSWORD api python -m app.jobs.users create --username admin --role admin --password-env RH_ADMIN_PASSWORD
 ```
 
-Then create the API keys your clients need as hashed tenant keys (`/dashboard/governance`, or `POST /v1/tenants/{tenant_id}/api-keys`), and confirm that `/dashboard/operations` shows `bootstrap_keys_in_prod` as `pass`. A new production install also fails `audit_chain_integrity` until the first checkpoint exists (`python -m app.jobs.audit_chain --checkpoint`, [`runbook.md`](runbook.md) §14) and `safety_regression_evidence` until evidence is recorded.
+Then create the API keys your clients need as hashed tenant keys (`/dashboard/governance`, or `POST /v1/tenants/{tenant_id}/api-keys`). A deployment without a Dashboard admin can create its first key from the command line; the plaintext is printed once:
+
+```bash
+docker compose exec -T api python -m app.jobs.api_keys create --tenant default --role admin --name first-admin-key
+```
+
+Confirm that `/dashboard/operations` shows `bootstrap_keys_in_prod` as `pass`. Upgrading from `v1.6.2` or earlier: `env_created_api_keys` lists database keys that an environment key (possibly `demo-key`) created, and `unattributed_api_keys` those created while the API needed no key (`AUTH_ENABLED=false`, the old default); see [`runbook.md`](runbook.md) §17. A new production install also fails `audit_chain_integrity` until the first checkpoint exists (`python -m app.jobs.audit_chain --checkpoint`, [`runbook.md`](runbook.md) §14) and `safety_regression_evidence` until evidence is recorded.
 
 ### 6. Inspect the SBOM and Provenance
 
@@ -162,6 +168,18 @@ docker buildx imagetools inspect ghcr.io/leo459028/rewardhacking:vX.Y.Z --format
 Images are not signed yet; signing is planned for `v1.6.6`.
 
 ---
+
+### 7. Running the Image Directly (`docker run`)
+
+Since `v1.6.3` the image sets `APP_ENV=prod`. Compose `env_file` and `environment` entries override it, so the Compose Quickstart (`cp .env.example .env`, `APP_ENV=dev`) is unchanged. When you start the image yourself with `docker run`, it behaves as production unless you say otherwise:
+
+- Pass the connection settings (`POSTGRES_DSN`, `REDIS_URL`, `KAFKA_BOOTSTRAP_SERVERS`) and the production settings in the table above.
+- `AUTH_ENABLED` defaults to `true` and `DASHBOARD_AUTH_MODE` to `session`. With any `APP_ENV` other than `dev` or `test`, **the API refuses to start** when `AUTH_ENABLED=false` or the Dashboard sign-in mode resolves to `off`, and it refuses environment keys from `API_KEYS` (401).
+- For a local trial only, set `APP_ENV=dev` explicitly:
+
+```bash
+docker run --rm -p 8000:8000 --env-file .env -e APP_ENV=dev ghcr.io/leo459028/rewardhacking:vX.Y.Z
+```
 
 ## Optional: Sandbox Runner (`v1.6.2`)
 
@@ -179,7 +197,8 @@ When preparing for production deployment (`APP_ENV=prod`):
 
 1. **Authentication Enforcement**:
    - Set `AUTH_ENABLED=true` and `DASHBOARD_AUTH_MODE=session`, then create the first Dashboard admin with `python -m app.jobs.users create --role admin ...` (`docs/runbook.md` §13).
-   - Set `API_KEYS` to an empty value and provision hashed tenant keys via `/v1/tenants/{tenant_id}/api-keys`. Removing the variable is not enough: unset, it falls back to the development key `demo-key` (tenant `default`, role admin).
+   - Leave `API_KEYS` empty and provision hashed tenant keys with `python -m app.jobs.api_keys create` or `/v1/tenants/{tenant_id}/api-keys`. Since `v1.6.3` the program default is empty and environment keys are refused outside `dev` / `test`; up to `v1.6.2` an unset variable fell back to the development key `demo-key` (tenant `default`, role admin), so set it empty explicitly when you still run `v1.6.2`.
+   - Since `v1.6.3` the API refuses to start in production with `AUTH_ENABLED=false` or Dashboard sign-in `off`. After an upgrade from `v1.6.2` or earlier, review `env_created_api_keys` and `unattributed_api_keys` on `/dashboard/operations` ([`runbook.md`](runbook.md) §17).
 2. **Operations Gate Clearance**:
    - In `prod`, the `/dashboard/operations` gate enforces fail-closed checks:
      - No unresolved critical incidents.

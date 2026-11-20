@@ -18,7 +18,8 @@ from app.models.incident import Incident
 from app.models.operations import OperationsEvidence, ReleaseGateItem, ReleaseGateRun
 from app.models.tenant import TenantApiKey
 from app.models.worker_attempt import WorkerAttempt
-from app.services import audit_chain, retention
+from app.services import api_key_provenance, audit_chain, retention
+from app.services.auth import configured_env_api_key_count
 from app.services.finops import ensure_default_pricing
 from app.services.sandbox import docker_config
 from app.services.sandbox import gate as sandbox_gate
@@ -114,7 +115,7 @@ async def _evaluation_benchmark_gate_check(session: AsyncSession, *, settings: S
 
     Reads stored benchmark runs only (never runs a benchmark). Advisory unless
     ``EVALUATION_BENCHMARK_GATE_ENFORCED`` is true; when enforced, a stale benchmark warns and a TPR
-    below ``EVALUATION_BENCHMARK_MIN_TPR`` fails in ``APP_ENV=prod``.
+    below ``EVALUATION_BENCHMARK_MIN_TPR`` fails in production (any APP_ENV but dev / test, v1.6.3 D19).
     """
     from app.services.benchmark import gate_evaluation, latest_gate_run
     from app.services.evaluation.engine import EvaluationEngine
@@ -220,7 +221,7 @@ async def _evaluation_judge_health_check(session: AsyncSession, *, settings: Set
         )
         or 0
     )
-    if same_family and settings.app_env.lower() == "prod":
+    if same_family and settings.is_production_like:  # v1.6.3 D19: every APP_ENV other than dev / test
         status = "warn" if status == "pass" else status
         issues.append(f"{same_family} assessments used a judge from the monitored agent's model family")
     if settings.judge_uses_legacy_alias:
@@ -405,9 +406,11 @@ async def _retention_policy_check(session: AsyncSession, *, settings: Settings) 
 
 
 async def _dashboard_auth_mode_check(session: AsyncSession, *, settings: Settings) -> OperationsCheck:
-    """v1.6.1 D9 / D14: Dashboard sign-in must be on in production; deprecated Basic Auth settings are flagged."""
+    """v1.6.1 D9 / D14: Dashboard sign-in must be on in production; deprecated Basic Auth settings are flagged.
+
+    v1.6.3 D19: "production" is every APP_ENV other than dev / test (the API also refuses to start with off there)."""
     mode = settings.dashboard_auth_mode
-    prod = (settings.app_env or "").strip().lower() == "prod"
+    prod = settings.is_production_like
     admins = int(
         await session.scalar(
             select(func.count()).select_from(DashboardUser).where(DashboardUser.role == "admin", DashboardUser.status == "active")
@@ -441,6 +444,125 @@ async def _dashboard_auth_mode_check(session: AsyncSession, *, settings: Setting
     )
 
 
+def _api_auth_enabled_check(settings: Settings) -> OperationsCheck:
+    """v1.6.3 D4: the /v1 API must require API keys outside dev / test (the API also refuses to start then)."""
+    production_like = settings.is_production_like
+    if settings.auth_enabled:
+        status = "pass"
+        detail = "The /v1 API requires an API key (AUTH_ENABLED=true)."
+    elif production_like:
+        status = "fail"
+        detail = (
+            f"AUTH_ENABLED=false with APP_ENV={settings.app_env!r}: the /v1 API would accept requests without an API key. "
+            "Set AUTH_ENABLED=true (the API refuses to start otherwise); for a local trial only, set APP_ENV=dev."
+        )
+    else:
+        status = "pass"
+        detail = "AUTH_ENABLED=false: the /v1 API needs no API key (APP_ENV is dev or test; local development only)."
+    return OperationsCheck(
+        check_key="api_auth_enabled",
+        status=status,
+        title="API authentication",
+        detail=detail,
+        metadata={"auth_enabled": settings.auth_enabled, "app_env": settings.app_env, "production_like": production_like},
+    )
+
+
+ENV_CREATED_KEYS_SHOWN = 10
+
+
+async def _env_created_api_keys_check(session: AsyncSession) -> OperationsCheck:
+    """v1.6.3 D7: active database API keys that an environment API key created. ``warn`` in every environment.
+
+    The legacy documents told people to create the first keys with an environment key, so most of them are
+    legitimate; the check asks for each to be confirmed or rotated. It never fails and never revokes anything."""
+    keys = await api_key_provenance.active_env_created_keys(session)
+    key_ids = [key.key_id for key in keys]
+    metadata = {
+        "count": len(key_ids),
+        "key_ids": key_ids,
+        "tenants": sorted({key.tenant_id for key in keys}),
+        "runbook": api_key_provenance.RUNBOOK_SECTION,
+    }
+    if not key_ids:
+        return OperationsCheck(
+            check_key="env_created_api_keys",
+            status="pass",
+            title="API keys created with an environment key",
+            detail="No active database API key was created with an environment API key (actor key:legacy).",
+            metadata=metadata,
+        )
+    shown = ", ".join(key_ids[:ENV_CREATED_KEYS_SHOWN])
+    more = f" and {len(key_ids) - ENV_CREATED_KEYS_SHOWN} more" if len(key_ids) > ENV_CREATED_KEYS_SHOWN else ""
+    return OperationsCheck(
+        check_key="env_created_api_keys",
+        status="warn",
+        title="API keys created with an environment key",
+        detail=(
+            f"{len(key_ids)} active database API key(s) were created with an environment API key (actor key:legacy): "
+            f"{shown}{more}. Which environment key was used cannot be told afterwards (every environment key is "
+            "recorded as legacy, demo-key included). If this deployment ever ran without API_KEYS or with demo-key, "
+            "treat all of them as exposed and rotate them; otherwise confirm each one. Rotate: issue a replacement on "
+            "/dashboard/governance and revoke the old key; the check passes when none is left. "
+            f"See {api_key_provenance.RUNBOOK_SECTION}."
+        ),
+        metadata=metadata,
+    )
+
+
+
+async def _unattributed_api_keys_check(session: AsyncSession) -> OperationsCheck:
+    """v1.6.3 D20: active database API keys whose creator cannot be told. ``warn`` in every environment, never fails.
+
+    ``no_actor``: the creation event names nobody, so the key was created while AUTH_ENABLED=false (the default up to
+    v1.6.2), when the API needed no key at all. ``no_event``: no creation event exists (written outside the app)."""
+    rows = await api_key_provenance.active_unattributed_keys(session)
+    key_ids = [key.key_id for key, _ in rows]
+    no_actor = [key.key_id for key, creator in rows if creator.reason == api_key_provenance.UNKNOWN_NO_ACTOR_REASON]
+    no_event = [key.key_id for key, creator in rows if creator.reason != api_key_provenance.UNKNOWN_NO_ACTOR_REASON]
+    metadata = {
+        "count": len(key_ids),
+        "key_ids": key_ids,
+        "no_actor": no_actor,
+        "no_event": no_event,
+        "tenants": sorted({key.tenant_id for key, _ in rows}),
+        "runbook": api_key_provenance.RUNBOOK_SECTION,
+    }
+    title = "API keys with an unknown creator"
+    if not key_ids:
+        return OperationsCheck(
+            check_key="unattributed_api_keys",
+            status="pass",
+            title=title,
+            detail="Every active database API key has a recorded creator.",
+            metadata=metadata,
+        )
+
+    def _listed(ids: list[str]) -> str:
+        more = f" and {len(ids) - ENV_CREATED_KEYS_SHOWN} more" if len(ids) > ENV_CREATED_KEYS_SHOWN else ""
+        return ", ".join(ids[:ENV_CREATED_KEYS_SHOWN]) + more
+
+    parts = []
+    if no_actor:
+        parts.append(
+            f"{len(no_actor)} created while API authentication was off (AUTH_ENABLED=false, the default up to v1.6.2: "
+            f"anyone who reached the API could create them): {_listed(no_actor)}"
+        )
+    if no_event:
+        parts.append(f"{len(no_event)} without any creation event (written outside the application): {_listed(no_event)}")
+    return OperationsCheck(
+        check_key="unattributed_api_keys",
+        status="warn",
+        title=title,
+        detail=(
+            f"{len(key_ids)} active database API key(s) have no recorded creator. " + "; ".join(parts) + ". "
+            "Confirm each with its owner, or rotate it: issue a replacement on /dashboard/governance and revoke the old "
+            f"key; the check passes when none is left. See {api_key_provenance.RUNBOOK_SECTION}."
+        ),
+        metadata=metadata,
+    )
+
+
 AUDIT_CHAIN_TAIL_ENTRIES = 1000
 AUDIT_CHAIN_CHECKPOINT_MAX_AGE_HOURS = 48
 
@@ -448,9 +570,10 @@ AUDIT_CHAIN_CHECKPOINT_MAX_AGE_HOURS = 48
 async def _audit_chain_integrity_check(session: AsyncSession, *, settings: Settings) -> OperationsCheck:
     """v1.6.1 D33 / Q7: the chain must be on, recent entries must verify, and checkpoints must be signed and recent.
 
-    Outside ``APP_ENV=prod`` a missing signing key, a disabled chain or a stale checkpoint is an advisory warning (it
-    does not change the overall gate); in production it fails. A tail that does not verify fails everywhere."""
-    prod = (settings.app_env or "").strip().lower() == "prod"
+    In ``APP_ENV=dev`` / ``test`` a missing signing key, a disabled chain or a stale checkpoint is an advisory warning
+    (it does not change the overall gate); in production (every other APP_ENV, v1.6.3 D19) it fails. A tail that does
+    not verify fails everywhere."""
+    prod = settings.is_production_like
     current = await audit_chain.head(session)
     head_seq = current.seq if current is not None else 0
     tail = await audit_chain.verify(
@@ -496,11 +619,12 @@ DUAL_CONTROL_REQUIRED_IN_PROD = ("retention.apply", "legal_hold.release")
 def _dual_control_configured_check(settings: Settings) -> OperationsCheck:
     """v1.6.1 D38 / Q4: production should put purge apply and legal-hold release under dual control.
 
-    Missing actions warn in ``APP_ENV=prod``; elsewhere the warning is advisory (it does not change the overall gate,
-    like ``dashboard_auth_mode`` and ``audit_chain_integrity``). Unknown names in ``DUAL_CONTROL_ACTIONS`` also warn."""
+    Missing actions warn in production (every APP_ENV other than dev / test, v1.6.3 D19); in dev / test the warning is
+    advisory (it does not change the overall gate, like ``dashboard_auth_mode`` and ``audit_chain_integrity``). Unknown
+    names in ``DUAL_CONTROL_ACTIONS`` also warn."""
     from app.services.change_requests import configured_actions
 
-    prod = (settings.app_env or "").strip().lower() == "prod"
+    prod = settings.is_production_like
     enabled, unknown = configured_actions(settings)
     missing = [action for action in DUAL_CONTROL_REQUIRED_IN_PROD if action not in enabled]
     if unknown:
@@ -534,7 +658,7 @@ async def _sandbox_backend_health_check(session: AsyncSession, settings: Setting
     elif settings.sandbox_execution_enabled and not gate_status.ready:
         status = "fail"
         detail = f"Sandbox execution is on but the gate is closed: {', '.join(gate_status.reasons)}."
-    elif settings.sandbox_execution_enabled and (settings.app_env or "").strip().lower() == "prod" and docker_config.runtime_of(settings) == "runc":
+    elif settings.sandbox_execution_enabled and settings.is_production_like and docker_config.runtime_of(settings) == "runc":
         status = "warn"
         detail = "Sandbox gate is open on runc in production; containers share the host kernel, use runsc (gVisor) for untrusted code."
     elif configured_backend(settings) == DOCKER:
@@ -658,7 +782,7 @@ async def compute_operations_readiness(
         or 0
     )
     violation_status = (
-        ("fail" if settings.app_env.lower() == "prod" else "warn")
+        ("fail" if settings.is_production_like else "warn")  # v1.6.3 D19
         if open_critical_violations
         else "pass"
     )
@@ -796,21 +920,34 @@ async def compute_operations_readiness(
         await _evaluation_sampling_health_check(session, settings=settings, now=now),
     ]
 
-    if settings.app_env.lower() == "prod" and settings.release_gate_fail_on_bootstrap_keys_in_prod:
+    checks.append(_api_auth_enabled_check(settings))
+    checks.append(await _env_created_api_keys_check(session))
+    checks.append(await _unattributed_api_keys_check(session))
+    # v1.6.3 D5: "production" is every APP_ENV other than dev / test (it used to be only the exact value "prod").
+    if settings.is_production_like and settings.release_gate_fail_on_bootstrap_keys_in_prod:
+        # Fails on any non-empty value, well-formed or not; the startup log warns on the same condition.
+        api_keys_configured = bool((settings.api_keys or "").strip())
+        well_formed = configured_env_api_key_count(settings.api_keys)
         checks.append(
             OperationsCheck(
                 check_key="bootstrap_keys_in_prod",
-                status="fail" if settings.api_keys else "pass",
+                status="fail" if api_keys_configured else "pass",
                 title="No bootstrap API keys in production",
-                detail="APP_ENV=prod should not rely on API_KEYS bootstrap fallback.",
-                metadata={"api_keys_configured": bool(settings.api_keys)},
+                detail=(
+                    f"API_KEYS is set ({well_formed} well-formed key(s)), but environment API keys are refused when "
+                    f"APP_ENV is not dev or test (APP_ENV={settings.app_env!r}); every request with them gets 401. "
+                    "Remove API_KEYS and use database API keys."
+                    if api_keys_configured
+                    else "No environment API keys are configured; production uses database API keys only."
+                ),
+                metadata={"api_keys_configured": api_keys_configured, "well_formed_keys": well_formed, "app_env": settings.app_env},
             )
         )
 
     backup = await latest_evidence(session, evidence_type="backup_restore_drill")
     secret = await latest_evidence(session, evidence_type="secret_rotation")
     safety = await latest_evidence(session, evidence_type="safety_regression")
-    safety_missing_status = "fail" if settings.app_env.lower() == "prod" else "warn"
+    safety_missing_status = "fail" if settings.is_production_like else "warn"  # v1.6.3 D19
     checks.extend(
         [
             _fresh_evidence_check(

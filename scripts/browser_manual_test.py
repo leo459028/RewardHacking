@@ -88,6 +88,12 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("E2E_QA_PRICING_CURRENCY", "TWD"),
         help="Currency for QA tenant_override pricing in Scenario 3 (default: TWD or E2E_QA_PRICING_CURRENCY).",
     )
+    parser.add_argument(
+        "--only-scenario-21",
+        action="store_true",
+        help="Run only Scenario 21 against an API with /v1 authentication on (APP_ENV=dev) and the environment admin key "
+        "in E2E_ENV_API_KEY; the environment-key part must run (v1.6.3).",
+    )
     return parser.parse_args()
 
 
@@ -96,6 +102,7 @@ def run_manual_test_suite(
     force_headless: bool = False,
     slow_mo: int = 100,
     qa_currency: str = "TWD",
+    only_scenario_21: bool = False,
 ) -> int:
     from playwright.sync_api import sync_playwright
 
@@ -149,6 +156,7 @@ def run_manual_test_suite(
         # 1.2 (v1.6.1) Dashboard sign-in: detect the mode and sign in as the QA admin in session mode.
         creds = e2e_credentials()
         skipped: list[str] = []
+        skipped_other: list[str] = []  # v1.6.3: parts that need a stack setting rather than sign-in
         page.goto(f"{base_url}/dashboard")
         session_mode = "/dashboard/login" in page.url
         if session_mode:
@@ -188,6 +196,112 @@ def run_manual_test_suite(
                 reauth_expected[0] = True
                 reauth(page, base_url, admin_secret, next_path)
                 reauth_expected[0] = False
+
+        def scenario_21(require_env_part: bool) -> None:
+            """v1.6.3 P2 / P3: Scenario 21. With require_env_part (--only-scenario-21) the environment-key part must run."""
+            # Who created each API key (plan D6-D8). Keys carry this run's prefix and are revoked at
+            # the end; no other key on the stack is touched.
+            key_prefix_tag = f"e2e-keys-{uuid.uuid4().hex[:8]}"
+            key_tenant = "manual-qa-tenant"
+            governance_url = f"/dashboard/governance?tenant_id={key_tenant}"
+
+            def _key_row(name: str):
+                return page.locator(f'tr:has(td:text-is("{name}"))')
+
+            def _revoke_key_on_dashboard(key_id: str) -> None:
+                step_up(governance_url)
+                page.goto(f"{base_url}{governance_url}")
+                page.locator(f'form[action="/dashboard/governance/tenants/{key_tenant}/api-keys/{key_id}/revoke"] button').click()
+                page.wait_for_load_state("networkidle")
+
+            def _env_check_row() -> str:
+                page.goto(f"{base_url}/dashboard/operations")
+                row = page.locator('[data-testid="operations-check"][data-check-key="env_created_api_keys"]')
+                assert row.count() == 1, "the env_created_api_keys check is missing from /dashboard/operations"
+                return row.inner_text()
+
+            env_key = os.environ.get("E2E_ENV_API_KEY", "")
+            anonymous = p.request.new_context(base_url=base_url)
+            api_auth_on = anonymous.get("/v1/operations/readiness").status == 401
+            anonymous.dispose()
+            if api_auth_on and env_key:
+                env_api = p.request.new_context(base_url=base_url, extra_http_headers={"X-API-Key": env_key})
+                created = env_api.post(f"/v1/tenants/{key_tenant}/api-keys", data={"name": f"{key_prefix_tag}-env", "role": "viewer"})
+                assert created.status == 200, f"creating a key with E2E_ENV_API_KEY answered {created.status}"
+                env_key_id = created.json()["key_id"]
+                env_api.dispose()
+                page.goto(f"{base_url}{governance_url}")
+                creator = _key_row(f"{key_prefix_tag}-env").locator('[data-testid="api-key-creator"]')
+                assert creator.get_attribute("data-creator-kind") == "env" and "environment key (legacy)" in creator.inner_text()
+                assert env_key_id in page.inner_text('[data-testid="env-created-keys-ids"]')
+                ops_row = _env_check_row()
+                assert "warn" in ops_row and env_key_id in ops_row, ops_row
+                _revoke_key_on_dashboard(env_key_id)
+                assert env_key_id not in _env_check_row()
+                print(f"[Scenario 21] {env_key_id} created with the environment key shows 'environment key (legacy)' and env_created_api_keys warns; revoked, no longer listed")
+            elif require_env_part:
+                raise AssertionError(
+                    "--only-scenario-21 needs /v1 authentication on (AUTH_ENABLED=true, APP_ENV=dev) and the environment "
+                    "admin key in E2E_ENV_API_KEY; the environment-key part must run"
+                )
+            else:
+                skipped_other.append("Scenario 21 environment-key part (/v1 authentication off or E2E_ENV_API_KEY unset; run --only-scenario-21)")
+                print("[Scenario 21] Environment-key part skipped: /v1 authentication is off on this stack or E2E_ENV_API_KEY is unset")
+
+            step_up(governance_url)
+            page.goto(f"{base_url}{governance_url}")
+            page.fill('form[action="/dashboard/governance/api-keys"] input[name="tenant_id"]', key_tenant)
+            page.fill('form[action="/dashboard/governance/api-keys"] input[name="name"]', f"{key_prefix_tag}-dash")
+            page.select_option('form[action="/dashboard/governance/api-keys"] select[name="role"]', "viewer")
+            page.click('form[action="/dashboard/governance/api-keys"] button[type="submit"]')
+            page.wait_for_load_state("networkidle")
+            page.goto(f"{base_url}{governance_url}")
+            dash_row = _key_row(f"{key_prefix_tag}-dash")
+            assert dash_row.count() == 1, f"{key_prefix_tag}-dash is not listed"
+            dash_creator = dash_row.locator('[data-testid="api-key-creator"]')
+            expected_actor = f"user:{admin_user}" if session_mode else "dashboard-admin"
+            assert dash_creator.get_attribute("data-creator-kind") == "user" and expected_actor in dash_creator.inner_text()
+            assert "Created by | 建立者" in page.content()
+            revoke_action = dash_row.locator('form[action$="/revoke"]').get_attribute("action") or ""
+            dash_key_id = revoke_action.rstrip("/").split("/")[-2]
+            assert dash_key_id.startswith("key_") and dash_key_id not in _env_check_row()
+            if session_mode:
+                auditor_context = browser.new_context(viewport={"width": 1440, "height": 900})
+                auditor_page = auditor_context.new_page()
+                sign_in(auditor_page, base_url, *creds["auditor"])
+                auditor_page.goto(f"{base_url}{governance_url}")
+                auditor_row = auditor_page.locator(f'tr:has(td:text-is("{key_prefix_tag}-dash"))')
+                assert auditor_row.locator('[data-testid="api-key-creator"]').get_attribute("data-creator-kind") == "user"
+                assert auditor_row.locator('form[action$="/revoke"]').count() == 0
+                auditor_context.close()
+            _revoke_key_on_dashboard(dash_key_id)
+            page.goto(f"{base_url}{governance_url}")
+            assert "Revoked" in _key_row(f"{key_prefix_tag}-dash").inner_text()
+            print(f"[Scenario 21.1] {dash_key_id} issued on the Dashboard shows creator {expected_actor}; auditor sees it without Revoke; revoked")
+
+        def finish() -> int:
+            print(f"[Section 6 Checklist] Console errors/warnings: {len(console_errors)}")
+            for msg in console_errors[:10]:
+                print(f"  [console] {msg[:300]}")
+            for req in failed_requests[:10]:
+                print(f"  [http>=400] {req[:300]}")
+            print(f"[Section 6 Checklist] Page errors: {len(page_errors)}")
+            print(f"[Section 6 Checklist] Failed HTTP requests (>=400): {len(failed_requests)}")
+            print(f"[Section 6 Checklist] Unexpected re-authentication redirects: {len(unexpected_reauth)}")
+            for url in unexpected_reauth[:5]:
+                print(f"  [reauth] {url[:300]}")
+            if skipped:
+                print(f"[Section 6 Checklist] Skipped (sign-in off): {', '.join(skipped)}")
+            if skipped_other:
+                print(f"[Section 6 Checklist] Skipped (stack settings): {', '.join(skipped_other)}")
+
+            browser.close()
+            return 1 if console_errors or page_errors or failed_requests or unexpected_reauth else 0
+
+        if only_scenario_21:
+            print("[Scenario 21 only] Running Scenario 21 alone; Scenarios 1-20 run on the stack without /v1 authentication")
+            scenario_21(require_env_part=True)
+            return finish()
 
         # 1. Prerequisites & Environment Startup: Dashboard Home & Swagger Docs
         page.goto(f"{base_url}/dashboard")
@@ -1495,6 +1609,8 @@ def run_manual_test_suite(
             auditor_context.close()
             print("[Scenario 17.2] Auditor reads /dashboard/verification and the Run Detail block without forms; POST -> 403")
 
+        scenario_21(require_env_part=False)
+
         page.goto(f"{base_url}/dashboard/observability")
         obs_html = page.content()
         assert "FinOps" in obs_html
@@ -1543,13 +1659,14 @@ def run_manual_test_suite(
         assert "evaluation_judge_health" in ops_html and "evaluation_sampling_health" in ops_html
         assert "retention_policy" in ops_html and "sandbox_backend_health" in ops_html and "sandbox_runner_health" in ops_html
         assert "dashboard_auth_mode" in ops_html and "audit_chain_integrity" in ops_html and "dual_control_configured" in ops_html
+        assert "api_auth_enabled" in ops_html and "env_created_api_keys" in ops_html and "unattributed_api_keys" in ops_html  # v1.6.3
         release_ver = page.input_value('input[name="release_version"]')
-        assert release_ver == "v1.6.2"
+        assert release_ver == "v1.6.3"
 
         page.select_option('select[name="evidence_type"]', "safety_regression")
         page.select_option('select[name="status"]', "pass")
         page.fill('input[name="reference_url"]', "docs/manual_test.md")
-        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.6.2")
+        page.fill('textarea[name="summary"]', "Completed full browser E2E manual_test.md suite for v1.6.3")
         page.click('button:has-text("Save Evidence")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
@@ -1557,9 +1674,9 @@ def run_manual_test_suite(
         page.click('button:has-text("Create Release Gate Snapshot")')
         page.wait_for_load_state("networkidle")
         page.goto(f"{base_url}/dashboard/operations")
-        assert "v1.6.2" in page.content()
+        assert "v1.6.3" in page.content()
         assert set(re.findall(r"gate_[0-9a-f]{12}", page.content())) - gates_before, "the release gate snapshot was not stored"
-        print("[Scenario 4.3] Operations evidence saved & v1.6.2 Release Gate snapshot created via browser")
+        print("[Scenario 4.3] Operations evidence saved & v1.6.3 Release Gate snapshot created via browser")
 
         # 6. Check all primary navigation tabs for 0E-8 and HTTP 200
         nav_routes = [
@@ -1593,24 +1710,7 @@ def run_manual_test_suite(
             assert "0E-8" not in page.content(), f"Route {route} contains 0E-8"
 
         print(f"[Section 6 Checklist] All {len(nav_routes)} navigation tabs returned HTTP 200 with 0 '0E-8' artifacts")
-        print(f"[Section 6 Checklist] Console errors/warnings: {len(console_errors)}")
-        for msg in console_errors[:10]:
-            print(f"  [console] {msg[:300]}")
-        for req in failed_requests[:10]:
-            print(f"  [http>=400] {req[:300]}")
-        print(f"[Section 6 Checklist] Page errors: {len(page_errors)}")
-        print(f"[Section 6 Checklist] Failed HTTP requests (>=400): {len(failed_requests)}")
-        print(f"[Section 6 Checklist] Unexpected re-authentication redirects: {len(unexpected_reauth)}")
-        for url in unexpected_reauth[:5]:
-            print(f"  [reauth] {url[:300]}")
-        if skipped:
-            print(f"[Section 6 Checklist] Skipped (sign-in off): {', '.join(skipped)}")
-
-        browser.close()
-
-    if console_errors or page_errors or failed_requests or unexpected_reauth:
-        return 1
-    return 0
+        return finish()
 
 
 if __name__ == "__main__":
@@ -1621,5 +1721,6 @@ if __name__ == "__main__":
             force_headless=args.headless,
             slow_mo=args.slow_mo,
             qa_currency=args.qa_currency,
+            only_scenario_21=args.only_scenario_21,
         )
     )

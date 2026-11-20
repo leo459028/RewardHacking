@@ -30,6 +30,8 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PATH=/opt/venv/bin:$PATH
 ENV HOME=/tmp
+# v1.6.3 D15: the published image is production unless told otherwise; compose env_file / environment override it.
+ENV APP_ENV=prod
 
 RUN groupadd --gid 10001 app && \
     useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin app

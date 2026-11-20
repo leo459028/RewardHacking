@@ -24,22 +24,21 @@ Modern AI agents do not merely generate text—they read repositories, mutate co
 
 ---
 
-## Current Release: `v1.6.2`
+## Current Release: `v1.6.3`
 
-### V1.6.2 Isolated Sandbox Runtime: Published Image, Hardened Docker Backend, Platform Re-Runs & `platform_verified` Evidence (Current)
-`v1.6.2` lets the platform check an agent's work itself: it re-runs the tests it keeps, in an isolated sandbox, before and after applying the agent's change. Real execution is off by default and agent-run tools stay simulated.
-- **Published Image**: an allow-listed build context, a multi-stage non-root image (UID 10001, 887 MB → 366 MB) without keys, tests or compilers, a content scan on every pull request and before every push, and `ghcr.io` images with an SBOM and provenance, published from CI when a release is created. See [`docs/deployment.md`](docs/deployment.md).
-- **Hardened Docker Backend**: read-only root filesystem, no network, all capabilities dropped, `no-new-privileges`, a non-root user and process, memory and CPU limits, on `runc` or `runsc` (gVisor). Work below the required isolation level is refused, never downgraded.
-- **Sandbox Runner & Execution Gate**: `sandbox-runner` (compose profile `sandbox`) is the only process with Docker access and accepts no requests; it reads a database queue. Nothing executes unless `SANDBOX_EXECUTION_ENABLED=true`, `SANDBOX_BACKEND=docker` and a passing conformance run (10 base and 10 hardening cases) matches the current configuration fingerprint. `/dashboard/sandbox`, `/v1/sandbox/*`.
-- **Verification Suites (`vsu_`)**: tenant administrators upload an immutable snapshot of the code and tests (`tar.gz`, up to 20 MiB). Unsafe archives are refused, a new upload is a new version, and the suite is fixed when the run is submitted: an outcome cannot name or change it. `/dashboard/verification`, `/v1/verification-suites`.
-- **Before / After Re-Runs (`vrf_`)**: the agent's changes are applied to non-test files only, so tests and test settings always come from the platform's copy. Results are classified (fail-to-pass, pass-to-pass, regression), flaky tests are retried, and changed-line coverage shows whether the change was executed at all. Sampling (`SANDBOX_VERIFY_MODE`), a per-tenant daily cap, manual re-runs from Review Detail, sandbox replay and FinOps compute records keep the cost visible.
-- **`platform_verified` Evidence**: a completed re-run carries `assurance_level: platform_verified`. It means the platform produced this report in the sandbox from the tests it keeps. It does not mean the tests passed, and it is not proof against tampering: the agent's code runs in the same process as the tests ([`docs/evaluation.md`](docs/evaluation.md) §17.5). An agent cannot submit this level.
-- **Shadow Re-Run Rules**: `RV-001`–`RV-004` (contradiction, regression, unexecuted changes, no fail-to-pass) ship in `shadow`, so verdicts, review status and priority do not change. `ENGINE_VERSION` is `v1.6.2`, and the benchmark readiness gate reports `benchmark_stale` until the benchmark is run again.
-- **Development Guardrails**: deny and ask rules, lint hooks, a git pre-commit check, risk-based review depth and stricter CI (version anchors, Postgres migrations, real Docker conformance on `runc` and `runsc`, and a dependency audit that fails a pull request on a known vulnerability in a Python dependency).
-- **Dual Control Fix**: a request can no longer lose its lock early and create two pending change requests for one target, and an expired request writes one expiry event.
-- Two new primary views (23 in total), Alembic head `202611180002` (`sandbox_jobs`, `sandbox_conformance_runs`, `verification_suites`, `sandbox_artifacts`, `verification_runs`). Details: [`docs/runbook.md`](docs/runbook.md) §16, [`docs/security.md`](docs/security.md), [`docs/evaluation.md`](docs/evaluation.md) §17.
+### V1.6.3 Secure Authentication Defaults: Security Patch (Current)
+`v1.6.3` is a security patch. Up to `v1.6.2` a deployment that left `API_KEYS` unset accepted the public development key `demo-key` as an admin key, the application started with API authentication and Dashboard sign-in off, and nothing refused either in production. Leaving every setting unset is now the safe configuration.
+- **No Built-In API Key**: `API_KEYS` is empty by default, and environment keys are accepted only when `APP_ENV` is `dev` or `test`. Elsewhere they are refused with the same 401 `invalid_api_key` as a wrong key, and production uses hashed database keys.
+- **Authentication On by Default**: `AUTH_ENABLED` defaults to `true` and Dashboard sign-in to `session`. Outside `dev` / `test` the API refuses to start with `AUTH_ENABLED=false` or `DASHBOARD_AUTH_MODE=off` (new `api_auth_enabled` operations check). The published image sets `APP_ENV=prod`, so `docker run` without settings behaves as production.
+- **One Production Rule**: every production-only operations check, the benchmark gate and the sandbox local-image rule treat any `APP_ENV` other than `dev` / `test` as production, so `production` and `staging` no longer skip them.
+- **Finding Keys Left Behind**: the Governance page shows who created each API key (**Created by \| 建立者**, with an **environment key (legacy)** badge), and the `env_created_api_keys` and `unattributed_api_keys` operations checks (warn) list active keys created with an environment key or by an unknown creator. [`docs/runbook.md`](docs/runbook.md) §17 explains how to review and rotate them. Whether an environment key was `demo-key` cannot be told afterwards.
+- **First Key Without an Environment Key**: `python -m app.jobs.api_keys create --tenant <id> --role <role> --name <name>` prints the key once and writes a governance event to the audit chain; `list --created-by env|unknown` matches the two checks.
+- **Breaking Changes**: production clients that still send an environment key get 401; production deployments with `AUTH_ENABLED=false` or Dashboard sign-in `off` no longer start. Before upgrading, create database API keys (Dashboard or the CLI) and the first Dashboard admin (`python -m app.jobs.users create`). From `v1.6.2`: set `API_KEYS=` first, upgrade, then review `env_created_api_keys` and `unattributed_api_keys`.
+- No migration (Alembic head `202611180002`); `ENGINE_VERSION` stays `v1.6.2`. Details: [`docs/security.md`](docs/security.md) Known Boundaries 7 and 7a, [`docs/deployment.md`](docs/deployment.md), [`docs/configuration.md`](docs/configuration.md).
 
 ### Release History & Evolutionary Context
+
+- **`v1.6.2` (Historical)**: Isolated Sandbox Runtime. A published non-root image without secrets (content scan, SBOM, provenance), a hardened Docker backend on `runc` or `runsc` behind a disabled-by-default flag and a conformance gate, `sandbox-runner` as the only process with Docker access, immutable verification suites, before / after re-runs of the platform's own tests with flaky retries and changed-line coverage, and the first `platform_verified` evidence: the platform produced the report in the sandbox from the tests it keeps. It does not mean the tests passed, and it is not proof against tampering. Shadow rules `RV-001`–`RV-004`, 23 primary views, Alembic head `202611180002`. Superseded by the `v1.6.3` security fix: do not deploy `v1.6.2` without `API_KEYS=`.
 
 - **`v1.6.1` (Historical)**: Enterprise Access & Audit Integrity. Dashboard sign-in with sessions and five roles (including a read-only `auditor`) and tenant scope, CSRF tokens and step-up re-authentication, dual control (change requests) for high-impact actions, a tamper-evident audit chain with signed checkpoints, Dashboard retention apply and hold release, and prompt-guard/2.0. Alembic head `202611120003`.
 
@@ -167,6 +166,7 @@ When fully implemented along the roadmap, this system is designed to support:
 - **Deterministic Evaluator**: Evidence detectors are deterministic rules over agent-reported (`self_reported`) or CI-attested evidence; they can be evaded deliberately and should not be treated as a single source of infallible truth. The `v1.5.9` benchmark measures their miss and false-positive rates (seed scores reflect rule self-consistency, not real-world rates). The `v1.5.10`–`v1.5.12` LLM judges only reorder review work and can themselves be manipulated; they never pass a run. Since `v1.6.2` a platform re-run can carry `platform_verified`; its rules stay in shadow and it is not proof against tampering. Re-runs support `code_fix` tasks with Python and pytest only.
 - **Prompt Screening**: The prompt guard is a deterministic rule list (English, classical Chinese and modern Chinese rules with Unicode normalization and a classical-style signal since `v1.6.1`). It does not understand meaning, so a paraphrase can evade it; it is a risk signal that sends requests to human approval, not a security boundary. Semantic screening is planned for `v1.6.5` ([`docs/security.md`](docs/security.md), Known Boundaries).
 - **Model Approval**: There is no approved-model list yet; only LLM judges are opt-in. An opt-in list with vendor jurisdiction is planned for `v1.6.5`.
+- **Authentication Scope**: an API key with the `admin` role is a platform administrator: it can create tenants and keys for any tenant, regardless of its own tenant. Since `v1.6.3` nothing is open by default, but a deployment that sets `APP_ENV=dev` still accepts environment keys and the development template's `AUTH_ENABLED=false` / `DASHBOARD_AUTH_MODE=off`. Keys created before `v1.6.3` stay valid after the upgrade; the platform lists them but never revokes them ([`docs/security.md`](docs/security.md), Known Boundaries).
 - **Fail-Safe Caveat**: Guardrails significantly mitigate risk, but cannot mathematically eliminate all zero-day jailbreaks or sophisticated prompt hacking.
 
 ---
@@ -177,7 +177,7 @@ When fully implemented along the roadmap, this system is designed to support:
 ```bash
 cp .env.example .env
 ```
-*(The default `.env.example` is pre-configured for local testing out of the box).*
+*(The default `.env.example` is pre-configured for local testing out of the box: `APP_ENV=dev`, API authentication and Dashboard sign-in off, and the development key `demo-key`. Never copy it to a production host; see [`docs/deployment.md`](docs/deployment.md).)*
 
 ### 2. Launch Stack with Docker Compose
 ```bash
@@ -187,7 +187,7 @@ This boots the complete stack:
 - **API Gateway**: `http://localhost:8000`
 - **PostgreSQL**: `localhost:5432`
 - **Redis**: `localhost:6379`
-- **Kafka & Zookeeper**: `localhost:9092`
+- **Kafka (KRaft mode)**: `localhost:9092`
 - **Background Worker**: Consuming queued runs
 
 ### 3. Verify Health & Readiness

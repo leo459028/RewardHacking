@@ -1,4 +1,4 @@
-"""v1.6.2 P5: release anchors, the browser E2E coverage of the release and the release documents (no browser is started)."""
+"""v1.6.2 P5 (series checks since v1.6.3): release anchors, the browser E2E coverage of the release and the release documents (no browser is started)."""
 
 from __future__ import annotations
 
@@ -31,16 +31,12 @@ def _alembic_head() -> str:
     return ScriptDirectory.from_config(config).get_current_head()
 
 
-def test_v162_release_version_anchors():
+def test_release_version_stays_in_the_v16_series():
+    """Exact anchors live in the latest release test (v1.6.3); the v1.6.2 engine version is unchanged by the patch."""
     from app.services.finops import FINOPS_CALCULATION_VERSION
 
-    assert app.version == "1.6.2" and FINOPS_CALCULATION_VERSION == "v1.6.2"
+    assert app.version.startswith("1.6.") and FINOPS_CALCULATION_VERSION == f"v{app.version}"
     assert ENGINE_VERSION == "v1.6.2"
-    assert 'version = "1.6.2"' in _read("pyproject.toml")
-    assert "(v1.6.2)" in _read("scripts/security_check.py")
-    assert 'value="v1.6.2"' in _read("app/ui/templates/operations.html")
-    assert 'release_version", "v1.6.2"' in _read("app/ui/routers/operations.py")
-    assert 'assert release_ver == "v1.6.2"' in BROWSER
 
 
 def test_browser_suite_covers_the_v162_scenarios():
@@ -51,15 +47,11 @@ def test_browser_suite_covers_the_v162_scenarios():
         assert f'"{route}",' in BROWSER, route
 
 
-def test_release_documents_name_this_release_as_current():
-    assert "## Current Release: `v1.6.2`" in _read("README.md")
-    assert "- **`v1.6.1` (Historical)**" in _read("README.md")
-    assert "> **Current Version**: `v1.6.2`" in _read("docs/OVERVIEW.md")
-    roadmap = _read("docs/roadmap.md")
-    assert "> **Roadmap Baseline**: `v1.6.2`" in roadmap
-    assert re.search(r"^\| `v1\.6\.2` \| \*\*Current\*\* \|", roadmap, re.M)
-    assert re.search(r"^\| `v1\.6\.3` \| \*\*Next\*\* \|", roadmap, re.M)
-    assert "> **Testing Baseline**: `v1.6.2`" in _read("docs/manual_test.md")
+def test_release_documents_keep_v162_in_the_history():
+    readme = _read("README.md")
+    assert "- **`v1.6.2` (Historical)**" in readme and "- **`v1.6.1` (Historical)**" in readme
+    assert "- **`v1.6.2` (Historical)**" in _read("docs/OVERVIEW.md")
+    assert re.search(r"^\| `v1\.6\.2` \| Completed \|", _read("docs/roadmap.md"), re.M)
 
 
 def test_documents_state_the_real_alembic_head():

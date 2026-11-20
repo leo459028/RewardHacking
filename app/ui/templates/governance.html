@@ -118,8 +118,25 @@
 
 <section class="panel">
   <h2>API Keys <span class="heading-note">API 金鑰</span></h2>
+  {% if env_created_keys %}
+  <div class="notice" role="status" data-testid="env-created-keys-notice">
+    <strong data-testid="env-created-keys-count">{{ env_created_keys|length }}</strong> active API key(s) were created with an environment API key (<code>key:legacy</code>):
+    <span data-testid="env-created-keys-ids">{{ env_created_keys|join(", ") }}</span>.
+    Which environment key was used cannot be told afterwards; if this deployment ever ran without <code>API_KEYS</code> or with <code>demo-key</code>, rotate all of them.
+    Issue a replacement here, then revoke the old key. See <a href="{{ runbook_url }}" rel="noopener noreferrer" target="_blank">{{ runbook_section }}</a>.
+    | 有 {{ env_created_keys|length }} 把仍有效的金鑰由環境變數金鑰建立；曾未設定 <code>API_KEYS</code> 或用過 <code>demo-key</code> 的部署請全部輪替。
+  </div>
+  {% endif %}
+  {% if unattributed_keys %}
+  <div class="notice" role="status" data-testid="unattributed-keys-notice">
+    <strong data-testid="unattributed-keys-count">{{ unattributed_keys|length }}</strong> active API key(s) have no recorded creator (created while API authentication was off, or written outside the application):
+    <span data-testid="unattributed-keys-ids">{{ unattributed_keys|join(", ") }}</span>.
+    Confirm each with its owner or rotate it. See <a href="{{ runbook_url }}" rel="noopener noreferrer" target="_blank">{{ runbook_section }}</a>.
+    | 有 {{ unattributed_keys|length }} 把仍有效的金鑰查不到建立者（建立時 API 未開認證，或在程式外寫入），請逐一確認或輪替。
+  </div>
+  {% endif %}
   <table>
-    <thead><tr><th>Key</th><th>Name</th><th>Role</th><th>Status</th><th>Created</th><th>Revoked</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Key</th><th>Name</th><th>Role</th><th>Status</th><th>Created</th><th>Created by | 建立者</th><th>Revoked</th><th>Actions</th></tr></thead>
     <tbody>
     {% for api_key in api_keys %}
       <tr>
@@ -128,6 +145,12 @@
         <td>{{ api_key.role }}</td>
         <td><span class="status {{ api_key.status }}">{{ api_key.status }}</span></td>
         <td>{{ api_key.created_at }}</td>
+        {% set creator = api_key_creators.get(api_key.key_id) if api_key_creators else none %}
+        <td data-testid="api-key-creator" data-creator-kind="{{ creator.kind if creator else 'unknown' }}">
+          {% if creator and creator.kind == "env" %}<span class="status escalated" title="Created with an environment API key (API_KEYS); which one cannot be told afterwards">{{ env_key_label }}</span>
+          {% elif creator and creator.kind != "unknown" %}<code>{{ creator.label }}</code>
+          {% else %}<span class="muted" title="{{ creator.detail if creator else '' }}">unknown</span>{% endif %}
+        </td>
         <td>{{ api_key.revoked_at or "" }}</td>
         <td>
           {% if api_key.status == "active" and not api_key.revoked %}
@@ -141,7 +164,7 @@
         </td>
       </tr>
     {% else %}
-      <tr><td colspan="7" class="muted">No API keys found for selected tenant.</td></tr>
+      <tr><td colspan="8" class="muted">No API keys found for selected tenant.</td></tr>
     {% endfor %}
     </tbody>
   </table>

@@ -1,6 +1,6 @@
 # Manual QA & Interactive Browser Testing Guide
 
-> **Testing Baseline**: `v1.6.2`
+> **Testing Baseline**: `v1.6.3`
 > **Target Environment**: Local Docker Compose Stack (`http://localhost:8000`)
 > **Primary Interface**: Web Browser (`/dashboard`) & REST API (`/v1`)
 > **Automated Browser Runner**: `python scripts/browser_manual_test.py` (supports `--qa-currency TWD|USD|CNY`, default `TWD`)
@@ -34,7 +34,7 @@ Open your web browser (Chrome, Edge, or Firefox) and navigate to:
 - **Dashboard Home**: `http://localhost:8000/dashboard`
 - **Swagger UI (Interactive API)**: `http://localhost:8000/docs`
 
-> **Note on Dashboard Authentication**: By default in `.env.example`, `DASHBOARD_AUTH_ENABLED=false` (`DASHBOARD_AUTH_MODE=off`, no sign-in). Since `v1.6.1`, `DASHBOARD_AUTH_ENABLED=true` (or `DASHBOARD_AUTH_MODE=session`) shows the `/dashboard/login` page instead of an HTTP Basic Auth prompt; create an account first with `python -m app.jobs.users create --username <name> --role admin --password-env <VAR>`.
+> **Note on Dashboard Authentication**: `.env.example` sets `DASHBOARD_AUTH_MODE=off` (no sign-in, local development only; since `v1.6.3` the program default is `session`, and outside `APP_ENV=dev` / `test` the API refuses to start with `off`). Since `v1.6.1`, `DASHBOARD_AUTH_ENABLED=true` (or `DASHBOARD_AUTH_MODE=session`) shows the `/dashboard/login` page instead of an HTTP Basic Auth prompt; create an account first with `python -m app.jobs.users create --username <name> --role admin --password-env <VAR>`.
 
 ### 1.4 QA Stack for the `v1.6.1` Scenarios (local only)
 1. In `.env` (git-ignored) set `DASHBOARD_AUTH_MODE=session`, `DUAL_CONTROL_ACTIONS=legal_hold.release` and `AUDIT_CHAIN_SIGNING_KEY_FILE=config/audit_chain_key.pem`. Generate the Ed25519 key pair with the command in [`runbook.md`](runbook.md) § 14 into `config/` (`config/*.pem` is git-ignored; `config/` is mounted read-only into the containers). Keep `AUDIT_RETENTION_PURGE_MODE=plan`.
@@ -379,12 +379,36 @@ As auditor the block is readable and **Request re-run \| 要求重跑** is missi
 2. Close the gate (`SANDBOX_EXECUTION_ENABLED=false`) and reload: the tick box is gone, and `POST /v1/runs/{run_id}/replay` with `sandbox_rerun: true` answers `409 sandbox_rerun_unavailable`.
 3. Open Review Detail of the `conftest_rewrite` run and press **Request re-run \| 要求重跑**: the page returns to the review with `verification_queued:vrf_…`, and a new re-run with trigger `manual` appears. The review status and priority do not change.
 
+## 5.21 Scenario 21: Who Created Each API Key (`v1.6.3`)
+
+The runner names its keys `e2e-keys-<run id>-env` / `-dash` on tenant `manual-qa-tenant`, revokes them at the end and touches no other key.
+
+The QA stack keeps `/v1` authentication off for Scenarios 1–20 (with it on, `/v1` queries are limited to the key's tenant and the runner's unauthenticated calls answer 401), so a full run (including the browser step of `scripts/release_gate.py`) lists the environment-key part as skipped. Before the release commit, run Scenario 21 a second time on its own; the gate does not do this step, and there that part must run:
+
+1. Start a second API on the same database with authentication on and a temporary environment admin key (do not reuse a real key):
+
+   ```bash
+   docker compose run -d --rm --name rh-e2e-auth -p 8001:8000 -e RH_AUTO_MIGRATE=false \
+     -e APP_ENV=dev -e AUTH_ENABLED=true -e API_KEYS="$E2E_ENV_API_KEY:default:admin" api
+   ```
+
+2. Run `python scripts/browser_manual_test.py --only-scenario-21 --base-url http://localhost:8001` with the same `E2E_*` accounts and `E2E_ENV_API_KEY`. In this mode the runner fails (not skips) when `/v1` authentication is off or `E2E_ENV_API_KEY` is unset.
+3. Stop the second API (`docker stop rh-e2e-auth`) and record both created and revoked `key_id`s.
+
+
+1. **Environment key** (needs `/v1` authentication on, `APP_ENV=dev`, and the environment admin key in `E2E_ENV_API_KEY`; otherwise the runner lists this part as skipped): create a key with `POST /v1/tenants/manual-qa-tenant/api-keys` and that key. On `/dashboard/governance?tenant_id=manual-qa-tenant` its **Created by \| 建立者** cell shows the **environment key (legacy)** badge, and the notice above the table lists its `key_id`. `/dashboard/operations` shows `env_created_api_keys` as `warn` with that `key_id`. Press **Revoke Key**: the check no longer lists it (it is `pass` when no other such key exists).
+2. **Dashboard key**: create a key with the **Create API Key** form. Its creator is your account (`user:<name>`; `dashboard-admin` in `off` mode) and `env_created_api_keys` does not list it.
+3. **Auditor** (session mode): sign in as the auditor and open the same page: the **Created by** column is shown and there is no **Revoke Key** button.
+4. Revoke the Dashboard key: the row shows **Revoked**.
+5. `python -m app.jobs.api_keys list --created-by env` lists the same `key_id`s as the `env_created_api_keys` check, and `list --created-by unknown` the same as `unattributed_api_keys` (keys created through the API while `AUTH_ENABLED=false`, or written outside the application; the Governance page shows a second notice for them).
+
 ## 6. Browser QA Sign-Off Checklist
 
 Before signing off a release via manual browser testing, verify all items below:
 
 - [ ] All primary navigation tabs (`Overview`, `Runs`, `Approvals`, `Reviews`, `Benchmark`, `Judge Profiles`, `Worker`, `Observability`, `Governance`, `Control Plane`, `Costs`, `Admin FinOps`, `Operations`, `Retention`, `Playground`, since `v1.6.1` `Users`, `Change Requests`, `Audit Chain`, and since `v1.6.2` `Sandbox` and `Verification`: 23 views) return HTTP 200 with zero server tracebacks.
 - [ ] In session mode the runner reports 0 unexpected re-authentication redirects, and Scenarios 12–15 ran (an off-mode run lists them as skipped).
+- [ ] Since `v1.6.3`: `--only-scenario-21` passed against the authenticated second API, so the environment-key part of Scenario 21 ran.
 - [ ] Browser Developer Tools (`F12` $\rightarrow$ **Console** & **Network**) show `0` unhandled JavaScript errors or broken asset requests (`404`/`500`).
 - [ ] No scientific notation artifacts (`0E-8` or `0E-12`) appear on `/dashboard/costs`, `/dashboard/runs/{run_id}`, `/dashboard/admin/finops/pricing`, or `/dashboard/admin/finops/budgets`.
 - [ ] Budget violation inline buttons (**Acknowledge**, **Resolve**, **Ignore**) transition violation state and persist across page reloads.

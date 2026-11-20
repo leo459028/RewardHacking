@@ -21,6 +21,10 @@ DEFAULT_FINOPS_FX_RATES: dict[str, Decimal] = {
     "SGD": Decimal("0.74"),
 }
 
+# v1.6.3 D2 / D5: the only APP_ENV values treated as development. Every other value (prod, production, staging, an
+# empty string, ...) is production-like: environment API keys are refused and insecure settings stop the API.
+DEVELOPMENT_APP_ENVS: frozenset[str] = frozenset({"dev", "test"})
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -49,9 +53,12 @@ class Settings(BaseSettings):
     worker_completion_latency_target_seconds: int = 300
     incident_response_target_seconds: int = 900
     llm_judge_enabled: bool = False
-    auth_enabled: bool = False
-    api_keys: str = "demo-key:default"
-    # v1.6.1 D9: DASHBOARD_AUTH_ENABLED only derives DASHBOARD_AUTH_MODE when the mode is unset (true -> session).
+    # v1.6.3 D16: the API requires an API key unless AUTH_ENABLED=false is set explicitly (refused outside dev/test, D4).
+    auth_enabled: bool = True
+    # v1.6.3 D1 / D2: no built-in environment API key. Keys set here are accepted only when APP_ENV is dev or test.
+    api_keys: str = ""
+    # v1.6.1 D9, v1.6.3 D17: DASHBOARD_AUTH_ENABLED only derives DASHBOARD_AUTH_MODE when the mode is unset and the flag
+    # itself is set explicitly (true -> session, false -> off). With neither set, the mode is session.
     dashboard_auth_enabled: bool = False
     # Deprecated since v1.6.1 (Basic Auth was removed; D14). Ignored; the operations check warns when still set.
     dashboard_username: str = "admin"
@@ -113,7 +120,7 @@ class Settings(BaseSettings):
     sandbox_docker_runtime: str = "runc"  # D20: runc -> isolation "container"; runsc -> "gvisor"
     sandbox_docker_user: str = "65534:65534"  # D16: numeric uid:gid, never 0
     sandbox_docker_pull: str = "never"  # D16: never | missing
-    sandbox_docker_allow_local_image_ids: bool = False  # D18: local development only; always false when APP_ENV=prod
+    sandbox_docker_allow_local_image_ids: bool = False  # D18: local development only; always false unless APP_ENV is dev / test (v1.6.3 D19)
     sandbox_conformance_image: str = "busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec"
     sandbox_conformance_max_age_hours: int = 168
     # D18: JSON {"python": "<digest-pinned reference>"}. ``str`` lets an empty variable reach the validator below.
@@ -341,7 +348,9 @@ class Settings(BaseSettings):
         """v1.6.1 D9 / D47: normalize the Dashboard access settings; an unset mode is derived from the old flag."""
         mode = (self.dashboard_auth_mode or "").strip().lower()
         if not mode:
-            mode = "session" if self.dashboard_auth_enabled else "off"
+            # v1.6.3 D17: an unset flag (not in model_fields_set) no longer means off; the default is session.
+            explicit_flag = "dashboard_auth_enabled" in self.model_fields_set
+            mode = "off" if explicit_flag and not self.dashboard_auth_enabled else "session"
         if mode not in {"off", "session"}:
             raise ValueError("DASHBOARD_AUTH_MODE must be 'off' or 'session'.")
         self.dashboard_auth_mode = mode
@@ -365,6 +374,16 @@ class Settings(BaseSettings):
         n = int(self.dashboard_password_scrypt_n)
         if n < 2 or n & (n - 1):
             raise ValueError("DASHBOARD_PASSWORD_SCRYPT_N must be a power of 2 greater than 1.")
+
+    @property
+    def is_production_like(self) -> bool:
+        """v1.6.3 D5: every APP_ENV other than dev / test (case and surrounding spaces ignored) is production."""
+        return (self.app_env or "").strip().lower() not in DEVELOPMENT_APP_ENVS
+
+    @property
+    def env_api_keys_allowed(self) -> bool:
+        """v1.6.3 D2: environment API keys (API_KEYS) are accepted only in dev / test."""
+        return not self.is_production_like
 
     @property
     def dashboard_cookie_secure_effective(self) -> bool:

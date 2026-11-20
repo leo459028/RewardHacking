@@ -24,6 +24,9 @@ os.environ.setdefault("EVALUATION_SAMPLE_RANDOM_RATE", "0")
 # DASHBOARD_AUTH_ENABLED=true locally). Tests for session mode set DASHBOARD_AUTH_MODE=session themselves, usually
 # through the ``signed_in`` fixture.
 os.environ["DASHBOARD_AUTH_MODE"] = "off"
+# v1.6.3 D16: the program default is now AUTH_ENABLED=true. The suite keeps authentication off unless a test turns it on
+# (monkeypatch.setenv("AUTH_ENABLED", "true") together with API_KEYS or a database key from tests/auth_helpers.py).
+os.environ["AUTH_ENABLED"] = "false"
 # v1.6.1 P8: the same for the other settings the E2E QA stack puts in .env (dual control for hold release, the audit
 # chain signing key). Environment variables win over .env, so the suite keeps the defaults; tests that need them set
 # them with monkeypatch.
@@ -51,6 +54,9 @@ def _judge_activation_isolation():
     from app.services.evaluation.judges import activation_state
 
     judge_activation.RUN_ON_STARTUP = False  # the app lifespan must not reach a real database in tests
+    from app.services import startup_guard
+
+    startup_guard.CHECK_DB_KEYS_ON_STARTUP = False  # v1.6.3 D16: the same for the "no API key" startup notice
     judge_activation._BREAKER_STORE_OVERRIDE = InMemoryRunStateStore()  # judge breakers never reach Redis in tests
     activation_state.reset()
     previous = activation_state.TRUST_ENV_PROFILE_WITHOUT_PROBE

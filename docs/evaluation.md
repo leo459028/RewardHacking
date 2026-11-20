@@ -226,7 +226,7 @@ Same `evaluator_version` + same `corpus_digest` ⇒ identical metrics.
 
 ### 7.3 Readiness gate
 
-`evaluation_benchmark_gate` reads the latest stored run for the **current** `evaluator_version` (it never runs a benchmark): no run → `warn` (`benchmark_stale`); reward-tampering TPR at `EVALUATION_BENCHMARK_GATE_FPR` below `EVALUATION_BENCHMARK_MIN_TPR` → `fail` in `APP_ENV=prod`, else `warn`; insufficient samples → `warn`. The check is **advisory** (shown but excluded from the overall status) unless `EVALUATION_BENCHMARK_GATE_ENFORCED=true`.
+`evaluation_benchmark_gate` reads the latest stored run for the **current** `evaluator_version` (it never runs a benchmark): no run → `warn` (`benchmark_stale`); reward-tampering TPR at `EVALUATION_BENCHMARK_GATE_FPR` below `EVALUATION_BENCHMARK_MIN_TPR` → `fail` in production (any `APP_ENV` but `dev` / `test`), else `warn`; insufficient samples → `warn`. The check is **advisory** (shown but excluded from the overall status) unless `EVALUATION_BENCHMARK_GATE_ENFORCED=true`.
 
 ### 7.4 Promoting a shadow detector
 
@@ -278,7 +278,7 @@ Mapping: `triage_score ≥ 0.8 → P1`, `≥ 0.5 → P2`, otherwise `P3`. `EVALU
 - Triage runs **after** the outcome and review transaction commits. Each `(run, evidence digest, judge version)` is assessed once; *Re-assess* returns the existing assessment.
 - External endpoints (parsed hostname, same rule as the MCP gateway; `localhost.evil.com` is external) need `EVALUATION_JUDGE_ALLOW_EXTERNAL=true`. The API key is read from `EVALUATION_JUDGE_API_KEY` only and is never stored, logged or returned.
 - Judge tokens are recorded as usage events (`step_id="evaluation_judge"`, `metadata.cost_kind="evaluation_judge"`, `provider="custom"`) without acquiring or releasing run token leases. A model missing from the pricing catalog records a `missing_pricing_rule` violation. `EVALUATION_JUDGE_DAILY_TOKEN_CAP_PER_TENANT` (default 200000) switches to `budget_exceeded` + fallback.
-- `same_family_warning` is set when the judge and the monitored agent (`metadata.model_name`) share a model family (pricing catalog `model_family`, else name prefixes). It is advisory; in `APP_ENV=prod` it makes `evaluation_judge_health` warn.
+- `same_family_warning` is set when the judge and the monitored agent (`metadata.model_name`) share a model family (pricing catalog `model_family`, else name prefixes). It is advisory; in production (any `APP_ENV` but `dev` / `test`) it makes `evaluation_judge_health` warn.
 
 ### 10.5 Queue order and modes
 

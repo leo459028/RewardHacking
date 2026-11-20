@@ -35,7 +35,7 @@
     <thead><tr><th>Status</th><th>Check</th><th>Detail</th></tr></thead>
     <tbody>
       {% for check in readiness.checks %}
-      <tr>
+      <tr data-testid="operations-check" data-check-key="{{ check.check_key }}">
         <td><span class="status {{ check.status }}">{{ check.status }}</span></td>
         <td>{{ check.title }}<br><span class="muted">{{ check.check_key }}</span></td>
         <td>{{ check.detail }}</td>
@@ -100,7 +100,7 @@
   {% if can("operations.manage", "operations") %}<form method="post" action="/dashboard/operations/release-gates" class="form-grid">
     {{ csrf_input() }}
     <label>Release Version
-      <input name="release_version" value="v1.6.2">
+      <input name="release_version" value="v1.6.3">
     </label>
     <label>Created By
       {% if dashboard_auth_mode() != "session" %}<input name="created_by" value="dashboard">{% else %}<span class="muted" data-testid="acting-as">Recorded as | 記錄為 <code>{{ dashboard_user(request).actor }}</code></span>{% endif %}

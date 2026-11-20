@@ -118,7 +118,10 @@ def test_digests_moved_without_changing_output():
 
 def test_auth_mode_is_derived_from_the_old_flag_when_unset(monkeypatch):
     monkeypatch.delenv("DASHBOARD_AUTH_MODE", raising=False)  # tests/conftest.py pins it to off
-    assert Settings(_env_file=None).dashboard_auth_mode == "off"
+    monkeypatch.delenv("DASHBOARD_AUTH_ENABLED", raising=False)
+    # v1.6.3 D17: with neither setting the mode is session; an explicit DASHBOARD_AUTH_ENABLED=false still means off.
+    assert Settings(_env_file=None).dashboard_auth_mode == "session"
+    assert Settings(_env_file=None, dashboard_auth_enabled=False).dashboard_auth_mode == "off"
     assert Settings(_env_file=None, dashboard_auth_enabled=True).dashboard_auth_mode == "session"
     assert Settings(_env_file=None, dashboard_auth_enabled=True, dashboard_auth_mode=" Off ").dashboard_auth_mode == "off"
     assert Settings(_env_file=None, dashboard_auth_mode="SESSION").dashboard_auth_mode == "session"

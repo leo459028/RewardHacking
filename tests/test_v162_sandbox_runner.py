@@ -674,8 +674,17 @@ def test_operations_fail_when_the_runner_cannot_reach_docker(client, session_fac
     assert _checks(client)["sandbox_runner_health"]["status"] == "fail"
 
 
-def test_operations_warn_on_runc_in_production(client, session_factory, monkeypatch):
-    _docker_env(monkeypatch, APP_ENV="prod")
+@pytest.mark.parametrize("app_env", ["prod", "production", "staging"])  # v1.6.3 D19: every APP_ENV other than dev / test
+def test_operations_warn_on_runc_in_production(client, session_factory, monkeypatch, app_env):
+    _docker_env(monkeypatch, APP_ENV=app_env)
     _store_passing_run(session_factory)
     check = _checks(client)["sandbox_backend_health"]
     assert check["status"] == "warn" and "gVisor" in check["detail"]
+
+
+@pytest.mark.parametrize("app_env", ["dev", "test"])
+def test_operations_do_not_warn_on_runc_in_dev_and_test(client, session_factory, monkeypatch, app_env):
+    _docker_env(monkeypatch, APP_ENV=app_env)
+    _store_passing_run(session_factory)
+    check = _checks(client)["sandbox_backend_health"]
+    assert "gVisor" not in check["detail"]

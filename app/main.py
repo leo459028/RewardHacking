@@ -20,8 +20,9 @@ from app.api.routes import router
 from app.core import trace_context, tracing
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.infra import postgres
 from app.infra.postgres import close_engine, init_engine
-from app.services import audit_chain, change_requests, judge_activation
+from app.services import audit_chain, change_requests, judge_activation, startup_guard
 from app.services.retention import RetentionError
 from app.api.routers.replay import router as replay_router
 from app.services.verification.errors import VerificationError
@@ -31,6 +32,7 @@ from app.ui.routers.access import router as access_ui_router
 from app.ui.routers.audit_chain import router as audit_chain_ui_router
 from app.ui.routers.benchmark import router as benchmark_ui_router
 from app.ui.routers.change_requests import router as change_requests_ui_router
+from app.ui.routers.governance import router as governance_ui_router
 from app.ui.routers.judges import router as judges_ui_router
 from app.ui.routers.operations import router as operations_ui_router
 from app.ui.routers.replay import router as replay_ui_router
@@ -57,9 +59,13 @@ configure_logging(settings.log_level)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # v1.6.3 D4 / D17: a production-like APP_ENV with the API or Dashboard authentication off refuses to start.
+    startup_guard.enforce_startup_security(get_settings())
     # v1.5.11: invalid judge profiles (secrets inline, unknown fields, bad values) fail fast at startup.
     load_profiles(get_settings())
     init_engine(settings)
+    # v1.6.3 D2 / D16: notices only (refused environment keys, no API key at all); never blocks startup.
+    await startup_guard.report_api_key_status(get_settings(), postgres.SessionLocal)
     tracing.configure(get_settings(), service_name="rewardhacking-api")
     # v1.5.12 (D2, D7): load probe / activation state; auto-probe the environment-selected profile in the background.
     if judge_activation.RUN_ON_STARTUP:
@@ -71,7 +77,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="1.6.2",
+    version="1.6.3",
     description="Guardrail service for preventing reward hacking in agent systems.",
     lifespan=lifespan,
 )
@@ -311,6 +317,7 @@ app.include_router(audit_chain_router)
 app.include_router(change_requests_router)
 app.include_router(access_ui_router)
 app.include_router(ui_router)
+app.include_router(governance_ui_router)
 app.include_router(reviews_ui_router)
 app.include_router(benchmark_ui_router)
 app.include_router(judges_ui_router)

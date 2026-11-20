@@ -18,6 +18,7 @@ Authority: `AGENTS.md` §3 Stage 2 and §5 (release commit only after every step
 
    It stops at the first failure (`--keep-going` runs the rest) and returns non-zero when any step failed.
 3. Read the summary. On failure, fix and rerun; never record or commit a failing gate.
+   The gate's browser step lists the environment-key part of Scenario 21 as skipped (the QA stack keeps `/v1` authentication off). Run Scenario 21 alone as well: `python scripts/browser_manual_test.py --only-scenario-21` against a second API with authentication on (`docs/manual_test.md` 5.21); it fails instead of skipping. The gate summary keeps no E2E output, so run the full E2E once more with `--headless` when the report needs live IDs.
 4. Prepend a new entry to the top of `docs/test_report.md` from the summary plus the live IDs printed by the browser E2E (run / review / benchmark IDs). Record only what actually ran.
 5. Before pushing, run the suite once in a fresh venv built from `requirements-dev.txt` + `requirements-otel.txt` (CI resolves newer versions than the local environment; see `docs/testing_guide.md` § CI / CD Verification Gate).
 6. Then the release commit (`feat(vX.Y.Z): <title>`), using `rh-phase-commit` step 3 with the `feat(...)` message.
