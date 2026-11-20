@@ -1,7 +1,7 @@
 # Operational Dashboard Guide
 
-> **Dashboard Version**: `v1.6.2` (23 primary views)
-> **Previous Versions**: `v1.6.1`, `v1.6.0`, `v1.5.12`, `v1.5.11`, `v1.5.10`, `v1.5.9`, `v1.5.7`, `v1.5.6`, `v1.5.5`, `v1.5.4`, `v1.5.3`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.4.0`
+> **Dashboard Version**: `v1.6.3` (23 primary views)
+> **Previous Versions**: `v1.6.2`, `v1.6.1`, `v1.6.0`, `v1.5.12`, `v1.5.11`, `v1.5.10`, `v1.5.9`, `v1.5.7`, `v1.5.6`, `v1.5.5`, `v1.5.4`, `v1.5.3`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.4.0`
 > **Access URL**: `http://localhost:8000/dashboard`
 
 RewardHacking includes a lightweight, server-rendered (Jinja2) web dashboard providing full observability, human-in-the-loop governance, and FinOps administration without requiring separate Node.js or React build pipelines.

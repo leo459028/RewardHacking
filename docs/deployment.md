@@ -1,7 +1,7 @@
 # Deployment & Production Hardening
 
-> **Deployment Version**: `v1.6.2`
-> **Previous Versions**: `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.0.0`
+> **Deployment Version**: `v1.6.3`
+> **Previous Versions**: `v1.6.2`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.0.0`
 
 This document covers running **RewardHacking** with Docker Compose from source, running the published container image, and production hardening.
 
