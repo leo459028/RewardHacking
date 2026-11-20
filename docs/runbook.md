@@ -1,7 +1,7 @@
 # Production Runbooks & Incident Response
 
-> **Runbook Version**: `v1.6.2`
-> **Previous Versions**: `v1.5.7`, `v1.5.6`, `v1.5.5`, `v1.5.4`, `v1.5.3`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.0.0`
+> **Runbook Version**: `v1.6.3`
+> **Previous Versions**: `v1.6.2`, `v1.5.7`, `v1.5.6`, `v1.5.5`, `v1.5.4`, `v1.5.3`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.0.0`
 
 This operational runbook provides triage instructions, troubleshooting procedures, and incident response playbooks for operators maintaining the **RewardHacking** platform.
 

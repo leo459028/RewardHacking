@@ -1,7 +1,7 @@
 # Threat Modeling & Security Design
 
-> **Security Document Version**: `v1.6.2`
-> **Previous Versions**: `v1.6.1`, `v1.6.0`, `v1.5.12`, `v1.5.7`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.1.0`
+> **Security Document Version**: `v1.6.3`
+> **Previous Versions**: `v1.6.2`, `v1.6.1`, `v1.6.0`, `v1.5.12`, `v1.5.7`, `v1.5.2`, `v1.5.1`, `v1.5.0`, `v1.1.0`
 
 The security mission of **RewardHacking** is to mitigate the critical risks of autonomous AI agent **Reward Hacking (Specification Gaming)**, prompt injection, and unauthorized tool misuse. It establishes layered defense-in-depth perimeters ensuring high-risk behaviors are intercepted, reviewed, audited, and mathematically accountable.
 
@@ -380,7 +380,7 @@ Only the platform's own conformance suite executes in this phase; agent-run tool
 | Keys leak through APIs, pages, audits or error bodies | Only the variable name, a set flag and a 6-hex fingerprint are shown; audits carry fingerprint prefixes and field names; `422` responses drop the value of forbidden fields such as `api_key` |
 | A failing cloud judge stalls triage or drives costs | Per-profile breaker (half-open retry), fallback chain ending in the rule-based judge, per-profile and global daily token caps; none of these can change verdicts, priorities or statuses |
 
-**Why keys are not entered in the page yet**: before `v1.6.1` the Dashboard had a single Basic Auth account and ran every action as one administrator without roles or CSRF tokens; `v1.6.1` adds personal accounts, roles and CSRF, and in-page key entry stays planned for `v1.6.7+`. Storing secrets behind that would add an attack surface; encrypted, write-only key entry bound to a host waits for Dashboard RBAC, CSRF and re-authentication (`v1.6.x`). With `AUTH_ENABLED=false` (the default) the judge profile API, like every other admin endpoint, is open to anyone who can reach it.
+**Why keys are not entered in the page yet**: before `v1.6.1` the Dashboard had a single Basic Auth account and ran every action as one administrator without roles or CSRF tokens; `v1.6.1` adds personal accounts, roles and CSRF, and in-page key entry stays planned for `v1.6.7+`. Storing secrets behind that would add an attack surface; encrypted, write-only key entry bound to a host waits for Dashboard RBAC, CSRF and re-authentication (`v1.6.x`). With `AUTH_ENABLED=false` (the default up to `v1.6.2`; since `v1.6.3` the default is `true`, and `false` is accepted only when `APP_ENV` is `dev` or `test`) the judge profile API, like every other admin endpoint, is open to anyone who can reach it.
 
 ## Judge Profiles Threat Model (`v1.5.11`)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 from alembic.config import Config
@@ -88,3 +89,26 @@ def test_agents_map_lists_the_authentication_modules():
     assert jobs and "api_keys" in jobs.group(1).split(",")
     for name in jobs.group(1).split(","):
         assert (ROOT / "app" / "jobs" / f"{name}.py").is_file(), name
+
+
+def test_documents_changed_in_v163_carry_its_version_and_current_defaults():
+    """Post-release review (2026-11-20): headers name the last release that changed a document, and no public
+    document may still call AUTH_ENABLED=false the default."""
+    headers = {
+        "docs/api.md": "> **API Version**: `v1.6.3`",
+        "docs/configuration.md": "> **Configuration Version**: `v1.6.3`",
+        "docs/dashboard.md": "> **Dashboard Version**: `v1.6.3`",
+        "docs/deployment.md": "> **Deployment Version**: `v1.6.3`",
+        "docs/runbook.md": "> **Runbook Version**: `v1.6.3`",
+        "docs/security.md": "> **Security Document Version**: `v1.6.3`",
+    }
+    for document, header in headers.items():
+        assert header in _read(document), document
+    # docs/test_report.md is a historical record and may quote old wording.
+    stale = re.compile(r"AUTH_ENABLED=false`? \(the default\)|AUTH_ENABLED`? defaults to `?false|default:? `?AUTH_ENABLED=false", re.I)
+    # Tracked public documents only (local git-ignored notes such as docs/handoff.md are not published).
+    tracked = subprocess.run(["git", "ls-files", "README.md", "docs/*.md"], cwd=ROOT, capture_output=True, text=True, check=True)
+    documents = [name for name in tracked.stdout.split() if name != "docs/test_report.md"]
+    assert "docs/security.md" in documents
+    for document in documents:
+        assert not stale.search(_read(document)), document
