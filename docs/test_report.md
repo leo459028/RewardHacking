@@ -1,5 +1,23 @@
 # Test Execution & Verification Report
 
+## 2026-11-20 - v1.6.3 Post-Merge: Release, Published Images and Fresh Deployment from the Published Image
+
+- **Merge**: PR #39 merged after all six required checks passed, as merge commit `7f6718e`; GitHub Release `v1.6.3` marked Latest, tag on `7f6718e`.
+- **Image workflow** (`release-image.yml`, run `44660001711`): `verify` and `publish` succeeded. Both jobs checked out `refs/tags/v1.6.3` and reported `7f6718e`, the tag's commit: the first real run of the tag checkout added after `v1.6.2`. The content scans of the images to publish passed.
+- **Published images** (`v1.6.3` and `latest`):
+  - `ghcr.io/leo459028/rewardhacking` → `sha256:a9f5b02ba9d79e9195a129af61299be7fdea17e64e3e3b3c62456bcda388da01` (UID 10001, `APP_ENV=prod`, application version `1.6.3`).
+  - `ghcr.io/leo459028/rewardhacking-sandbox-python` → `sha256:cce13eb9dc7b863da2c74be02852d3d55c7cf3fff20b85dde01900172bc0d0a0` (UID 65534).
+- **Visibility**: both packages were private during the patch and the workflow pushed to them while private (anonymous manifest request → 403). The maintainer made them public afterwards; anonymous manifest requests for `v1.6.3`, `latest` and `v1.6.2` of both packages then answered 200 with the digests above (`v1.6.2` unchanged: `sha256:4afbab9aa3766821f2cfad32a248aa1c4e4d6325101dfc21abbf518232c86057` and `sha256:66832fa83e631bf015f0bd772c83b1053e04e4965526d149e01a445f183cb714`), and `docker pull` with an empty Docker configuration (no stored credentials) fetched both `v1.6.3` images.
+- **Fresh deployment from the published image** (plan 5.3 point 3; temporary directory and database, removed afterwards; the `deploy/docker-compose.release.example.yml` of tag `v1.6.2` as written, without `API_KEYS`, except the host port `18000:8000`; `.env` as the `v1.6.2` deployment guide described: `APP_ENV=prod`, `AUTH_ENABLED=true`, `DASHBOARD_AUTH_MODE=session`, no `API_KEYS`):
+  - **(a)** `demo-key` → **401** `invalid_api_key`.
+  - **(b)** `API_KEYS=<random>:default:admin` → **401**, the same body as a wrong key; the API logged that 1 environment key was refused and no log line contained the key.
+  - **(c)** `AUTH_ENABLED=false` and **(c1)** `DASHBOARD_AUTH_MODE=off` → the API **refused to start** (exit 3); the messages name the setting to change, the `python -m app.jobs.api_keys create` CLI and `APP_ENV=dev` for a local trial.
+  - **(c2)** with `DASHBOARD_AUTH_MODE=session` and with the variable removed: `GET /dashboard` → 303 to `/dashboard/login`.
+  - **(c3)** `docker run` of the image without authentication variables: with the database `/v1/healthz` 200, `/v1/tenants` without a key 401, with `demo-key` 401, `/dashboard` → 303 to sign-in; without a database the container stopped in `alembic upgrade` (exit 1); with `-e APP_ENV=dev` it started and `/v1/tenants` without a key still answered 401.
+  - **Upgrade from `v1.6.2`**: on the published `v1.6.2` image `demo-key` answered 200 and created the admin key `key_5221ed4e897d`; after switching the same database to the published `v1.6.3` image (`202611180002 (head)`), that key still answered 200 (database keys are listed, not revoked), `env_created_api_keys` was `warn` listing it, `python -m app.jobs.api_keys list --created-by env` listed it too, and `unattributed_api_keys`, `bootstrap_keys_in_prod` and `api_auth_enabled` were `pass`.
+- **`v1.6.2` release**: a first line now says it is superseded by `v1.6.3` (security fix) and must not be deployed without `API_KEYS=`; the rest of the notes is unchanged.
+- **Not done yet**: the GitHub Security Advisory with a CVE request (waits for the maintainer).
+
 ## 2026-11-19 - v1.6.3 Secure Authentication Defaults (Security Patch) Release Verification
 
 - **Version**: `v1.6.3` (branch `v1.6.3`, phases P1 `cd6cf57`, P1b `9e08d55`, P2 `e6ff78f`, P2.1 `1809250`; Alembic head `202611180002`, unchanged; `ENGINE_VERSION` `v1.6.2`, unchanged; 10 version anchors at `1.6.3`).
