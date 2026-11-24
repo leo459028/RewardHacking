@@ -247,6 +247,16 @@ def test_ci_builds_and_scans_the_image_without_pushing():
 # ---------------------------------------------------------------------------
 
 
+def test_release_compose_defaults_to_the_current_version():
+    # A deployment that leaves RH_IMAGE unset runs this tag. After the v1.6.3 release it still pointed at v1.6.2
+    # (insecure authentication defaults) because bump_version.py does not cover the file. Not version-pinned, so a
+    # version bump fails here until the example follows.
+    project_version = re.search(r'^version = "([^"]+)"', _read("pyproject.toml"), re.M).group(1)
+    compose = _read("deploy/docker-compose.release.example.yml")
+    defaults = re.findall(r"\$\{RH_IMAGE:-ghcr\.io/leo459028/rewardhacking:([^}]+)\}", compose)
+    assert defaults == [f"v{project_version}"]
+
+
 def test_release_compose_uses_the_image_read_only():
     services = yaml.safe_load(_read("deploy/docker-compose.release.example.yml"))["services"]
     for name in ("api", "worker"):
