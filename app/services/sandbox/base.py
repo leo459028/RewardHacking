@@ -36,7 +36,7 @@ class IsolationLevel(IntEnum):
             raise ValueError(f"unknown isolation level: {value!r}") from exc
 
 
-NETWORK_MODES = ("none", "egress_proxy")  # egress_proxy is reserved for v1.6.7+
+NETWORK_MODES = ("none", "egress_proxy")  # egress_proxy is reserved for v1.6.9+
 RESULT_STATUSES = ("ok", "nonzero_exit", "timeout", "oom", "rejected", "error")
 LIMIT_FIELDS = ("timeout_seconds", "cpu_millis", "memory_mb", "pids", "max_output_bytes", "max_output_files_bytes")
 

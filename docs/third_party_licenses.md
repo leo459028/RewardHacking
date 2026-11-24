@@ -26,7 +26,7 @@ Both images carry **`/licenses/THIRD_PARTY_NOTICES.txt`** (in the main image als
 - where to obtain the source code that GPL, LGPL and MPL ask for, with a link to the exact version of each MPL-2.0 package.
 
 ```bash
-docker run --rm --entrypoint cat ghcr.io/leo459028/rewardhacking:v1.6.2 /licenses/THIRD_PARTY_NOTICES.txt
+docker run --rm --entrypoint cat ghcr.io/leo459028/rewardhacking:v1.6.3 /licenses/THIRD_PARTY_NOTICES.txt
 ```
 
 The image labels name it too: `org.opencontainers.image.licenses` (this project, `Apache-2.0`), `org.opencontainers.image.source` (this repository) and `org.opencontainers.image.description`.
@@ -42,8 +42,8 @@ The image labels name it too: `org.opencontainers.image.licenses` (this project,
 List them yourself:
 
 ```bash
-docker run --rm --entrypoint sh ghcr.io/leo459028/rewardhacking:v1.6.2 -c 'ls /usr/share/doc/*/copyright; ls -d /opt/venv/lib/python3.12/site-packages/*.dist-info'
-docker run --rm --entrypoint python ghcr.io/leo459028/rewardhacking:v1.6.2 -c "import importlib.metadata as m; [print(d.metadata['Name'], d.version, d.metadata.get('License-Expression') or d.metadata.get('License') or '') for d in m.distributions()]"
+docker run --rm --entrypoint sh ghcr.io/leo459028/rewardhacking:v1.6.3 -c 'ls /usr/share/doc/*/copyright; ls -d /opt/venv/lib/python3.12/site-packages/*.dist-info'
+docker run --rm --entrypoint python ghcr.io/leo459028/rewardhacking:v1.6.3 -c "import importlib.metadata as m; [print(d.metadata['Name'], d.version, d.metadata.get('License-Expression') or d.metadata.get('License') or '') for d in m.distributions()]"
 ```
 
 ## Licenses That Ask for Source Code
@@ -60,7 +60,7 @@ If you cannot obtain a source package this way, open an issue in this repository
 Each published image has an SBOM and a provenance attestation:
 
 ```bash
-docker buildx imagetools inspect ghcr.io/leo459028/rewardhacking:v1.6.2 --format '{{ json .SBOM }}'
+docker buildx imagetools inspect ghcr.io/leo459028/rewardhacking:v1.6.3 --format '{{ json .SBOM }}'
 ```
 
 Python dependencies are resolved when the image is built, so a later build of the same tag can contain other versions; the SBOM of that build is authoritative. Known vulnerabilities in Python dependencies fail a pull request before a release (see [`testing_guide.md`](testing_guide.md)).

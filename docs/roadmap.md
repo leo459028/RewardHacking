@@ -2,7 +2,7 @@
 
 > **Roadmap Baseline**: `v1.6.3`
 > **Status**: Active Open-Source Track (`v1.6.x` Verified Execution Series)
-> **Next Target**: `v1.6.4` (Detection Measurement & Trajectory Evidence)
+> **Next Target**: `v1.6.4` (Schema Reconciliation & Secure Defaults Audit)
 > **Re-baselined**: 2026-11-11, after `v1.6.0` (see [Re-baseline Notes](#re-baseline-notes-november-2026))
 
 This roadmap outlines the past development trajectory, the `v1.5.x` evaluation series, the `v1.6.x` runtime execution series, and long-term architectural milestones for the **RewardHacking** platform.
@@ -42,12 +42,14 @@ This roadmap outlines the past development trajectory, the `v1.5.x` evaluation s
 | `v1.6.1` | Completed | Enterprise Access & Audit Integrity | Dashboard sign-in with roles (including a read-only auditor), CSRF tokens and re-authentication, second-person approval (change requests) for high-impact actions, a tamper-evident audit chain with signed checkpoints, Dashboard retention apply / hold release, and prompt-guard/2.0 (P0). |
 | `v1.6.2` | Completed | Isolated Sandbox Runtime MVP | A published container image without secrets, then a hardened Docker backend with a configurable OCI runtime (`runc` locally, `runsc`/gVisor on Linux) behind a disabled-by-default feature flag, used only for the platform's own re-runs; before / after re-runs against the platform's own tests produce the first `platform_verified` evidence, with changed-line coverage and shadow re-run rules. |
 | `v1.6.3` | **Current** | **Secure Authentication Defaults (Security Patch)** | No built-in API key, environment keys only in `dev` / `test`, API authentication and Dashboard sign-in on by default with a startup refusal in production, an image that defaults to production, and checks that find API keys created with environment keys; found by the fresh deployment from the published `v1.6.2` image. |
-| `v1.6.4` | **Next** | Detection Measurement & Trajectory Evidence | Capability-derived gates, agent tools and `stdio` MCP servers in the sandbox (moved from `v1.6.2`), public labeled corpora imports, trajectory detectors and trajectory-aware contrastive judging, a structured self-report and an escalation channel, a detector evasion-variant suite, root-cause labels and a monitoring-coverage metric. |
-| `v1.6.5` | Planned (tentative number) | Compliance Foundation, Approved Models & Multilingual Guard | One control catalog with versioned framework mappings (ISO/IEC 42001, NIST AI RMF, EU AI Act, then Taiwan / Japan / US packs), an opt-in approved-model list with vendor jurisdiction, locale PII redaction packs, data-subject requests, incident notification clocks, prompt-guard hardening and localization. |
-| `v1.6.6` | Planned (tentative number) | Enterprise Integration | OIDC single sign-on, SIEM export, notifications, a CI integration kit with merge checks, and an offline / on-prem install bundle with SBOM and signed images. |
-| `v1.6.7+` | Long-Term (tentative number) | Stronger Verification & Scale-Out | Hidden held-out tests, changed-line mutation testing, realistic honeypots and canaries, a pre-rollout propensity gate, reviewer-quality measurement, multi-language structural rules, judge ensembles, K8s Job and microVM backends, remote MCP transports, resampling, and stateful graph time-travel replay. |
+| `v1.6.4` | **Next** | Schema Reconciliation & Secure Defaults Audit | A maintenance release before the next theme: models and migrations reconciled, a test that makes every setting declare whether its default is security-relevant, one API key role list for the API, CLI and Dashboard, a contract test that every `/v1` endpoint declares its roles, a fresh-deployment check of the release candidate image, tests isolated from local `.env` files, documented defaults checked against the code, and a design for tenant-scoped admin keys. |
+| `v1.6.5` | Planned (tentative number) | Detection Measurement & Trajectory Evidence | Public labeled corpora imports, trajectory detectors and trajectory-aware contrastive judging, a structured self-report and an escalation channel, a detector evasion-variant suite, root-cause labels and a monitoring-coverage metric. |
+| `v1.6.6` | Planned (tentative number) | Runtime Safety: Capability Gates & Sandboxed Agent Tools | Capability-derived gates, then agent tools and `stdio` MCP servers in the sandbox behind a disabled-by-default flag (moved from `v1.6.2`). |
+| `v1.6.7` | Planned (tentative number) | Compliance Foundation, Approved Models & Multilingual Guard | One control catalog with versioned framework mappings (ISO/IEC 42001, NIST AI RMF, EU AI Act, then Taiwan / Japan / US packs), an opt-in approved-model list with vendor jurisdiction, locale PII redaction packs, data-subject requests, incident notification clocks, prompt-guard hardening and localization. |
+| `v1.6.8` | Planned (tentative number) | Enterprise Integration | OIDC single sign-on, SIEM export, notifications, a CI integration kit with merge checks, and an offline / on-prem install bundle with SBOM and signed images. |
+| `v1.6.9+` | Long-Term (tentative number) | Stronger Verification & Scale-Out | Hidden held-out tests, changed-line mutation testing, realistic honeypots and canaries, a pre-rollout propensity gate, reviewer-quality measurement, multi-language structural rules, judge ensembles, K8s Job and microVM backends, remote MCP transports, resampling, and stateful graph time-travel replay. |
 
-**Release numbers**: only the next release (`v1.6.4`) has a fixed number. On 2026-11-19 the bootstrap API key patch took `v1.6.3` and every later theme moved back one number. The Re-baseline Notes below keep the numbers of that time. Numbers after it are tentative and name the planned order of themes. If a patch or a re-ordered theme has to ship first, it takes the next free number and the later themes move back; other documents that cite a tentative number are corrected when that release is planned.
+**Release numbers**: only the next release (`v1.6.4`) has a fixed number. On 2026-11-19 the bootstrap API key patch took `v1.6.3` and every later theme moved back one number. On 2026-11-24, after a review of `v1.6.1`–`v1.6.3`, a maintenance release took `v1.6.4` and the former detection theme was split in two: detection measurement (`v1.6.5`) first, then capability gates with agent tools in the sandbox (`v1.6.6`); every later theme moved back two numbers. The Re-baseline Notes below keep the numbers of that time. Numbers after it are tentative and name the planned order of themes. If a patch or a re-ordered theme has to ship first, it takes the next free number and the later themes move back; other documents that cite a tentative number are corrected when that release is planned.
 
 ---
 
@@ -259,10 +261,16 @@ A patch release ahead of the next theme (decided 2026-11-19).
 - **Keys Left Behind**: database keys created with an environment key before the upgrade stay valid. The Governance page shows each key's creator, `env_created_api_keys` and `unattributed_api_keys` (warn) list the active ones, `python -m app.jobs.api_keys` creates and lists keys, and [`runbook.md`](runbook.md) §17 explains rotation. Whether an environment key was `demo-key` cannot be told afterwards.
 - **Not Changed**: an `admin` API key stays platform-wide (a tenant-scoped admin needs its own design), and nothing is revoked automatically.
 
-### `v1.6.4` (Next): Detection Measurement & Trajectory Evidence
+### `v1.6.4` (Next): Schema Reconciliation & Secure Defaults Audit
+A maintenance release ahead of the next theme (decided 2026-11-24). A review of `v1.6.1`–`v1.6.3` found that most of the work in those releases closed gaps left by early development defaults and by checks that only ran in the project's own environment. This release turns the lessons into checks.
+- **Schema Reconciliation**: SQLAlchemy models and Alembic migrations describe the same schema, checked against a real Postgres database.
+- **Secure Defaults**: every setting is listed as security-relevant (with its default recorded in a snapshot test) or not, so a changed default needs an explicit review. Production refusals stay limited to settings that would let an unauthenticated caller gain access.
+- **One Rule, One Place**: one API key role list for the API, the CLI and the Dashboard (the Dashboard form offered a role that does not exist and lacked `tenant_admin`); a contract test that every `/v1` endpoint declares its roles.
+- **Verify What Users Get**: a fresh-deployment check of the release candidate image that follows only the public documentation, a CI check that the image refuses to start without authentication in production, tests isolated from local `.env` files, a Postgres concurrency test step, and documented defaults and the release Compose example checked against the code.
+- **Tenant-Scoped Admin Keys (design)**: an `admin` API key is platform-wide today (`docs/security.md`, Known Boundaries); this release writes the design, and the implementation is scheduled before OIDC single sign-on.
+
+### `v1.6.5` (tentative number): Detection Measurement & Trajectory Evidence
 The detection work is independent of the sandbox. Every new detector ships in `shadow`; judges stay triage-only.
-- **Capability-Derived Gates** (moved from `v1.6.2` on 2026-11-12): tools declare what they can do (write, network access, personal data, destructive change) and the platform derives the required gates from the tools a request may use. Today `allow_destructive_actions`, `allow_pii_access` and `no_external_network` are declared by the requester, so they only gate honest requests. This must land before any tool with real side effects is enabled.
-- **Agent Tools in the Sandbox** (moved from `v1.6.2` on 2026-11-12): low-risk tools (`read_repo`, `run_tests`) and in-sandbox `stdio` MCP servers run for real, behind a disabled-by-default feature flag.
 - **Public Labeled Corpora**: importers for public reward-hacking datasets (METR MALT, ImpossibleBench, EvilGenie, TRACE) through the existing Inspect import path. `TT-001` tuning, `special_casing` promotion and the judge `triage` mode have waited for non-seed evidence since `v1.5.9`; the seed corpus has 94 samples. Dataset licences and canary rules are honoured, and corpora are used for measurement only, never for training.
 - **Trajectory Detectors**: `tool_transcript` is checked today only for presence and for injection markers. New detectors read the action trajectory (reading expected-output files, editing and then restoring tests, narrowing test selection). The focus is on actions, because reasoning traces add little for reward-hacking detection.
 - **Trajectory-Aware, Contrastive Judging**: judge input gains the trajectory and a few benign trajectories of the same task type for comparison. The judge prompt states that an in-trajectory "the user accepted this shortcut" is not evidence.
@@ -271,7 +279,12 @@ The detection work is independent of the sandbox. Every new detector ships in `s
 - **Root-Cause Labels**: a review decision can record whether the cause was agent behaviour, weak tests or an ambiguous specification.
 - **Monitoring Coverage**: the share of completed runs that submitted an outcome and were evaluated; runs without evidence are shown, not silently ignored. Sampling rates can rise with task duration or difficulty.
 
-### `v1.6.5` (tentative number): Compliance Foundation, Approved Models & Multilingual Guard
+### `v1.6.6` (tentative number): Runtime Safety: Capability Gates & Sandboxed Agent Tools
+Both parts ship together, because no tool with real side effects may be enabled before the gates exist. All agent tools are still `simulated` today.
+- **Capability-Derived Gates** (moved from `v1.6.2` on 2026-11-12, split from the detection theme on 2026-11-24): tools declare what they can do (write, network access, personal data, destructive change) and the platform derives the required gates from the tools a request may use. Today `allow_destructive_actions`, `allow_pii_access` and `no_external_network` are declared by the requester, so they only gate honest requests. This must land before any tool with real side effects is enabled.
+- **Agent Tools in the Sandbox** (moved from `v1.6.2` on 2026-11-12): low-risk tools (`read_repo`, `run_tests`) and in-sandbox `stdio` MCP servers run for real, behind a disabled-by-default feature flag.
+
+### `v1.6.7` (tentative number): Compliance Foundation, Approved Models & Multilingual Guard
 Customers are expected in Taiwan, the EU, the United States and Japan. The platform describes its controls once and maps them to each framework through data files.
 - **Control Catalog & Framework Mappings**: versioned mapping files with effective dates, staged provisions, source and last-review date. Anchor mappings: ISO/IEC 42001, NIST AI RMF and the EU AI Act; then Taiwan, Japan and US state packs. A one-click evidence pack exports human-review rate, sampling rate, incidents, and retention and purge records. Obligations are never hard-coded (see the regulatory snapshot below: one US state law was replaced within a year).
 - **Approved-Model List (opt-in)**: pricing-catalog entries gain a vendor jurisdiction and an *approved* flag that is off by default. Administrators tick the models that may be used; a tenant can only narrow the list. The list is enforced when usage is recorded, when FinOps degrades to a cheaper model, when a run declares its model, and for judge profiles (test, activation, fallback and benchmark); judge templates are filtered by it. Today `is_active` on a pricing row controls pricing only, and every seeded model is active. Limit: the platform is not a model gateway, so it refuses usage and outcomes that report an unapproved model but cannot stop a call made outside the platform.
@@ -282,7 +295,7 @@ Customers are expected in Taiwan, the EU, the United States and Japan. The platf
 - **Semantic Prompt Screening**: prompt-guard/2.0 (`v1.6.1` P0) added normalization, modern Chinese rules and a classical-style heuristic, but stays rule-based (see `docs/security.md`, Known Boundaries). Remaining here: translate-then-screen with a local model and an optional guard model, in `shadow`, reusing the judge-profile infrastructure; an adversarial regression corpus that reports bypass and false-positive rates per rule; a general Simplified → Traditional and variant-character conversion; and clause-aware matching to cut the known false positives. These signals can only escalate a request to approval, never allow one, and fall back to the rules on failure.
 - **Localization**: TWD base-currency and business-tax presets, dated FX-rate import, department month-end reports, and Dashboard locale switching (English, Traditional Chinese, Japanese).
 
-### `v1.6.6` (tentative number): Enterprise Integration
+### `v1.6.8` (tentative number): Enterprise Integration
 - **OIDC Single Sign-On**: Entra ID, AD FS and Keycloak with group-to-role mapping. LDAP is reached through one of these identity providers.
 - **SIEM Export**: governance events, incidents and review decisions as syslog, CEF or JSON webhooks.
 - **Notifications**: SMTP, Microsoft Teams and a generic HMAC-signed webhook. Messages carry IDs and priority only, never evidence.
@@ -291,7 +304,7 @@ Customers are expected in Taiwan, the EU, the United States and Japan. The platf
 
 ---
 
-## Long-Term Horizon: `v1.6.7+` (tentative number)
+## Long-Term Horizon: `v1.6.9+` (tentative number)
 
 - **Stronger Verification**: Hidden held-out tests (a tenant keeps part of its suite unseen by the agent; the benefit is measured on the benchmark first, because published results on held-out tests are mixed), mutation testing limited to changed lines, and resampling of suspicious steps.
 - **Realistic Honeypots & Canaries**: Impossible-task probes derived from real tasks instead of the six toy probes, and canary strings in decoy files whose appearance in a diff shows the answer was read.
@@ -308,7 +321,7 @@ Customers are expected in Taiwan, the EU, the United States and Japan. The platf
 
 ## Re-baseline Notes (November 2026)
 
-Recorded on 2026-11-11, after `v1.6.0`. `v1.6.1` and `v1.6.2` have shipped since; the later releases in this section are not implemented yet.
+Recorded on 2026-11-11, after `v1.6.0`. `v1.6.1`–`v1.6.3` have shipped since, and release numbers moved on 2026-11-19 and 2026-11-24 (see the note under the release table); the later releases in this section are not implemented yet.
 
 ### What changed from the previous roadmap
 
@@ -325,12 +338,12 @@ Figures are as reported by the sources or by summaries of them; re-verify before
 
 | Source | Finding used here | Planned in |
 | --- | --- | --- |
-| [METR MALT dataset](https://metr.org/blog/2025-10-14-malt-dataset-of-natural-and-prompted-behaviors/) (2025) | About 10,900 labeled agent transcripts; prompted monitors detect reward hacking well, and reasoning traces add little for it | `v1.6.4` corpora and action-focused trajectory detectors |
-| [METR Frontier Risk Report](https://metr.org/blog/2026-05-19-frontier-risk-report/) (2026) | Cheating rises with task difficulty; monitors can be fooled by human-written jailbreaks; monitoring had coverage gaps | `v1.6.4` monitoring coverage and difficulty-weighted sampling; judges stay triage-only |
-| [TRACE](https://arxiv.org/abs/2601.20103) (ICML 2026) | Comparing a trajectory against similar benign ones improves detection; semantic hacks are much harder than syntactic ones | `v1.6.4` contrastive judging |
-| [EvilGenie](https://arxiv.org/abs/2511.21654) | Test-edit detection catches tampering but not hard-coding; held-out tests help less than expected | Hidden tests measured before adoption (`v1.6.6+`) |
-| [Escalation channels preprint](https://huggingface.co/papers/2608.29460) (2026) | A reporting tool paired with a written policy cut hacking far more than a one-line instruction | `v1.6.4` escalation channel |
-| [CC-BOS](https://arxiv.org/abs/2602.22983) (ICLR 2026) | Classical Chinese jailbreaks replace sensitive terms with allusion and metaphor and still succeed under layered defenses | `v1.6.5` prompt-guard hardening; principle 8 |
+| [METR MALT dataset](https://metr.org/blog/2025-10-14-malt-dataset-of-natural-and-prompted-behaviors/) (2025) | About 10,900 labeled agent transcripts; prompted monitors detect reward hacking well, and reasoning traces add little for it | `v1.6.5` corpora and action-focused trajectory detectors |
+| [METR Frontier Risk Report](https://metr.org/blog/2026-05-19-frontier-risk-report/) (2026) | Cheating rises with task difficulty; monitors can be fooled by human-written jailbreaks; monitoring had coverage gaps | `v1.6.5` monitoring coverage and difficulty-weighted sampling; judges stay triage-only |
+| [TRACE](https://arxiv.org/abs/2601.20103) (ICML 2026) | Comparing a trajectory against similar benign ones improves detection; semantic hacks are much harder than syntactic ones | `v1.6.5` contrastive judging |
+| [EvilGenie](https://arxiv.org/abs/2511.21654) | Test-edit detection catches tampering but not hard-coding; held-out tests help less than expected | Hidden tests measured before adoption (`v1.6.9+`) |
+| [Escalation channels preprint](https://huggingface.co/papers/2608.29460) (2026) | A reporting tool paired with a written policy cut hacking far more than a one-line instruction | `v1.6.5` escalation channel |
+| [CC-BOS](https://arxiv.org/abs/2602.22983) (ICLR 2026) | Classical Chinese jailbreaks replace sensitive terms with allusion and metaphor and still succeed under layered defenses | `v1.6.7` prompt-guard hardening; principle 8 |
 
 ### Regulatory snapshot
 

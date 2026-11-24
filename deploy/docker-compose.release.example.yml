@@ -2,7 +2,7 @@
 # Copy this file and a filled-in .env next to a ./config directory. Pin RH_IMAGE to a version or a digest.
 # The image holds no secrets, keys or default accounts: everything below comes from the environment or ./config.
 x-app: &app
-  image: ${RH_IMAGE:-ghcr.io/leo459028/rewardhacking:v1.6.2}
+  image: ${RH_IMAGE:-ghcr.io/leo459028/rewardhacking:v1.6.3}
   env_file:
     - .env
   environment: &app-environment

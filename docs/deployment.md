@@ -140,7 +140,7 @@ docker compose run --rm -e RH_AUTO_MIGRATE=false api alembic upgrade head
 
 The `worker` never runs migrations.
 
-Automatic migration means the API's database account can change the schema. Where that is not acceptable, set `RH_AUTO_MIGRATE=false` everywhere, run the one-off job above with an account that owns the schema, and give the API and the worker an account that can only read and write rows. A separate migration account is planned for the `v1.6.6` installer.
+Automatic migration means the API's database account can change the schema. Where that is not acceptable, set `RH_AUTO_MIGRATE=false` everywhere, run the one-off job above with an account that owns the schema, and give the API and the worker an account that can only read and write rows. A separate migration account is planned for the `v1.6.8` installer.
 
 ### 5. Create the First Administrator
 
@@ -165,7 +165,7 @@ docker buildx imagetools inspect ghcr.io/leo459028/rewardhacking:vX.Y.Z --format
 docker buildx imagetools inspect ghcr.io/leo459028/rewardhacking:vX.Y.Z --format '{{ json .Provenance }}'
 ```
 
-Images are not signed yet; signing is planned for `v1.6.6`.
+Images are not signed yet; signing is planned for `v1.6.8`.
 
 ---
 
